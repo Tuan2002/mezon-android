@@ -42,8 +42,9 @@ captures/
 .LSOverride
 ._*
 
-# Firebase / Secrets — contains API keys, project IDs
-# app/google-services.json
+# Firebase / Secrets — API keys, project IDs (get from team / Firebase Console)
+google-services.json
+app/google-services.json
 
 # Signing keys
 *.jks
