@@ -69,6 +69,7 @@ core-proto/*
 .env.*
 secrets/
 credentials/
+mezon.secrets.properties
 
 .gitnexus
 

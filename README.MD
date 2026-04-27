@@ -110,6 +110,8 @@ Open the `mezon/` directory in Android Studio and let Gradle sync complete.
 mezon/app/google-services.json
 ```
 
+Copy `mezon/mezon.secrets.properties.example` to `mezon/mezon.secrets.properties` and fill in values (the real file is not committed; obtain from your team or internal secret store). Gradle fails early if this file is missing.
+
 ---
 
 ## Build and test
