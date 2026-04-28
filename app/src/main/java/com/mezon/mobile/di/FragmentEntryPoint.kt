@@ -8,6 +8,7 @@ import com.mezon.mobile.home.MemberResolver
 import com.mezon.mobile.home.PinMessageController
 import com.mezon.mobile.home.chat.AudioPlayerController
 import com.mezon.mobile.home.chat.EmojiController
+import com.mezon.mobile.home.chat.ImageClipboardCoordinator
 import com.mezon.mobile.home.DialogsController
 import com.mezon.mobile.home.voice.VoiceController
 import com.mezon.mobile.home.UserClanController
@@ -55,6 +56,7 @@ interface FragmentEntryPoint {
     fun searchController(): SearchController
     fun userClanController(): UserClanController
     fun emojiController(): EmojiController
+    fun imageClipboardCoordinator(): ImageClipboardCoordinator
     fun audioPlayerController(): AudioPlayerController
     fun voiceController(): VoiceController
     fun anonymousController(): AnonymousController
