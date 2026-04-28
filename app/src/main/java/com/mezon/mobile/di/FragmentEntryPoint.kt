@@ -22,6 +22,7 @@ import com.mezon.mobile.home.friends.FriendController
 import com.mezon.mobile.home.clans.RoleController
 import com.mezon.mobile.home.notifications.NotificationStore
 import com.mezon.mobile.home.profile.AccountController
+import com.mezon.mobile.home.profile.DeviceController
 import com.mezon.mobile.home.profile.UserController
 import com.mezon.mobile.network.MezonApi
 import com.mezon.mobile.notification.FcmRepository
@@ -48,6 +49,7 @@ interface FragmentEntryPoint {
     fun messagesController(): MessagesController
     fun notificationStore(): NotificationStore
     fun accountController(): AccountController
+    fun deviceController(): DeviceController
     fun friendController(): FriendController
     fun userController(): UserController
     fun mezonApi(): MezonApi
