@@ -42,11 +42,16 @@ import com.mezon.mobile.home.clans.CHANNEL_TYPE_VOICE
 import com.mezon.mobile.home.clans.ClansController
 import com.mezon.mobile.search.LOCAL_PAGE_SIZE
 import com.mezon.mobile.search.SearchController
+import com.mezon.mobile.session.SessionManager
 import com.mezon.mobile.ui.cells.AvatarView
 import com.mezon.mobile.ui.cells.MezonIcon
 import com.mezon.mobile.ui.cells.PopupMenu
 import com.mezon.mobile.ui.cells.ToastOverlay
 import com.mezon.mobile.util.parseMarkdownAndStrip
+import android.util.Log
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.launch
 
 class SharingFragment(
     private val sharedUris: List<Uri>,
@@ -58,6 +63,9 @@ class SharingFragment(
     private lateinit var dialogsController: DialogsController
     private lateinit var searchController: SearchController
     private lateinit var clansController: ClansController
+    private lateinit var sessionManager: SessionManager
+    private lateinit var appScope: CoroutineScope
+    private lateinit var ioDispatcher: CoroutineDispatcher
 
     private lateinit var recyclerView: RecyclerListView
     private lateinit var adapter: SharingTargetAdapter
@@ -94,6 +102,9 @@ class SharingFragment(
         dialogsController = entryPoint.dialogsController()
         searchController = entryPoint.searchController()
         clansController = entryPoint.clansController()
+        sessionManager = entryPoint.sessionManager()
+        appScope = entryPoint.applicationScope()
+        ioDispatcher = entryPoint.ioDispatcher()
     }
 
     override fun onFragmentCreate(): Boolean {
@@ -118,6 +129,10 @@ class SharingFragment(
             showErrorToast()
         }
         searchController.loadChannels()
+        appScope.launch(ioDispatcher) {
+            runCatching { sessionManager.requireValidSession() }
+                .onFailure { Log.w(TAG, "requireValidSession", it) }
+        }
         return true
     }
 
@@ -657,6 +672,7 @@ class SharingFragment(
     enum class FilterType { ALL, USER, CHANNEL }
 
     companion object {
+        private const val TAG = "SharingFragment"
         private const val DEBOUNCE_MS = 300L
     }
 }
