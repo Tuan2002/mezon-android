@@ -201,6 +201,10 @@
     <string name="message_delete_description">Please confirm if you would like to delete this message?</string>
     <string name="message_jump_to_latest">Jump to latest</string>
     <string name="message_toast_copy_text">Copied Message Text</string>
+    <string name="message_paste_option">Paste</string>
+    <string name="message_toast_copy_image_done">Copied image</string>
+    <string name="message_toast_copy_image_failed">Could not copy image</string>
+    <string name="message_paste_failed">Could not paste image</string>
     <string name="message_forwarded">Forwarded</string>
     <string name="message_reply_deleted">Original message was deleted</string>
 
@@ -226,6 +230,15 @@
     <string name="action_forward">Forward</string>
     <string name="action_edit">Edit Message</string>
     <string name="action_create_thread">Create Thread</string>
+    <string name="create_thread_name_label">Thread Name</string>
+    <string name="create_thread_name_placeholder">New Thread</string>
+    <string name="create_thread_new_title">New Thread</string>
+    <string name="create_thread_private_title">Private Thread</string>
+    <string name="create_thread_private_desc">Only people you invite and moderators can see this thread</string>
+    <string name="create_thread_error_name">Please enter a valid thread name (max 64 characters, only words, numbers, _ or -).</string>
+    <string name="create_thread_failed_title">Create Thread Failed</string>
+    <string name="create_thread_failed_message">Thread not found or you\'re not allowed to update</string>
+    <string name="create_thread_empty_cta">Create Thread</string>
     <string name="action_copy_text">Copy Text</string>
     <string name="action_pin">Pin Message</string>
     <string name="action_unpin">Unpin Message</string>

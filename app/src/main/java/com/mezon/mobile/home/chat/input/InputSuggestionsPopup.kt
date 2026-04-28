@@ -36,6 +36,7 @@ class InputSuggestionsPopup(
             layoutManager = LinearLayoutManager(context)
             overScrollMode = View.OVER_SCROLL_NEVER
             clipToPadding = false
+            isFocusable = false
             val pad = LayoutHelper.dp(4f)
             setPadding(0, pad, 0, pad)
         }

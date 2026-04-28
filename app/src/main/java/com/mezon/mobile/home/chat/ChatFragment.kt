@@ -1,13 +1,16 @@
 package com.mezon.mobile.home.chat
 
 import android.Manifest
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
+import android.graphics.Color
 import android.graphics.PorterDuff
 import android.graphics.PorterDuffColorFilter
 import android.graphics.Rect
+import android.graphics.drawable.ColorDrawable
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -21,7 +24,11 @@ import android.util.Log
 import android.util.LongSparseArray
 import android.view.Gravity
 import android.view.MotionEvent
+import android.view.ActionMode
+import android.view.Menu
+import android.view.MenuItem
 import android.view.View
+import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
 import android.widget.EditText
 import android.widget.FrameLayout
@@ -31,6 +38,7 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.TextView
+import android.widget.PopupWindow
 import androidx.core.content.ContextCompat
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
@@ -45,6 +53,7 @@ import com.mezon.mobile.core.NotificationCenter
 import com.mezon.mobile.core.RecyclerListView
 import com.mezon.mobile.di.FragmentEntryPoint
 import com.mezon.mobile.home.ChatController
+import com.mezon.mobile.home.chat.thread.CreateThreadFragment
 import com.mezon.mobile.home.ClanMember
 import com.mezon.mobile.home.LOAD_TYPE_INITIAL
 import com.mezon.mobile.home.DialogsController
@@ -256,6 +265,8 @@ class ChatFragment : BaseFragment() {
     private lateinit var appScope: CoroutineScope
     private lateinit var ioDispatcher: CoroutineDispatcher
     private lateinit var mainDispatcher: CoroutineDispatcher
+    private lateinit var imageClipboardCoordinator: ImageClipboardCoordinator
+    private var pasteImagePopup: PopupWindow? = null
     private var suggestionsPopup: InputSuggestionsPopup? = null
     private var suggestionsAdapter: InputSuggestionsAdapter? = null
     private val mentionTrackers = mutableListOf<MentionData>()
@@ -472,32 +483,37 @@ class ChatFragment : BaseFragment() {
                 hasMoreTop = moreTop
                 hasMoreBottom = moreBottom
             } else {
-                val savedHasUnread = hasUnread
-                val savedLastSeen = lastSeenMessageId
-
-                val apiMinId = loadedMessages.minOfOrNull { it.id } ?: 0L
-                val apiMaxId = loadedMessages.maxOfOrNull { it.id } ?: 0L
-                val existingMinId = messages.minOfOrNull { it.id } ?: 0L
-                val existingMaxId = messages.maxOfOrNull { it.id } ?: 0L
-                val hasOverlap = messages.isNotEmpty() &&
-                    apiMinId <= existingMaxId && apiMaxId >= existingMinId
-
-                if (hasOverlap) {
-                    for (m in loadedMessages) messagesDict.put(m.id, m)
+                if (loadedMessages.isEmpty() && messages.isNotEmpty()) {
+                    hasMoreTop = moreTop
+                    hasMoreBottom = moreBottom
                 } else {
-                    messagesDict.clear()
-                    for (m in loadedMessages) messagesDict.put(m.id, m)
-                }
-                messages.clear()
-                val all = ArrayList<MessageEntity>(messagesDict.size())
-                for (i in 0 until messagesDict.size()) all.add(messagesDict.valueAt(i))
-                all.sortByDescending { it.id }
-                messages.addAll(all)
-                hasMoreTop = moreTop
-                hasMoreBottom = moreBottom
+                    val savedHasUnread = hasUnread
+                    val savedLastSeen = lastSeenMessageId
 
-                hasUnread = savedHasUnread
-                lastSeenMessageId = savedLastSeen
+                    val apiMinId = loadedMessages.minOfOrNull { it.id } ?: 0L
+                    val apiMaxId = loadedMessages.maxOfOrNull { it.id } ?: 0L
+                    val existingMinId = messages.minOfOrNull { it.id } ?: 0L
+                    val existingMaxId = messages.maxOfOrNull { it.id } ?: 0L
+                    val hasOverlap = messages.isNotEmpty() &&
+                        apiMinId <= existingMaxId && apiMaxId >= existingMinId
+
+                    if (hasOverlap) {
+                        for (m in loadedMessages) messagesDict.put(m.id, m)
+                    } else {
+                        messagesDict.clear()
+                        for (m in loadedMessages) messagesDict.put(m.id, m)
+                    }
+                    messages.clear()
+                    val all = ArrayList<MessageEntity>(messagesDict.size())
+                    for (i in 0 until messagesDict.size()) all.add(messagesDict.valueAt(i))
+                    all.sortByDescending { it.id }
+                    messages.addAll(all)
+                    hasMoreTop = moreTop
+                    hasMoreBottom = moreBottom
+
+                    hasUnread = savedHasUnread
+                    lastSeenMessageId = savedLastSeen
+                }
             }
 
             // Reconcile lastSentMessageId with the per-channel newest message store
@@ -527,6 +543,10 @@ class ChatFragment : BaseFragment() {
                 }
             }
 
+            if (loadType == LOAD_TYPE_INITIAL && !moreBottom) {
+                hasMoreBottom = false
+            }
+
             if (!hasUnread && lastSeenMessageId != 0L && messages.isNotEmpty()) {
                 val newestInList = messages.first().id
                 if (newestInList > lastSeenMessageId && messages.any { it.id == lastSeenMessageId }) {
@@ -534,12 +554,15 @@ class ChatFragment : BaseFragment() {
                 }
             }
 
-            if (fragmentView != null) {
-                val wasFirstLoad = firstLoad
+            val wasFirstLoad = firstLoad
+            if (loadType == LOAD_TYPE_INITIAL && wasFirstLoad) {
                 firstLoad = false
+                notificationCenter.removePostponeNotificationsCallback(postponeNewMessagesCallback)
+            }
+
+            if (fragmentView != null) {
 
                 if (wasFirstLoad) {
-                    notificationCenter.removePostponeNotificationsCallback(postponeNewMessagesCallback)
                     val allowedDuringLoad = intArrayOf(
                         NotificationCenter.messagesDidLoad,
                         NotificationCenter.messagesLoadError,
@@ -756,6 +779,8 @@ class ChatFragment : BaseFragment() {
                 isLoadingMore = false
                 if (fragmentView != null && messages.isEmpty()) {
                     showError(args.getOrNull(1) as? String ?: "Failed to load")
+                } else if (fragmentView != null) {
+                    refreshUI()
                 }
             }
         }
@@ -936,6 +961,7 @@ class ChatFragment : BaseFragment() {
         appScope = entryPoint.applicationScope()
         ioDispatcher = entryPoint.ioDispatcher()
         mainDispatcher = entryPoint.mainDispatcher()
+        imageClipboardCoordinator = entryPoint.imageClipboardCoordinator()
     }
 
     override fun createView(context: Context): View {
@@ -1319,6 +1345,8 @@ class ChatFragment : BaseFragment() {
             if (actionId == EditorInfo.IME_ACTION_SEND) { sendMessage(); true } else false
         }
 
+        setupPasteImageLongPress(context)
+
         adapter = ChatAdapter(themeColors, messages, channelName, cellDelegate = object : ChatMessageCell.ChatMessageCellDelegate {
             override fun didClickMedia(cell: ChatMessageCell, msg: MessageEntity, attachmentIndex: Int) {
                 val allMedia = msg.allImageAttachments
@@ -1525,6 +1553,7 @@ class ChatFragment : BaseFragment() {
         }
 
         fragmentView = rootView
+        refreshUI()
         return rootView
     }
 
@@ -1579,8 +1608,6 @@ class ChatFragment : BaseFragment() {
             isLoading = true
             showLoading()
             chatController.loadMessages(channelId, clanId, forceRefresh = true)
-        } else {
-            showLoading()
         }
     }
 
@@ -1615,6 +1642,7 @@ class ChatFragment : BaseFragment() {
     }
 
     private fun showEmojiView() {
+        dismissPasteImagePopup()
         if (emojiView == null) createEmojiView()
         val ev = emojiView!!
         ev.animate().cancel()
@@ -1672,6 +1700,7 @@ class ChatFragment : BaseFragment() {
     }
 
     private fun hideEmojiView(animated: Boolean = true) {
+        dismissPasteImagePopup()
         emojiSearchExpanded = false
         searchKeyboardWasVisible = false
         sizeNotifierRoot.isSearchExpanded = false
@@ -1848,6 +1877,7 @@ class ChatFragment : BaseFragment() {
     }
 
     override fun onFragmentDestroy() {
+        dismissPasteImagePopup()
         waitingForKeyboardOpen = false
         AndroidUtilities.cancelRunOnUIThread(openKeyboardRunnable)
         AndroidUtilities.cancelRunOnUIThread(showKeyboardFromEmojiRunnable)
@@ -2022,10 +2052,8 @@ class ChatFragment : BaseFragment() {
     }
 
     private fun cancelPendingLoading() {
-        if (showLoadingPending) {
-            mainHandler.removeCallbacks(showLoadingRunnable)
-            showLoadingPending = false
-        }
+        mainHandler.removeCallbacks(showLoadingRunnable)
+        showLoadingPending = false
     }
 
     private fun forceScrollToBottom() {
@@ -2453,6 +2481,7 @@ class ChatFragment : BaseFragment() {
     }
 
     private fun sendMessage() {
+        dismissPasteImagePopup()
         val rawInput = inputField.text?.toString() ?: ""
         val text = rawInput.trim()
         if (text.isBlank() && pendingAttachments.isEmpty()) return
@@ -2531,6 +2560,90 @@ class ChatFragment : BaseFragment() {
         mentionTrackers.clear()
         hashtagTrackers.clear()
         clearReplyState()
+    }
+
+    private fun setupPasteImageLongPress(ctx: Context) {
+        inputField.setOnLongClickListener {
+            val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+            if (imageClipboardCoordinator.clipboardLooksLikeImage(ctx, cm)) {
+                showPasteImageTooltip(ctx)
+                true
+            } else {
+                false
+            }
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            inputField.customInsertionActionModeCallback = object : ActionMode.Callback2() {
+                override fun onCreateActionMode(mode: ActionMode, menu: Menu): Boolean {
+                    val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                    if (imageClipboardCoordinator.clipboardLooksLikeImage(ctx, cm)) {
+                        return false
+                    }
+                    return true
+                }
+
+                override fun onPrepareActionMode(mode: ActionMode, menu: Menu): Boolean = false
+
+                override fun onActionItemClicked(mode: ActionMode, item: MenuItem): Boolean = false
+
+                override fun onDestroyActionMode(mode: ActionMode) {}
+            }
+        }
+    }
+
+    private fun dismissPasteImagePopup() {
+        pasteImagePopup?.dismiss()
+        pasteImagePopup = null
+    }
+
+    private fun showPasteImageTooltip(ctx: Context) {
+        if (fragmentView == null) return
+        dismissPasteImagePopup()
+        val content = PasteImagePasteTooltipContent(ctx, themeColors) {
+            tryPasteImageFromClipboard(ctx)
+        }
+        content.measure(
+            View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
+            View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED)
+        )
+        val popup = PopupWindow(
+            content,
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+            false
+        ).apply {
+            isOutsideTouchable = true
+            isFocusable = false
+            setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                elevation = LayoutHelper.dpf(24f)
+            }
+        }
+        pasteImagePopup = popup
+        val offsetY = -(content.measuredHeight + LayoutHelper.dp(50f))
+        popup.showAsDropDown(inputField, 0, offsetY)
+    }
+
+    private fun tryPasteImageFromClipboard(ctx: Context) {
+        dismissPasteImagePopup()
+        val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        val uri = imageClipboardCoordinator.resolvePasteImageUri(ctx, cm)
+        if (uri == null) {
+            MezonToast.show(this, ToastOverlay.ToastType.ERROR, getString(R.string.message_paste_failed))
+            return
+        }
+        appScope.launch {
+            val item = imageClipboardCoordinator.duplicateClipUriToAttachment(ctx, uri)
+            withContext(mainDispatcher) {
+                if (item == null) {
+                    MezonToast.show(this@ChatFragment, ToastOverlay.ToastType.ERROR, getString(R.string.message_paste_failed))
+                    return@withContext
+                }
+                pendingAttachments.add(item)
+                updateAttachmentPreview()
+                updateSendButtonState()
+            }
+        }
     }
 
     private fun buildEmojiMarkers(text: String): List<EmojiMarker>? {
@@ -2617,6 +2730,7 @@ class ChatFragment : BaseFragment() {
     }
 
     private fun openAttachAlert() {
+        dismissPasteImagePopup()
         val ctx = getContext() ?: return
         val alert = ChatAttachAlert(ctx, mediaController, themeColors)
         alert.attachDelegate = object : ChatAttachAlert.ChatAttachAlertDelegate {
@@ -2634,6 +2748,7 @@ class ChatFragment : BaseFragment() {
     }
 
     private fun showAdvancedFunctionMenu() {
+        dismissPasteImagePopup()
         val ctx = getContext() ?: return
         val isAnon = anonymousController.isAnonymous(clanId)
         val alert = AdvancedAttachAlert(ctx, themeColors, clanId, isAnon)
@@ -3362,6 +3477,15 @@ class ChatFragment : BaseFragment() {
         sheet.show()
     }
 
+    private fun canShowCreateThreadInMessageMenu(): Boolean {
+        if (clanId == 0L) return false
+        if (channelType != CHANNEL_TYPE_CHANNEL) return false
+        if (routeParentId != 0L) return false
+        if (channelType == CHANNEL_TYPE_STREAMING) return false
+        if (channelType == CHANNEL_TYPE_APP) return false
+        return true
+    }
+
     private fun showMessageActionSheet(msg: MessageEntity) {
         val ctx = getContext() ?: return
         val activity = getParentActivity() ?: return
@@ -3379,7 +3503,7 @@ class ChatFragment : BaseFragment() {
             isDM = clanId == 0L,
             isPinned = pinMessageController.isPinned(channelId, msg.id),
             canDeleteMessage = isMyMessage, // TODO: check permission
-            canManageThread = clanId != 0L, // TODO: check permission
+            canManageThread = canShowCreateThreadInMessageMenu(),
             hasMedia = hasMedia,
             hasImage = hasImage,
             listener = object : MessageActionBottomSheet.MessageActionListener {
@@ -3498,8 +3622,14 @@ class ChatFragment : BaseFragment() {
                 showDeleteConfirmation(msg)
             }
             MessageActionBottomSheet.ActionType.CreateThread -> {
-                getContext() ?: return
-                MezonToast.show(this, ToastOverlay.ToastType.INFO, getString(R.string.feature_coming_soon))
+                presentFragment(
+                    CreateThreadFragment.newInstance(
+                        channelId,
+                        channelName,
+                        clanId,
+                        seedMessageId = msg.id
+                    )
+                )
             }
             MessageActionBottomSheet.ActionType.MarkUnRead -> {
                 getContext() ?: return
@@ -3518,7 +3648,24 @@ class ChatFragment : BaseFragment() {
                     MezonToast.show(this, ToastOverlay.ToastType.INFO, getString(R.string.action_copy_link))
                 }
             }
-            MessageActionBottomSheet.ActionType.CopyImage,
+            MessageActionBottomSheet.ActionType.CopyImage -> {
+                val ctx = getContext() ?: return
+                val url = imageClipboardCoordinator.resolvePrimaryImageUrlForCopy(msg)
+                if (url.isNullOrBlank()) {
+                    MezonToast.show(this, ToastOverlay.ToastType.ERROR, getString(R.string.message_toast_copy_image_failed))
+                    return
+                }
+                appScope.launch {
+                    val ok = imageClipboardCoordinator.copyRemoteUrlToClipboard(ctx, url, null)
+                    withContext(mainDispatcher) {
+                        if (ok) {
+                            MezonToast.show(this@ChatFragment, ToastOverlay.ToastType.INFO, getString(R.string.message_toast_copy_image_done))
+                        } else {
+                            MezonToast.show(this@ChatFragment, ToastOverlay.ToastType.ERROR, getString(R.string.message_toast_copy_image_failed))
+                        }
+                    }
+                }
+            }
             MessageActionBottomSheet.ActionType.ShareImage -> {
                 getContext() ?: return
                 MezonToast.show(this, ToastOverlay.ToastType.INFO, getString(R.string.feature_coming_soon))
@@ -3700,6 +3847,7 @@ class ChatFragment : BaseFragment() {
         if (tempId == realId) return
         val idx = messages.indexOfFirst { it.id == tempId }
         if (idx < 0) {
+            if (messagesDict.get(realId) != null) return
             Log.d(TAG, "applyRealId tempId=$tempId not found")
             return
         }
