@@ -19,7 +19,6 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.TextView
-import android.widget.Toast
 import androidx.recyclerview.widget.LinearLayoutManager
 import com.mezon.mobile.MainActivity
 import com.mezon.mobile.core.BaseFragment
@@ -129,7 +128,9 @@ class ThreadListFragment : BaseFragment() {
         actionBarView.setMenuOnItemClick(object : ActionBarView.ActionBarMenuOnItemClick() {
             override fun onItemClick(id: Int) {
                 if (id == -1) finishFragment()
-                else if (id == 1) Toast.makeText(context, "Coming soon", Toast.LENGTH_SHORT).show()
+                else if (id == 1) {
+                    presentFragment(CreateThreadFragment.newInstance(channelId, channelName, clanId))
+                }
             }
         })
 
@@ -251,9 +252,8 @@ class ThreadListFragment : BaseFragment() {
             }
         }
         val iconView = ImageView(context).apply {
-            val d = MezonIcon.threadIcon.getDrawable(context)
-            d.colorFilter = PorterDuffColorFilter(themeColors.tabLabelActive, PorterDuff.Mode.SRC_IN)
-            setImageDrawable(d)
+            setImageDrawable(MezonIcon.threadIcon.getDrawable(context))
+            scaleType = ImageView.ScaleType.FIT_CENTER
         }
         iconCircle.addView(iconView, LayoutHelper.createFrame(22, 22, Gravity.CENTER))
         container.addView(iconCircle, LayoutHelper.createLinear(50, 50, 0f, Gravity.CENTER_HORIZONTAL, 0f, 0f, 0f, 16f))
@@ -283,7 +283,7 @@ class ThreadListFragment : BaseFragment() {
         ))
 
         val createButton = TextView(context).apply {
-            text = "Create Threads"
+            text = context.getString(R.string.create_thread_empty_cta)
             setTextColor(themeColors.onPrimary)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
             typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
@@ -296,7 +296,7 @@ class ThreadListFragment : BaseFragment() {
             val padV = LayoutHelper.dp(2)
             setPadding(padH, padV, padH, padV)
             setOnClickListener {
-                Toast.makeText(context, "Coming soon", Toast.LENGTH_SHORT).show()
+                presentFragment(CreateThreadFragment.newInstance(channelId, channelName, clanId))
             }
         }
         container.addView(createButton, LayoutHelper.createLinear(150, 50, 0f, Gravity.CENTER_HORIZONTAL, 0f, 20f, 0f, 0f))
