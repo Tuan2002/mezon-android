@@ -1,7 +1,7 @@
 package com.mezon.mobile.auth
 
 import android.content.Context
-import android.graphics.Color
+import android.content.res.ColorStateList
 import android.graphics.LinearGradient
 import android.graphics.Shader
 import android.graphics.drawable.GradientDrawable
@@ -27,6 +27,7 @@ import com.mezon.mobile.core.LayoutHelper
 import com.mezon.mobile.di.FragmentEntryPoint
 import com.mezon.mobile.ui.cells.ActionButton
 import com.mezon.mobile.ui.cells.InputCell
+import androidx.core.widget.CompoundButtonCompat
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -183,6 +184,8 @@ class LoginFragment : BaseFragment() {
             minHeight = 0
             minimumHeight = 0
             setPadding(0, 0, 0, 0)
+            CompoundButtonCompat.setButtonTintList(this, ColorStateList.valueOf(themeColors.onSurface))
+            alpha = 1f
             setOnCheckedChangeListener { _, isChecked ->
                 passwordCell.editText.inputType = if (isChecked) {
                     InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD
@@ -198,7 +201,7 @@ class LoginFragment : BaseFragment() {
 
         showPasswordLabel = TextView(context).apply {
             text = getString(R.string.common_login_show_password)
-            setTextColor(themeColors.onSurfaceVariant)
+            setTextColor(themeColors.onSurface)
             textSize = 14f
             setPadding(LayoutHelper.dp(4), 0, 0, 0)
             setOnClickListener { showPasswordCheck.toggle() }
@@ -472,9 +475,19 @@ class LoginFragment : BaseFragment() {
                 }
                 .onFailure { err ->
                     Log.e(TAG, "Password login failed: ${err.message}", err)
-                    showError(err.message ?: getString(R.string.common_login_login_failed))
+                    showError(messageForPasswordLoginFailure(err.message))
                 }
         }
+    }
+
+    private fun messageForPasswordLoginFailure(message: String?): String {
+        val genericInvalid = getString(R.string.common_login_login_failed)
+        val m = message?.trim().orEmpty()
+        if (m.isEmpty()) return genericInvalid
+        if (m.trimEnd('.').trim().equals("Invalid credentials", ignoreCase = true)) {
+            return genericInvalid
+        }
+        return m
     }
 
     private fun navigateToOTP(reqId: String, identifier: String, isSms: Boolean) {
