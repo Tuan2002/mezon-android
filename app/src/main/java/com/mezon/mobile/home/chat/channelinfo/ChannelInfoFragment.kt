@@ -24,6 +24,8 @@ import com.mezon.mobile.core.RecyclerListView
 import com.mezon.mobile.core.ViewPagerFixed
 import com.mezon.mobile.di.FragmentEntryPoint
 import com.mezon.mobile.home.ClanMember
+import com.mezon.mobile.home.ChannelFilesController
+import com.mezon.mobile.home.ChannelGalleryController
 import com.mezon.mobile.home.DialogsController
 import com.mezon.mobile.home.MemberResolver
 import com.mezon.mobile.home.UserClanController
@@ -89,9 +91,14 @@ class ChannelInfoFragment : BaseFragment() {
     private lateinit var pinMessageController: PinMessageController
     private lateinit var channelController: ChannelController
 
+    private lateinit var channelFilesController: ChannelFilesController
+    private lateinit var channelGalleryController: ChannelGalleryController
+
     private var memberListAdapter: MemberListAdapter? = null
     private var membersRecyclerView: RecyclerListView? = null
     private var pinsTab: PinsTabHelper? = null
+    private var filesTab: FilesTabHelper? = null
+    private var mediaTab: MediaTabHelper? = null
 
     private val isDm get() = channelType == CHANNEL_TYPE_DM || channelType == CHANNEL_TYPE_GROUP
     private val isSelfDm: Boolean
@@ -135,6 +142,30 @@ class ChannelInfoFragment : BaseFragment() {
             if (ch == channelId) pinsTab?.reload()
         }
 
+        observe(NotificationCenter.channelFilesDidLoad) { _, _, args ->
+            if (isPaused) return@observe
+            val ch = args.firstOrNull() as? Long ?: return@observe
+            if (ch == channelId) filesTab?.onRemoteChannelFiles(ch)
+        }
+        observe(NotificationCenter.channelFilesLoadError) { _, _, args ->
+            if (isPaused) return@observe
+            val ch = args.firstOrNull() as? Long ?: return@observe
+            if (ch == channelId) filesTab?.onRemoteChannelFiles(ch)
+        }
+
+        observeGlobal(NotificationCenter.channelGalleryDidLoad) { _, _, args ->
+            if (isPaused) return@observeGlobal
+            val ch = args.firstOrNull() as? Long ?: return@observeGlobal
+            if (ch != channelId) return@observeGlobal
+            fragmentView?.context?.let { ctx -> mediaTab?.syncFromApi(ctx) }
+        }
+        observeGlobal(NotificationCenter.channelGalleryLoadError) { _, _, args ->
+            if (isPaused) return@observeGlobal
+            val ch = args.firstOrNull() as? Long ?: return@observeGlobal
+            if (ch != channelId) return@observeGlobal
+            fragmentView?.context?.let { ctx -> mediaTab?.onGalleryLoadFailure(ctx) }
+        }
+
         triggerMemberLoad()
         return true
     }
@@ -146,6 +177,8 @@ class ChannelInfoFragment : BaseFragment() {
         userController = entryPoint.userController()
         pinMessageController = entryPoint.pinMessageController()
         channelController = entryPoint.channelController()
+        channelFilesController = entryPoint.channelFilesController()
+        channelGalleryController = entryPoint.channelGalleryController()
     }
 
     override fun createView(context: Context): View {
@@ -421,9 +454,29 @@ class ChannelInfoFragment : BaseFragment() {
     private fun buildTabContent(context: Context, actualIndex: Int): View {
         return when (actualIndex) {
             0 -> buildMembersTab(context)
+            1 -> buildMediaTab(context)
+            2 -> buildFilesTab(context)
             3 -> buildPinsTab(context)
             else -> buildComingSoonTab(context)
         }
+    }
+
+    private fun buildMediaTab(context: Context): View {
+        val h =
+            MediaTabHelper(
+                channelId = channelId,
+                clanId = clanId,
+                channelType = channelType,
+                isDm = isDm,
+                themeColors = themeColors,
+                galleryController = channelGalleryController,
+                memberResolver = memberResolver,
+                getString = { resId -> getString(resId) },
+                hostContext = { fragmentView?.context },
+                hostIsPaused = { isPaused }
+            )
+        mediaTab = h
+        return h.buildView(context)
     }
 
     private fun buildMembersTab(context: Context): View {
@@ -515,6 +568,24 @@ class ChannelInfoFragment : BaseFragment() {
         }
 
         return wrapper
+    }
+
+    private fun buildFilesTab(context: Context): View {
+        val act = getParentActivity() ?: return buildComingSoonTab(context)
+        val helper = FilesTabHelper(
+            channelId = channelId,
+            clanId = clanId,
+            channelType = channelType,
+            themeColors = themeColors,
+            channelFilesController = channelFilesController,
+            memberResolver = memberResolver,
+            hostActivity = act,
+            isVietnameseLocale = userController.languageTag.startsWith("vi"),
+            getString = { resId -> getString(resId) },
+            getStringArg = { resId, arg -> getString(resId, arg) }
+        )
+        filesTab = helper
+        return helper.buildView(context)
     }
 
     private fun buildPinsTab(context: Context): View {
