@@ -415,7 +415,6 @@ class ThemeColors @Inject constructor() {
     val connectingColor: Int get() = 0xFFFAA61A.toInt()
     val disconnectedColor: Int get() = 0xFFF04747.toInt()
 
-    /** bgSuccess – xanh lá "success" dùng cho icon transaction, trạng thái online, v.v. */
     val colorSuccess: Int get() = getColor(key_color_success)
 
     val blurple: Int get() = 0xFF5A62F4.toInt()

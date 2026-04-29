@@ -80,6 +80,7 @@ import com.mezon.mobile.home.clans.channelapp.ChannelAppController
 import com.mezon.mobile.home.clans.channelapp.ChannelAppFragment
 import com.mezon.mobile.home.voice.JoinVoiceBottomSheet
 import com.mezon.mobile.home.voice.VoiceController
+import com.mezon.mobile.home.wallet.SendTokenFragment
 import com.mezon.mobile.MainActivity
 import com.mezon.mobile.network.CHANNEL_TYPE_THREAD
 import com.mezon.mobile.network.CHANNEL_TYPE_DM
@@ -132,6 +133,12 @@ class ChatFragment : BaseFragment() {
         private const val MAX_LENGTH_MESSAGE_BUZZ = 160
         private const val VOICE_LONG_PRESS_DELAY_MS = 400L
         private const val VOICE_CANCEL_SLIDE_DP = 100f
+        private const val GIVE_COFFEE_AMOUNT_HUMAN = "10000"
+        private const val GIVE_COFFEE_AMOUNT_DISPLAY = "10,000"
+        private const val GIVE_COFFEE_NOTE = "givecoffee"
+        private const val GIVE_COFFEE_SEPARATOR = " | "
+        private const val GIVE_COFFEE_EMOJI_ID = 7280417126303261185L
+        private const val GIVE_COFFEE_EMOJI = ":coffee:"
         private val ANONYMOUS_USER_ID = BuildConfig.MEZON_ANONYMOUS_USER_ID.toLongOrNull() ?: 0L
 
         fun newInstance(
@@ -1432,11 +1439,7 @@ class ChatFragment : BaseFragment() {
 
         adapter.sendTokenDelegate = object : SendTokenMessageCell.Delegate {
             override fun onMezonTransferClick() {
-                android.widget.Toast.makeText(
-                    requireContext(),
-                    getString(R.string.feature_coming_soon),
-                    android.widget.Toast.LENGTH_SHORT
-                ).show()
+                presentFragment(SendTokenFragment.newInstance())
             }
         }
         adapter.loadLinkInvitePreview = { id -> mezonApi.getLinkInvitePreview(id) }
@@ -3769,18 +3772,21 @@ class ChatFragment : BaseFragment() {
         if (senderId == 0L) return
 
         if (msg.senderId == senderId) {
-            MezonToast.show(this, ToastOverlay.ToastType.ERROR, "Cannot give coffee to yourself")
+            MezonToast.show(this, ToastOverlay.ToastType.ERROR, getString(R.string.give_coffee_error_self))
+            return
+        }
+
+        if (!walletController.isReadyToSendTransaction()) {
+            MezonToast.show(this, ToastOverlay.ToastType.ERROR, getString(R.string.give_coffee_error_wallet_not_ready))
             return
         }
 
         val receiverId = msg.senderId.toString()
         val senderUsername = userController.displayName.ifBlank { userController.username }
-
-        // Keep exact " | " separator because SendTokenMessageCell splits by it.
-        val amountText = "10,000"
+        val amountText = GIVE_COFFEE_AMOUNT_DISPLAY
         val tokensSentTitle = getString(R.string.tokens_sent_title, amountText)
         val giveCoffeeAction = getString(R.string.give_coffee_action)
-        val messageTextForDm = "$tokensSentTitle | $giveCoffeeAction"
+        val messageTextForDm = "$tokensSentTitle$GIVE_COFFEE_SEPARATOR$giveCoffeeAction"
 
         appScope.launch {
             try {
@@ -3790,42 +3796,44 @@ class ChatFragment : BaseFragment() {
                     senderId = senderId.toString(),
                     receiverId = receiverId,
                     receiverMmnAddress = null,
-                    amountHuman = "10000",
-                    note = "givecoffee",
+                    amountHuman = GIVE_COFFEE_AMOUNT_HUMAN,
+                    note = GIVE_COFFEE_NOTE,
                     senderUsername = senderUsername
                 )
 
                 if (sendResult.isFailure) {
-                    val errorMsg = sendResult.exceptionOrNull()?.message ?: "Failed to send coffee"
+                    val errorMsg = sendResult.exceptionOrNull()?.message
+                        ?.takeIf { it.isNotBlank() }
+                        ?: getString(R.string.give_coffee_error_send)
                     withContext(mainDispatcher) {
                         MezonToast.show(this@ChatFragment, ToastOverlay.ToastType.ERROR, errorMsg)
                     }
                     return@launch
                 }
 
-                // Add coffee emoji reaction to the original message
-                val emojiId = 7280417126303261185L
-                val emoji = ":coffee:"
                 chatController.sendReaction(
                     channelId = channelId,
                     clanId = clanId,
                     channelType = channelType,
                     isChannelPrivate = resolveChannelPrivate(),
                     messageId = msg.id,
-                    emojiId = emojiId,
-                    emoji = emoji,
+                    emojiId = GIVE_COFFEE_EMOJI_ID,
+                    emoji = GIVE_COFFEE_EMOJI,
                     count = 1,
                     actionDelete = false,
                     messageSenderId = msg.senderId
                 )
 
-                // Create/get DM channel and send notification message
                 val dmChannelId = withContext(ioDispatcher) {
                     dialogsController.getOrCreateDm(msg.senderId)
                 }
                 if (dmChannelId == 0L) {
                     withContext(mainDispatcher) {
-                        MezonToast.show(this@ChatFragment, ToastOverlay.ToastType.ERROR, "Failed to create DM channel")
+                        MezonToast.show(
+                            this@ChatFragment,
+                            ToastOverlay.ToastType.ERROR,
+                            getString(R.string.give_coffee_error_dm_channel)
+                        )
                     }
                     return@launch
                 }
@@ -3843,18 +3851,29 @@ class ChatFragment : BaseFragment() {
                     this.content = content
                     this.code = MessageEntity.CODE_SEND_TOKEN
                 }
-                withContext(ioDispatcher) {
-                    mezonApi.sendChannelMessage(session.apiUrl, session.token, request)
+                val dmNotificationResult = runCatching {
+                    withContext(ioDispatcher) {
+                        mezonApi.sendChannelMessage(session.apiUrl, session.token, request)
+                    }
                 }
-                Log.d(TAG, "handleGiveCoffee: DM message sent OK to dmChannelId=$dmChannelId")
-
-                withContext(mainDispatcher) {
-                    // No toast on success (UI already updates via incoming socket/message refresh)
+                if (dmNotificationResult.isFailure) {
+                    Log.e(TAG, "handleGiveCoffee: failed to send DM notification", dmNotificationResult.exceptionOrNull())
+                    withContext(mainDispatcher) {
+                        MezonToast.show(
+                            this@ChatFragment,
+                            ToastOverlay.ToastType.ERROR,
+                            getString(R.string.give_coffee_error_dm_notification)
+                        )
+                    }
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "handleGiveCoffee failed", e)
                 withContext(mainDispatcher) {
-                    MezonToast.show(this@ChatFragment, ToastOverlay.ToastType.ERROR, "Failed to send coffee: ${e.message}")
+                    MezonToast.show(
+                        this@ChatFragment,
+                        ToastOverlay.ToastType.ERROR,
+                        getString(R.string.give_coffee_error_send)
+                    )
                 }
             }
         }
