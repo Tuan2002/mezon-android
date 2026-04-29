@@ -11,9 +11,7 @@ import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.RippleDrawable
 import android.os.Handler
 import android.os.Looper
-import android.text.Editable
 import android.text.SpannableStringBuilder
-import android.text.TextWatcher
 import android.text.style.ForegroundColorSpan
 import android.text.style.ReplacementSpan
 import androidx.annotation.ColorInt
@@ -22,7 +20,6 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.ViewOutlineProvider
-import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
@@ -56,14 +53,14 @@ import com.mezon.mobile.home.voice.VoiceController
 import com.mezon.mobile.home.voice.VoiceRoomFragment
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import com.mezon.mobile.home.clans.discover.DiscoverClansFragment
-import com.mezon.mobile.home.clans.discover.DiscoverFilterHolder
+import com.mezon.mobile.home.clans.discover.DiscoverClansListSection
+import com.mezon.mobile.home.clans.discover.buildDiscoverCommunitySearchToolbar
 import com.mezon.mobile.home.clans.discover.DiscoverRailCell
 import com.mezon.mobile.home.clans.CreateClanRnUiTokens
 import com.mezon.mobile.search.GlobalSearchFragment
 import com.mezon.mobile.ui.cells.MezonIcon
 import com.mezon.mobile.home.qr.QrScanFragment
-
+import com.mezon.mobile.home.profile.UserController
 class ClansFragment : BaseFragment() {
 
     private lateinit var clansController: ClansController
@@ -75,6 +72,9 @@ class ClansFragment : BaseFragment() {
     private lateinit var userClanController: UserClanController
     private lateinit var voiceController: VoiceController
     private lateinit var channelCategoryExpandStore: ChannelCategoryExpandStore
+    private lateinit var userController: UserController
+    private lateinit var roleController: RoleController
+    private var clanMenuSheet: ClanMenuBottomSheet? = null
 
     var onOpenChat: ((channelId: Long, channelName: String, clanId: Long, channelType: Int) -> Unit)? = null
     var onSwitchToMessages: (() -> Unit)? = null
@@ -96,6 +96,8 @@ class ClansFragment : BaseFragment() {
     private var headerSwitch: FrameLayout? = null
     private var normalClanHeaderRoot: View? = null
     private var emptyClanHeaderRoot: LinearLayout? = null
+    private lateinit var discoverListSection: DiscoverClansListSection
+    private var discoveringFromRailWhileHasClans = false
     private val searchDebounceHandler = Handler(Looper.getMainLooper())
     private var searchDebounceRunnable: Runnable? = null
 
@@ -115,6 +117,8 @@ class ClansFragment : BaseFragment() {
         userClanController = entryPoint.userClanController()
         voiceController = entryPoint.voiceController()
         channelCategoryExpandStore = entryPoint.channelCategoryExpandStore()
+        userController = entryPoint.userController()
+        roleController = entryPoint.roleController()
     }
 
     override fun onFragmentCreate(): Boolean {
@@ -173,7 +177,7 @@ class ClansFragment : BaseFragment() {
             serverRail.setBackgroundColor(themeColors.serverRailBg)
             serverAdapter.notifyDataSetChanged()
             channelListView.invalidateTheme()
-            channelPanel.applyChannelPanelBg()
+            updateClanPanelHeaderMode()
         }
 
         clansController.loadClans()
@@ -194,6 +198,12 @@ class ClansFragment : BaseFragment() {
             }
         }
         return true
+    }
+
+    override fun onFragmentDestroy() {
+        clanMenuSheet?.dismiss()
+        clanMenuSheet = null
+        super.onFragmentDestroy()
     }
 
     override fun createView(context: Context): View {
@@ -225,7 +235,10 @@ class ClansFragment : BaseFragment() {
                     onOpenChat?.invoke(dm.channelId, dm.displayName.ifEmpty { dm.label }, 0L, dm.type)
                 }
                 is DiscoverRailCell -> {
-                    presentFragment(DiscoverClansFragment())
+                    if (clansController.clans.value.isNotEmpty()) {
+                        discoveringFromRailWhileHasClans = true
+                        updateServerRail()
+                    }
                 }
                 is AddClanCell -> {
                     presentFragment(CreateClanTemplateFragment())
@@ -244,9 +257,13 @@ class ClansFragment : BaseFragment() {
             }
             clipToOutline = true
         }
+        discoverListSection = DiscoverClansListSection(this, themeColors, embeddedInClanPanel = true).also {
+            it.inject(entryPoint())
+            it.buildViews(context)
+        }
 
         val clanHeader = buildClanHeader(context).also { normalClanHeaderRoot = it }
-        val emptyHeader = buildEmptyClanHomeHeader(context).also { emptyClanHeaderRoot = it }
+        val emptyHeader = buildEmptyClanHomeHeader(context, discoverListSection).also { emptyClanHeaderRoot = it }
         headerSwitch = FrameLayout(context).apply {
             addView(clanHeader, FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
@@ -261,10 +278,25 @@ class ClansFragment : BaseFragment() {
 
         channelListView = ChannelListView(context, themeColors, channelCategoryExpandStore).apply {
             onChannelClick = { channel -> onChannelSelected(channel) }
+            onSectionLongClick = sectionLongClick@ { catId, _, _ ->
+                val selClan = clansController.selectedClanId.value
+                if (selClan == 0L || catId == 0L) return@sectionLongClick
+                val clan = clansController.clans.value.firstOrNull { it.clanId == selClan }
+                if (clan != null) {
+                    CategoryMenuBottomSheet(
+                        context,
+                        clan.clanId,
+                        clan.clanName,
+                        clan.logo
+                    ).show()
+                }
+            }
         }
 
         channelPanel.addView(headerSwitch, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT))
         channelPanel.addView(channelListView, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, 0, 1f))
+        channelPanel.addView(discoverListSection.rootView, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, 0, 1f))
+        discoverListSection.rootView.visibility = View.GONE
 
         root.addView(serverRail, LayoutHelper.createLinear(56, LayoutHelper.MATCH_PARENT))
         root.addView(channelPanel, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f).apply {
@@ -310,11 +342,32 @@ class ClansFragment : BaseFragment() {
             setPadding(LayoutHelper.dp(12), LayoutHelper.dp(14), LayoutHelper.dp(12), LayoutHelper.dp(14))
         }
 
+        // RN ChannelListHeader: TouchableOpacity onPressIn opens ClanMenu for title + member subtitle block
+        val clanHeaderTapZone = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            val rippleMask = android.graphics.drawable.GradientDrawable().apply {
+                setColor(0xFFFFFFFF.toInt())
+            }
+            val zoneBg = android.graphics.drawable.GradientDrawable().apply {
+                setColor(themeColors.channelPanelBg)
+            }
+            background = RippleDrawable(
+                ColorStateList.valueOf(themeColors.onSurface and 0x1AFFFFFF),
+                zoneBg,
+                rippleMask
+            )
+            isClickable = true
+            isFocusable = true
+            contentDescription = context.getString(R.string.clan_menu_header_content_description)
+            setOnClickListener { presentClanMenuBottomSheetIfPossible() }
+        }
+
         // Row 1: Clan name + verified badge (RN: gap Metrics.size.s=8, paddingBottom s_4)
         val nameRow = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             setPadding(0, 0, 0, LayoutHelper.dp(4))
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
         }
         clanNameText = TextView(context).apply {
             setTextColor(themeColors.onSurface)
@@ -322,6 +375,7 @@ class ClansFragment : BaseFragment() {
             typeface = android.graphics.Typeface.create(android.graphics.Typeface.DEFAULT, 500, false)
             maxLines = 1
             ellipsize = android.text.TextUtils.TruncateAt.END
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
         }
         nameRow.addView(clanNameText, LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT
@@ -332,11 +386,12 @@ class ClansFragment : BaseFragment() {
             })
             scaleType = ImageView.ScaleType.FIT_CENTER
             visibility = View.GONE
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
         }
         nameRow.addView(verifiedIcon, LinearLayout.LayoutParams(
             LayoutHelper.dp(18), LayoutHelper.dp(18) // RN: s_18
         ).apply { leftMargin = LayoutHelper.dp(8) }) // RN: gap = Metrics.size.s = 8
-        content.addView(nameRow, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT))
+        clanHeaderTapZone.addView(nameRow, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT))
 
         // Row 2: Member count + dot + Community — single TextView with spans (atomic render, no sibling shift)
         memberCountText = TextView(context).apply {
@@ -344,10 +399,12 @@ class ClansFragment : BaseFragment() {
             textSize = 13f
             text = ""
             visibility = View.INVISIBLE
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
         }
-        content.addView(memberCountText, LayoutHelper.createLinear(
+        clanHeaderTapZone.addView(memberCountText, LayoutHelper.createLinear(
             LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT
         ))
+        content.addView(clanHeaderTapZone, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT))
 
         // Row 3: Navigation bar (RN: marginTop s_10, gap s_8)
         val navBar = LinearLayout(context).apply {
@@ -474,9 +531,10 @@ class ClansFragment : BaseFragment() {
         return header
     }
 
-    private fun buildEmptyClanHomeHeader(context: Context): LinearLayout {
+    private fun buildEmptyClanHomeHeader(context: Context, inlineDiscoverList: DiscoverClansListSection): LinearLayout {
         val root = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
+            setPadding(LayoutHelper.dp(12), LayoutHelper.dp(14), LayoutHelper.dp(12), LayoutHelper.dp(14))
         }
         val title = TextView(context).apply {
             text = getString(R.string.discover_community_on_mezon)
@@ -486,110 +544,48 @@ class ClansFragment : BaseFragment() {
             setPadding(0, 0, 0, LayoutHelper.dp(6))
         }
         root.addView(title, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT))
-
-        val navBar = LinearLayout(context).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-        }
-        val searchWrap = LinearLayout(context).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            val innerPad = LayoutHelper.dp(10)
-            setPadding(innerPad, 0, innerPad, 0)
-            background = GradientDrawable().apply {
-                setColor(themeColors.secondaryLight)
-                cornerRadius = LayoutHelper.dp(10f).toFloat()
-                setStroke(LayoutHelper.dp(1), themeColors.outlineVariant)
-            }
-            layoutParams = LinearLayout.LayoutParams(0, LayoutHelper.dp(36), 1f)
-        }
-        searchWrap.addView(ImageView(context).apply {
-            setImageDrawable(MezonIcon.searchIcon.getDrawable(context, themeColors.onSurface))
-            val p = LayoutHelper.dp(18)
-            layoutParams = LinearLayout.LayoutParams(p, p)
-        })
-        val edit = EditText(context).apply {
-            hint = getString(R.string.discover_explore_communities)
-            setHintTextColor(themeColors.onSurfaceVariant)
-            setTextColor(themeColors.onSurface)
-            textSize = 14f
-            setBackgroundColor(android.graphics.Color.TRANSPARENT)
-            layoutParams = LinearLayout.LayoutParams(0, LayoutHelper.MATCH_PARENT, 1f)
-        }
-        searchDebounceRunnable = Runnable {
-            DiscoverFilterHolder.searchQuery = edit.text?.toString().orEmpty()
-        }
-        edit.addTextChangedListener(object : TextWatcher {
-            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
-            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
-            override fun afterTextChanged(s: Editable?) {
-                val r = searchDebounceRunnable ?: return
-                searchDebounceHandler.removeCallbacks(r)
-                searchDebounceHandler.postDelayed(r, 300)
-            }
-        })
-        searchWrap.addView(edit)
-        navBar.addView(searchWrap)
-
-        fun iconButton(icon: MezonIcon): ImageView {
-            return ImageView(context).apply {
-                val circleBg = GradientDrawable().apply {
-                    cornerRadius = LayoutHelper.dp(10f).toFloat()
-                    setColor(themeColors.secondaryLight)
-                }
-                background = RippleDrawable(
-                    ColorStateList.valueOf(themeColors.onSurface and 0x1AFFFFFF),
-                    circleBg,
-                    GradientDrawable().apply {
-                        setColor(0xFFFFFFFF.toInt())
-                        cornerRadius = LayoutHelper.dp(10f).toFloat()
-                    }
-                )
-                setImageDrawable(icon.getDrawable(context, themeColors.onSurface))
-                scaleType = ImageView.ScaleType.CENTER_INSIDE
-                val p = LayoutHelper.dp(8)
-                setPadding(p, p, p, p)
-                layoutParams = LinearLayout.LayoutParams(LayoutHelper.dp(36), LayoutHelper.dp(36)).apply {
-                    leftMargin = LayoutHelper.dp(8)
-                }
-            }
-        }
-        val qrBtn = iconButton(MezonIcon.scanQR)
-        qrBtn.setOnClickListener {
-            Toast.makeText(context, getString(R.string.feature_coming_soon), Toast.LENGTH_SHORT).show()
-        }
-        navBar.addView(qrBtn)
-        val addFriendBtn = iconButton(MezonIcon.addFriendImage)
-        addFriendBtn.setOnClickListener {
-            showAddFriendBottomSheet()
-        }
-        navBar.addView(addFriendBtn)
-
-        root.addView(navBar, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT).apply {
-            topMargin = LayoutHelper.dp(10)
-        })
-        root.addView(View(context).apply { setBackgroundColor(themeColors.outlineVariant) },
+        val (toolbarWrap, debounceRunnable) = buildDiscoverCommunitySearchToolbar(
+            context,
+            themeColors,
+            searchDebounceHandler,
+            onSearchCommitted = { inlineDiscoverList.onSearchFilterChangedFromParent() },
+            onQrClick = { presentFragment(QrScanFragment()) },
+            onAddFriendClick = { showAddFriendBottomSheet() }
+        )
+        searchDebounceRunnable = debounceRunnable
+        root.addView(toolbarWrap, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT))
+        root.addView(
+            View(context).apply { setBackgroundColor(themeColors.outlineVariant) },
             LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, 1).apply {
                 topMargin = LayoutHelper.dp(14)
-            })
-        root.setPadding(LayoutHelper.dp(12), LayoutHelper.dp(14), LayoutHelper.dp(12), LayoutHelper.dp(14))
+            }
+        )
         return root
     }
 
     private fun updateClanPanelHeaderMode() {
         if (fragmentView == null) return
-        val empty = clansController.clansLoaded && clansController.clans.value.isEmpty()
-        normalClanHeaderRoot?.visibility = if (empty) View.GONE else View.VISIBLE
-        emptyClanHeaderRoot?.visibility = if (empty) View.VISIBLE else View.GONE
+        val emptyServerList = clansController.clansLoaded && clansController.clans.value.isEmpty()
+        if (emptyServerList) {
+            discoveringFromRailWhileHasClans = false
+        }
+        val showEmbeddedDiscover = emptyServerList || discoveringFromRailWhileHasClans
+        normalClanHeaderRoot?.visibility = if (showEmbeddedDiscover) View.GONE else View.VISIBLE
+        emptyClanHeaderRoot?.visibility = if (showEmbeddedDiscover) View.VISIBLE else View.GONE
+        discoverListSection.rootView.visibility = if (showEmbeddedDiscover) View.VISIBLE else View.GONE
+        channelListView.visibility = if (showEmbeddedDiscover) View.GONE else View.VISIBLE
         val r = LayoutHelper.dp(20).toFloat()
-        if (empty) {
+        if (showEmbeddedDiscover) {
             channelPanel.background = GradientDrawable(
                 GradientDrawable.Orientation.LEFT_RIGHT,
                 CreateClanRnUiTokens.screenGradientColors(themeColors)
             ).apply {
                 cornerRadii = floatArrayOf(r, r, r, r, 0f, 0f, 0f, 0f)
             }
-            channelListView.clear()
+            if (emptyServerList) {
+                channelListView.clear()
+            }
+            discoverListSection.ensureLoadsIfEmbedded()
         } else {
             channelPanel.applyChannelPanelBg()
         }
@@ -597,7 +593,10 @@ class ClansFragment : BaseFragment() {
 
     override fun onBecomeFullyVisible() {
         super.onBecomeFullyVisible()
-
+        if (::discoverListSection.isInitialized &&
+            discoverListSection.rootView.visibility == View.VISIBLE) {
+            discoverListSection.onEmbeddedVisibilityChanged(true)
+        }
         if (viewJustCreated) {
             viewJustCreated = false
             return
@@ -670,12 +669,14 @@ class ClansFragment : BaseFragment() {
         val clans = clansController.clans.value
         val selectedId = clansController.selectedClanId.value
         val logoUrl = accountController.accountInfo.value.logo
+        val highlightDiscoverRail = discoveringFromRailWhileHasClans && clans.isNotEmpty()
         serverAdapter.submitData(
             unreadDms,
             clans,
             selectedId,
             newLogoUrl = logoUrl,
-            newPendingFriendCount = friendController.pendingReceivedCount.value
+            newPendingFriendCount = friendController.pendingReceivedCount.value,
+            embeddedDiscoverRail = highlightDiscoverRail
         )
 
         updateClanPanelHeaderMode()
@@ -719,8 +720,7 @@ class ClansFragment : BaseFragment() {
         if (clanChanged) {
             renderedSubtitleKey = null
             memberCountText.animate().cancel()
-            val cachedCount = userClanController.getClanMemberCount(clan.clanId)
-            if (cachedCount > 0) {
+            if (userClanController.hasClanMembersCache(clan.clanId)) {
                 memberCountText.alpha = 1f
                 memberCountText.visibility = View.VISIBLE
             } else {
@@ -733,8 +733,11 @@ class ClansFragment : BaseFragment() {
 
     private fun updateMemberCount() {
         val clanId = clansController.selectedClanId.value
+        if (!userClanController.hasClanMembersCache(clanId)) {
+            memberCountText.visibility = View.INVISIBLE
+            return
+        }
         val count = userClanController.getClanMemberCount(clanId)
-        if (count <= 0) return
         val isCommunity = renderedIsCommunity == true
         val key = "$count|$isCommunity"
         val alreadyShown = memberCountText.visibility == View.VISIBLE && memberCountText.alpha >= 1f
@@ -754,7 +757,13 @@ class ClansFragment : BaseFragment() {
     }
 
     private fun buildSubtitleText(count: Int, isCommunity: Boolean): CharSequence {
-        val base = "$count Members"
+        val ctx = fragmentView?.context ?: return ""
+        val memberWord = if (count == 1) {
+            ctx.getString(R.string.common_member)
+        } else {
+            ctx.getString(R.string.common_members)
+        }
+        val base = "$count $memberWord"
         if (!isCommunity) return base
         val builder = SpannableStringBuilder(base)
         val dotStart = builder.length
@@ -770,7 +779,7 @@ class ClansFragment : BaseFragment() {
             android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
         )
         val labelStart = builder.length
-        builder.append("Community")
+        builder.append(ctx.getString(R.string.discover_community))
         builder.setSpan(
             ForegroundColorSpan(themeColors.onSurface),
             labelStart,
@@ -785,6 +794,45 @@ class ClansFragment : BaseFragment() {
             this.onOpenChat = this@ClansFragment.onOpenChat
         }
         presentFragment(fragment)
+    }
+
+    private fun dismissClanMenuSheet() {
+        clanMenuSheet?.dismiss()
+        clanMenuSheet = null
+    }
+
+    private fun presentClanMenuBottomSheetIfPossible() {
+        val ctx = fragmentView?.context ?: return
+        val clanId = clansController.selectedClanId.value
+        if (clanId == 0L) return
+        val clan = clansController.clans.value.firstOrNull { it.clanId == clanId } ?: return
+        userClanController.loadClanMembers(clanId)
+        roleController.loadRolesForClanThen(clanId, force = true, Runnable {
+            val members = userClanController.getClanMembers(clanId)
+            val roles = roleController.getRoles(clanId)
+            val permissionState = ClanSettingsPermissionState.evaluateForClanSettings(
+                userController,
+                clanId,
+                members,
+                roles
+            )
+            val expandState = channelCategoryExpandStore.load(clanId)
+            dismissClanMenuSheet()
+            val sheet = ClanMenuBottomSheet(
+                ctx,
+                themeColors,
+                clanId,
+                clan.clanName,
+                clan.logo.ifBlank { null },
+                clan.isCommunity,
+                members.size,
+                false,
+                permissionState,
+                expandState.allExpanded
+            )
+            clanMenuSheet = sheet
+            sheet.show()
+        })
     }
 
     private fun updateChannelList() {
@@ -854,7 +902,16 @@ class ClansFragment : BaseFragment() {
 
     private fun onClanSelected(clan: ClanEntity) {
         val prevId = clansController.selectedClanId.value
-        if (clan.clanId == prevId) return
+        val hadDiscoverRail = discoveringFromRailWhileHasClans
+        discoveringFromRailWhileHasClans = false
+        val sameSelection = clan.clanId == prevId
+        if (sameSelection && hadDiscoverRail) {
+            updateClanPanelHeaderMode()
+            updateChannelList()
+            updateServerRail()
+            return
+        }
+        if (sameSelection) return
         clansController.selectClan(clan.clanId)
         updateClanHeader(clan)
 
@@ -954,12 +1011,15 @@ class ClansFragment : BaseFragment() {
         private val hasSeparator: Boolean
             get() = clans.isNotEmpty()
 
+        private var embeddedRailDiscoverHighlight = false
+
         fun submitData(
             newUnreadDms: List<DirectMessage>,
             newClans: List<ClanEntity>,
             newSelectedId: Long,
             newPendingFriendCount: Int = 0,
-            newLogoUrl: String = ""
+            newLogoUrl: String = "",
+            embeddedDiscoverRail: Boolean = false
         ) {
             val oldUnreadDms = ArrayList(unreadDms)
             val oldUnreadIds = oldUnreadDms.map { it.channelId }
@@ -968,6 +1028,7 @@ class ClansFragment : BaseFragment() {
             val oldSelectedId = selectedClanId
             val oldPendingFriendCount = pendingFriendCount
             val oldLogoUrl = logoUrl
+            val oldEmbeddedDiscoverRail = embeddedRailDiscoverHighlight
             val oldSize = itemCount
 
             unreadDms.clear()
@@ -977,6 +1038,7 @@ class ClansFragment : BaseFragment() {
             selectedClanId = newSelectedId
             pendingFriendCount = newPendingFriendCount
             logoUrl = newLogoUrl
+            embeddedRailDiscoverHighlight = embeddedDiscoverRail
 
             val newUnreadIds = newUnreadDms.map { it.channelId }
             val newClanIds = newClans.map { it.clanId }
@@ -1019,6 +1081,11 @@ class ClansFragment : BaseFragment() {
                     selected != wasSelected) {
                     notifyItemChanged(clanStart + i)
                 }
+            }
+
+            if (discoverRailCellEnabled &&
+                oldEmbeddedDiscoverRail != embeddedRailDiscoverHighlight) {
+                notifyItemChanged(itemCount - 2)
             }
         }
 
@@ -1088,6 +1155,9 @@ class ClansFragment : BaseFragment() {
                         val clan = clans[idx]
                         view.update(0, clan, clan.clanId == selectedClanId)
                     }
+                }
+                is DiscoverRailCell -> {
+                    view.setEmbeddedDiscoverHighlight(embeddedRailDiscoverHighlight)
                 }
             }
         }

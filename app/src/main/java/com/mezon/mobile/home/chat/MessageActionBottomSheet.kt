@@ -31,13 +31,14 @@ class MessageActionBottomSheet(
     private val canManageThread: Boolean = false,
     private val hasMedia: Boolean = false,
     private val hasImage: Boolean = false,
+    private val showForwardSingle: Boolean = true,
     private val listener: MessageActionListener
 ) : BottomSheet(context) {
 
     enum class ActionType {
         Reply,
-        EditMessage,
         ForwardMessage,
+        EditMessage,
         CopyText,
         PinMessage,
         UnPinMessage,
@@ -263,11 +264,13 @@ class MessageActionBottomSheet(
             R.drawable.ic_arrowangleleftuplight  
         ))
 
-        actions.add(ActionItem(
-            ActionType.ForwardMessage,
-            context.getString(R.string.action_forward),
-            R.drawable.ic_arrowanglerightuplight 
-        ))
+        if (showForwardSingle) {
+            actions.add(ActionItem(
+                ActionType.ForwardMessage,
+                context.getString(R.string.action_forward),
+                R.drawable.ic_arrowanglerightuplight
+            ))
+        }
 
         if (isMyMessage) {
             actions.add(ActionItem(
