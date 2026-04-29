@@ -208,7 +208,6 @@ enum class MezonIcon(@DrawableRes val resId: Int) {
     joinClanIcon(R.drawable.ic_join_clan_icon),
     communityIcon(R.drawable.ic_community_icon),
     hammerIcon(R.drawable.ic_hammer_icon),
-    forwardAllIcon(R.drawable.ic_forward_all),
     hdIcon(R.drawable.ic_hd_icon),
     hdFullIcon(R.drawable.ic_hd_full_icon),
     advancedFunctionIcon(R.drawable.ic_advanced_function),

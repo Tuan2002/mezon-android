@@ -30,8 +30,15 @@ class BackupImageView(context: Context) : View(context) {
     private var roundRadiusBL = 0
     private val clipPath = Path()
 
+    private var omitEmptyPlaceholder = false
+
     init {
         setWillNotDraw(false)
+    }
+
+    fun setOmitEmptyPlaceholder(value: Boolean) {
+        omitEmptyPlaceholder = value
+        invalidate()
     }
 
     fun setRoundImage(round: Boolean) {
@@ -180,7 +187,7 @@ class BackupImageView(context: Context) : View(context) {
             val drawY = if (decodeWidth > 0 && decodeHeight > 0 && aspectFit) (height - drawH) / 2 else 0
             d.setBounds(drawX, drawY, drawX + drawW, drawY + drawH)
             d.draw(canvas)
-        } else {
+        } else if (!omitEmptyPlaceholder) {
             avatarDrawable.setBounds(0, 0, width, height)
             avatarDrawable.draw(canvas)
         }
