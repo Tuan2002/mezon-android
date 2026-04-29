@@ -201,6 +201,10 @@
     <string name="message_delete_description">Please confirm if you would like to delete this message?</string>
     <string name="message_jump_to_latest">Jump to latest</string>
     <string name="message_toast_copy_text">Copied Message Text</string>
+    <string name="message_paste_option">Paste</string>
+    <string name="message_toast_copy_image_done">Copied image</string>
+    <string name="message_toast_copy_image_failed">Could not copy image</string>
+    <string name="message_paste_failed">Could not paste image</string>
     <string name="message_forwarded">Forwarded</string>
     <string name="message_reply_deleted">Original message was deleted</string>
 
@@ -228,6 +232,15 @@
     <string name="action_edit">Edit Message</string>
     <string name="action_create_thread">Create Thread</string>
     <string name="action_give_coffee">Give Coffee</string>
+    <string name="create_thread_name_label">Thread Name</string>
+    <string name="create_thread_name_placeholder">New Thread</string>
+    <string name="create_thread_new_title">New Thread</string>
+    <string name="create_thread_private_title">Private Thread</string>
+    <string name="create_thread_private_desc">Only people you invite and moderators can see this thread</string>
+    <string name="create_thread_error_name">Please enter a valid thread name (max 64 characters, only words, numbers, _ or -).</string>
+    <string name="create_thread_failed_title">Create Thread Failed</string>
+    <string name="create_thread_failed_message">Thread not found or you\'re not allowed to update</string>
+    <string name="create_thread_empty_cta">Create Thread</string>
     <string name="action_copy_text">Copy Text</string>
     <string name="tokens_sent_title">Funds Transferred: %1$s₫</string>
     <string name="give_coffee_action">Give coffee action</string>
@@ -397,6 +410,26 @@
     <string name="setting_log_out_yes">Yes</string>
     <string name="setting_scan_qr">Scan QR Code</string>
     <string name="setting_devices">Devices</string>
+    <string name="setting_devices_title">Device Management</string>
+    <string name="setting_devices_description1">These are all the devices logged into your account. You can log out of each device individually.</string>
+    <string name="setting_devices_description2">If you see a login you don\'t recognize, log out of that device and change your account password immediately.</string>
+    <string name="setting_devices_current">Current Device</string>
+    <string name="setting_devices_other">Other Devices</string>
+    <string name="setting_devices_no_devices">No devices found</string>
+    <string name="setting_devices_logged_in_at">Logged in at</string>
+    <string name="setting_devices_current_label">Current</string>
+    <string name="setting_devices_unknown">Unknown</string>
+    <string name="setting_devices_platform_ios">iOS</string>
+    <string name="setting_devices_platform_android">Android</string>
+    <string name="setting_devices_platform_desktop">Desktop</string>
+    <string name="setting_devices_platform_web">Web</string>
+    <string name="setting_devices_remove">Log out of this device</string>
+    <string name="setting_devices_remove_confirm_title">Log out device</string>
+    <string name="setting_devices_remove_confirm_message">Are you sure you want to log out of this device?</string>
+    <string name="setting_devices_remove_confirm_yes">Log out</string>
+    <string name="setting_devices_remove_confirm_no">Cancel</string>
+    <string name="setting_devices_remove_success">Device logged out successfully</string>
+    <string name="setting_devices_remove_failed">Failed to log out device</string>
     <string name="setting_app_version_label">App Version</string>
 
     <!-- update gate (matches RN updateGate) -->

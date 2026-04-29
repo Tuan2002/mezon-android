@@ -8,6 +8,7 @@ import com.mezon.mobile.home.MemberResolver
 import com.mezon.mobile.home.PinMessageController
 import com.mezon.mobile.home.chat.AudioPlayerController
 import com.mezon.mobile.home.chat.EmojiController
+import com.mezon.mobile.home.chat.ImageClipboardCoordinator
 import com.mezon.mobile.home.DialogsController
 import com.mezon.mobile.home.voice.VoiceController
 import com.mezon.mobile.home.UserClanController
@@ -21,6 +22,7 @@ import com.mezon.mobile.home.friends.FriendController
 import com.mezon.mobile.home.clans.RoleController
 import com.mezon.mobile.home.notifications.NotificationStore
 import com.mezon.mobile.home.profile.AccountController
+import com.mezon.mobile.home.profile.DeviceController
 import com.mezon.mobile.home.profile.UserController
 import com.mezon.mobile.network.MezonApi
 import com.mezon.mobile.notification.FcmRepository
@@ -47,6 +49,7 @@ interface FragmentEntryPoint {
     fun messagesController(): MessagesController
     fun notificationStore(): NotificationStore
     fun accountController(): AccountController
+    fun deviceController(): DeviceController
     fun friendController(): FriendController
     fun userController(): UserController
     fun mezonApi(): MezonApi
@@ -55,6 +58,7 @@ interface FragmentEntryPoint {
     fun searchController(): SearchController
     fun userClanController(): UserClanController
     fun emojiController(): EmojiController
+    fun imageClipboardCoordinator(): ImageClipboardCoordinator
     fun audioPlayerController(): AudioPlayerController
     fun voiceController(): VoiceController
     fun anonymousController(): AnonymousController
