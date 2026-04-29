@@ -2,6 +2,7 @@
 package com.mezon.mobile.network
 
 import com.mezon.mobile.BuildConfig
+import android.net.Uri
 import android.util.Base64
 import com.mezon.mezon.api.Account
 import com.mezon.mezon.api.AllUsersAddChannelResponse
@@ -26,7 +27,9 @@ import com.mezon.mezon.api.ClanUserList
 import com.mezon.mezon.api.FriendList
 import com.mezon.mezon.api.NotificationList
 import com.mezon.mezon.api.SearchMessageResponse
+import com.mezon.mezon.api.ChannelAttachmentList
 import com.mezon.mezon.api.UploadAttachment
+import com.mezon.mezon.api.listChannelAttachmentRequest
 import com.mezon.mezon.api.uploadAttachmentRequest
 import com.mezon.mezon.api.accountEmail
 import com.mezon.mezon.api.AddFriendsResponse
@@ -41,6 +44,7 @@ import com.mezon.mezon.api.linkAccountConfirmRequest
 import com.mezon.mezon.api.listClanDescRequest
 import com.mezon.mezon.api.listChannelUsersRequest
 import com.mezon.mezon.api.listClanUsersRequest
+import com.mezon.mezon.api.removeClanUsersRequest
 import com.mezon.mezon.api.ListChannelAppsResponse
 import com.mezon.mezon.api.GenerateHashChannelAppsResponse
 import com.mezon.mezon.api.listChannelAppsRequest
@@ -73,6 +77,7 @@ import com.mezon.mezon.api.clanDiscover as clanDiscoverProto
 import com.mezon.mezon.api.listClanDiscover
 import com.mezon.mezon.rtapi.ActiveArchivedThread
 import com.mezon.mezon.rtapi.ChannelMessageSend
+import android.util.Log
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.request.get
@@ -80,6 +85,7 @@ import io.ktor.client.request.header
 import io.ktor.client.request.post
 import io.ktor.client.request.put
 import io.ktor.client.request.setBody
+import io.ktor.client.statement.HttpResponse
 import io.ktor.client.statement.bodyAsText
 import io.ktor.client.statement.readBytes
 import io.ktor.http.ContentType
@@ -201,6 +207,49 @@ class MezonApi @Inject constructor(
     private val linkInvitePreviewCache =
         Collections.synchronizedMap(mutableMapOf<Long, LinkInvitePreview>())
 
+    private fun logRpcRequest(method: String, url: String) {
+        if (!BuildConfig.DEBUG) return
+        // Avoid a single https://… token — Logcat URL scrubbing replaces it with asterisks.
+        val path = "mezon.api.Mezon/$method"
+        val uri = runCatching { Uri.parse(url) }.getOrNull()
+        val host = uri?.host?.replace('.', '|') ?: "?"
+        Log.d("MezonApi", "rpc method=$method path=$path host=$host")
+    }
+
+    private fun logRpcHttpError(method: String, response: HttpResponse, requestByteSize: Int, errorBody: String) {
+        val meta = StringBuilder()
+        val keys = arrayOf(
+            "grpc-message",
+            "grpc-status",
+            "www-authenticate",
+            "x-request-id",
+            "x-amzn-requestid",
+            "x-amzn-errortype",
+            "x-trace-id"
+        )
+        for (k in keys) {
+            val v = response.headers[k]
+            if (!v.isNullOrBlank()) meta.append(k).append('=').append(v).append("; ")
+        }
+        val errPreview = if (errorBody.isEmpty()) "(empty)" else errorBody.take(1500)
+        Log.w(
+            "MezonApi",
+            "rpcFail method=$method http=${response.status.value} reqBytes=$requestByteSize errLen=${errorBody.length} err=$errPreview meta=$meta"
+        )
+    }
+
+    private fun gatewayJsonErrorUserMessage(rawBody: String): String {
+        val t = rawBody.trim()
+        if (t.isEmpty()) return t
+        return try {
+            val obj = JSONObject(t)
+            val msg = obj.optString("message", "").trim()
+            if (msg.isNotEmpty()) msg else t
+        } catch (_: Exception) {
+            t
+        }
+    }
+
     suspend fun getLinkInvitePreview(inviteId: Long): LinkInvitePreview? {
         if (inviteId == 0L) return null
         synchronized(linkInvitePreviewCache) {
@@ -262,7 +311,7 @@ class MezonApi @Inject constructor(
 
         if (!response.status.isSuccess()) {
             val errorBody = response.bodyAsText()
-            throw RuntimeException("Auth failed (${response.status.value}): $errorBody")
+            throw RuntimeException(gatewayJsonErrorUserMessage(errorBody))
         }
 
         return response.body()
@@ -276,6 +325,7 @@ class MezonApi @Inject constructor(
     ): ByteArray {
         val base = apiUrl.trimEnd('/')
         val url = "$base/mezon.api.Mezon/$method"
+        logRpcRequest(method, url)
         val response = httpClient.post(url) {
             header(HttpHeaders.Authorization, "Bearer $token")
             header(HttpHeaders.Accept, CONTENT_TYPE_PROTO.toString())
@@ -284,7 +334,12 @@ class MezonApi @Inject constructor(
         }
 
         if (!response.status.isSuccess()) {
-            val errorBody = response.bodyAsText()
+            val errorBody = try {
+                response.bodyAsText()
+            } catch (e: Exception) {
+                "(body:${e.message})"
+            }
+            logRpcHttpError(method, response, body.size, errorBody)
             if (response.status == HttpStatusCode.Unauthorized) {
                 throw UnauthorizedException("RPC $method: 401 Unauthorized")
             }
@@ -301,6 +356,7 @@ class MezonApi @Inject constructor(
     ): ByteArray {
         val base = apiUrl.trimEnd('/')
         val url = "$base/mezon.api.Mezon/$method"
+        logRpcRequest(method, url)
         val response = httpClient.post(url) {
             header(HttpHeaders.Accept, CONTENT_TYPE_PROTO.toString())
             contentType(CONTENT_TYPE_PROTO)
@@ -308,7 +364,12 @@ class MezonApi @Inject constructor(
         }
 
         if (!response.status.isSuccess()) {
-            val errorBody = response.bodyAsText()
+            val errorBody = try {
+                response.bodyAsText()
+            } catch (e: Exception) {
+                "(body:${e.message})"
+            }
+            logRpcHttpError(method, response, body.size, errorBody)
             throw RuntimeException("RPC $method failed (${response.status.value}): $errorBody")
         }
 
@@ -329,10 +390,11 @@ class MezonApi @Inject constructor(
         }
         if (!response.status.isSuccess()) {
             val errorBody = response.bodyAsText()
+            val msg = gatewayJsonErrorUserMessage(errorBody)
             if (response.status == HttpStatusCode.Unauthorized) {
-                throw UnauthorizedException("ConfirmLogin: 401 $errorBody")
+                throw UnauthorizedException(msg)
             }
-            throw RuntimeException("ConfirmLogin failed (${response.status.value}): $errorBody")
+            throw RuntimeException(msg)
         }
         if (response.status == HttpStatusCode.NoContent) {
             return AuthSessionResponse()
@@ -705,7 +767,7 @@ class MezonApi @Inject constructor(
         }
         if (!response.status.isSuccess()) {
             val errorBody = response.bodyAsText()
-            throw RuntimeException("AuthenticateEmailOTP failed (${response.status.value}): $errorBody")
+            throw RuntimeException(gatewayJsonErrorUserMessage(errorBody))
         }
         return response.body()
     }
@@ -720,7 +782,7 @@ class MezonApi @Inject constructor(
         }
         if (!response.status.isSuccess()) {
             val errorBody = response.bodyAsText()
-            throw RuntimeException("AuthenticateSmsOTP failed (${response.status.value}): $errorBody")
+            throw RuntimeException(gatewayJsonErrorUserMessage(errorBody))
         }
         return response.body()
     }
@@ -735,7 +797,7 @@ class MezonApi @Inject constructor(
         }
         if (!response.status.isSuccess()) {
             val errorBody = response.bodyAsText()
-            throw RuntimeException("ConfirmAuthenticateOTP failed (${response.status.value}): $errorBody")
+            throw RuntimeException(gatewayJsonErrorUserMessage(errorBody))
         }
         return response.body()
     }
@@ -984,6 +1046,30 @@ class MezonApi @Inject constructor(
         return UploadAttachment.parseFrom(bytes)
     }
 
+    suspend fun listChannelAttachments(
+        apiUrl: String,
+        token: String,
+        clanId: Long,
+        channelId: Long,
+        limit: Int = 100,
+        fileType: String = "",
+        beforeTimeSeconds: Int? = null,
+        afterTimeSeconds: Int? = null,
+        state: Int = 0
+    ): ChannelAttachmentList {
+        val request = listChannelAttachmentRequest {
+            this.clanId = clanId
+            this.channelId = channelId
+            this.limit = limit.coerceIn(1, 100)
+            if (fileType.isNotEmpty()) this.fileType = fileType
+            if (state != 0) this.state = state
+            beforeTimeSeconds?.let { if (it > 0) this.before = it }
+            afterTimeSeconds?.let { if (it > 0) this.after = it }
+        }
+        val bytes = rpc(apiUrl, token, "ListChannelAttachment", request.toByteArray())
+        return ChannelAttachmentList.parseFrom(bytes)
+    }
+
     suspend fun listUserClansByUserId(
         apiUrl: String,
         token: String
@@ -1002,6 +1088,19 @@ class MezonApi @Inject constructor(
         }
         val bytes = rpc(apiUrl, token, "ListClanUsers", request.toByteArray())
         return ClanUserList.parseFrom(bytes)
+    }
+
+    suspend fun removeClanUsers(
+        apiUrl: String,
+        token: String,
+        clanId: Long,
+        userIds: List<Long>
+    ) {
+        val request = removeClanUsersRequest {
+            this.clanId = clanId
+            this.userIds.addAll(userIds)
+        }
+        rpc(apiUrl, token, "RemoveClanUsers", request.toByteArray())
     }
 
     suspend fun listRoles(

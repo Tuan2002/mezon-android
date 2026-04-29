@@ -18,6 +18,8 @@ class SharingTargetAdapter(
     private val items = ArrayList<SharingTarget>()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var diffJob: Job? = null
+    private var forwardMode: Boolean = false
+    private var forwardSelectedKeys: Set<String> = emptySet()
 
     init {
         setHasStableIds(true)
@@ -35,10 +37,19 @@ class SharingTargetAdapter(
     }
 
     override fun onBindViewHolder(holder: ViewHolder, position: Int) {
-        (holder.itemView as SharingTargetCell).setData(items[position])
+        val t = items[position]
+        val key = "${t.channelId}_${t.channelType}"
+        val sel = forwardMode && forwardSelectedKeys.contains(key)
+        (holder.itemView as SharingTargetCell).setData(t, forwardMode, sel)
     }
 
-    fun setData(newItems: List<SharingTarget>) {
+    fun setData(
+        newItems: List<SharingTarget>,
+        isForwardMultiSelect: Boolean = false,
+        selectedKeys: Set<String> = emptySet()
+    ) {
+        forwardMode = isForwardMultiSelect
+        forwardSelectedKeys = selectedKeys
         diffJob?.cancel()
         if (items.size < 50 && newItems.size < 50) {
             val result = DiffUtil.calculateDiff(Callback(items, newItems))
@@ -57,6 +68,11 @@ class SharingTargetAdapter(
         }
     }
 
+    fun updateForwardSelection(selectedKeys: Set<String>) {
+        forwardSelectedKeys = selectedKeys
+        notifyDataSetChanged()
+    }
+
     override fun onDetachedFromRecyclerView(recyclerView: RecyclerView) {
         diffJob?.cancel()
     }
@@ -69,7 +85,8 @@ class SharingTargetAdapter(
     ) : DiffUtil.Callback() {
         override fun getOldListSize() = old.size
         override fun getNewListSize() = new.size
-        override fun areItemsTheSame(a: Int, b: Int) = old[a].channelId == new[b].channelId
+        override fun areItemsTheSame(a: Int, b: Int) =
+            old[a].channelId == new[b].channelId && old[a].channelType == new[b].channelType
         override fun areContentsTheSame(a: Int, b: Int) = old[a] == new[b]
     }
 }
