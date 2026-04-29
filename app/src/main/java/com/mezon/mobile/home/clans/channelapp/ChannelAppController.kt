@@ -60,6 +60,15 @@ class ChannelAppController @Inject constructor(
         appScope.launch { loadAppsForClanNow(clanId, force) }
     }
 
+    fun purgeAppsForClan(clanId: Long) {
+        if (clanId == 0L) return
+        val m = _appsByClan.value.toMutableMap()
+        m.remove(clanId)
+        _appsByClan.value = m
+        loadingByClan.remove(clanId)
+        appScope.launch(ioDispatcher) { channelAppDao.deleteByClan(clanId) }
+    }
+
     private suspend fun loadAppsForClanNow(clanId: Long, force: Boolean) {
         if (loadingByClan[clanId] == true) return
 
