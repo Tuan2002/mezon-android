@@ -7,7 +7,9 @@ import com.mezon.mobile.data.db.MessageDao
 import com.mezon.mobile.di.ApplicationScope
 import com.mezon.mobile.di.IoDispatcher
 import com.mezon.mobile.home.chat.AttachmentPickerItem
+import com.mezon.mobile.home.chat.AttachmentInfo
 import com.mezon.mobile.home.chat.MessageEntity
+import com.mezon.mobile.home.chat.ForwardDestination
 import com.mezon.mobile.home.chat.applyReactionEvent
 import com.mezon.mobile.home.chat.toMessageEntity
 import com.mezon.mobile.network.ApiCacheTracker
@@ -39,13 +41,16 @@ import com.mezon.mobile.util.MarkdownMarker
 import com.mezon.mobile.util.buildTextContentWithEmojis
 import com.mezon.mobile.util.mergePendingMentionsIntoContent
 import com.mezon.mezon.api.MessageAttachment
+import com.mezon.mezon.api.MessageMention
 import com.mezon.mezon.api.messageAttachment
 import com.mezon.mezon.api.messageMention
+import org.json.JSONObject
 import com.mezon.mezon.rtapi.channelMessageSend
 import com.mezon.mezon.rtapi.channelMessageUpdate
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import java.util.concurrent.ConcurrentHashMap
@@ -55,6 +60,7 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 private const val TAG = "ChatController"
+private const val MAX_FORWARD_COMMENT_CHARS = 2000
 private const val PAGE_SIZE = 50
 private const val DIRECTION_AFTER = 1
 private const val DIRECTION_AROUND = 2
@@ -1513,5 +1519,213 @@ class ChatController @Inject constructor(
                 pendingKey?.let { clearPendingApiReaction(it) }
             }
         }
+    }
+
+    fun forwardMessages(
+        sourceChannelId: Long,
+        messages: List<MessageEntity>,
+        destinations: List<ForwardDestination>,
+        extraTextTrimmed: String,
+        onComplete: (ok: Boolean) -> Unit
+    ) {
+        if (messages.isEmpty() || destinations.isEmpty()) {
+            appScope.launch(Dispatchers.Main) { onComplete(false) }
+            return
+        }
+        val extraLimited = extraTextTrimmed.trim().take(MAX_FORWARD_COMMENT_CHARS)
+        appScope.launch(ioDispatcher) {
+            var allOk = true
+            try {
+                sessionManager.withAutoRefresh { session ->
+                    for (dest in destinations) {
+                        val mode = channelTypeToStreamMode(dest.channelType)
+                        val isPublic = when (dest.channelType) {
+                            CHANNEL_TYPE_CHANNEL, CHANNEL_TYPE_THREAD -> !dest.isChannelPrivate
+                            else -> false
+                        }
+                        val anon = isAnonymousSend(dest.clanId)
+                        ensureActiveArchivedThreadIfNeeded(
+                            session.apiUrl,
+                            session.token,
+                            dest.channelId,
+                            dest.clanId,
+                            dest.channelType
+                        )
+                        for (msg in messages) {
+                            val wire = mergeFwdIntoContent(msg.content)
+                            val mentionsProto: List<MessageMention>? =
+                                if (dest.channelId == sourceChannelId)
+                                    mentionsFromForwardContent(wire).takeUnless { it.isEmpty() }
+                                else
+                                    null
+                            val mentionsData = messageMentionsToData(mentionsProto)
+                            ensureMentionedUsersInThread(
+                                session.apiUrl,
+                                session.token,
+                                dest.channelId,
+                                dest.clanId,
+                                dest.channelType,
+                                mentionsData
+                            )
+                            val attProtos = attachmentsFromEntity(msg)
+                            try {
+                                if (BuildConfig.DEBUG) {
+                                    Log.d(
+                                        TAG,
+                                        "forward try ch=${dest.channelId} clan=${dest.clanId} srcCh=$sourceChannelId " +
+                                            "msgId=${msg.id} msgCode=${msg.code} dstType=${dest.channelType} mode=$mode " +
+                                            "isPublic=$isPublic anon=$anon att=${attProtos.size} " +
+                                            "mentionEv=${
+                                                extractMentionEveryoneFromForwardContent(wire)
+                                            } contentHead=${wire.take(240)}"
+                                    )
+                                }
+                                val request = channelMessageSend {
+                                    clanId = dest.clanId
+                                    channelId = dest.channelId
+                                    this.mode = mode
+                                    this.isPublic = isPublic
+                                    content = wire
+                                    this.code = msg.code
+                                    mentionsProto?.let { if (it.isNotEmpty()) mentions.addAll(it) }
+                                    if (attProtos.isNotEmpty()) attachments.addAll(attProtos)
+                                    mentionEveryone = extractMentionEveryoneFromForwardContent(wire)
+                                    if (anon) anonymousMessage = true
+                                }
+                                api.sendChannelMessage(session.apiUrl, session.token, request)
+                            } catch (e: Exception) {
+                                allOk = false
+                                val everyone = extractMentionEveryoneFromForwardContent(wire)
+                                Log.e(
+                                    TAG,
+                                    "forward REST chunk failed ch=${dest.channelId} msg=${msg.id} msgCode=${msg.code} " +
+                                        "srcCh=$sourceChannelId clan=${dest.clanId} chType=${dest.channelType} mode=$mode " +
+                                        "isPublic=$isPublic anon=$anon att=${attProtos.size} mentions=${mentionsProto?.size ?: 0} " +
+                                        "mentionEveryone=$everyone contentLen=${wire.length} contentHead=${wire.take(500)}",
+                                    e
+                                )
+                            }
+                        }
+                        if (extraLimited.isNotEmpty()) {
+                            val txt = buildTextContent(extraLimited)
+                            try {
+                                val requestExtra = channelMessageSend {
+                                    clanId = dest.clanId
+                                    channelId = dest.channelId
+                                    this.mode = mode
+                                    this.isPublic = isPublic
+                                    content = txt
+                                    if (anon) anonymousMessage = true
+                                }
+                                api.sendChannelMessage(session.apiUrl, session.token, requestExtra)
+                            } catch (e: Exception) {
+                                allOk = false
+                                Log.e(TAG, "forward REST extra comment failed channel=${dest.channelId}", e)
+                            }
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                allOk = false
+                Log.e(TAG, "forwardMessages failed", e)
+            }
+            withContext(Dispatchers.Main) { onComplete(allOk) }
+        }
+    }
+
+    private fun mergeFwdIntoContent(raw: String): String {
+        return try {
+            val o = JSONObject(raw)
+            o.put("fwd", true)
+            o.toString()
+        } catch (_: Exception) {
+            "{\"t\":\"\",\"fwd\":true}"
+        }
+    }
+
+    private fun messageMentionsToData(proto: List<MessageMention>?): List<MentionData>? {
+        if (proto.isNullOrEmpty()) return null
+        return proto.map {
+            MentionData(
+                userId = if (it.userId != 0L) it.userId.toString() else "",
+                roleId = if (it.roleId != 0L) it.roleId.toString() else "",
+                display = it.username,
+                startOffset = it.s,
+                endOffset = it.e
+            )
+        }
+    }
+
+    private fun extractMentionEveryoneFromForwardContent(content: String): Boolean {
+        return try {
+            val o = JSONObject(content)
+            val arr = o.optJSONArray("mentions") ?: return false
+            for (i in 0 until arr.length()) {
+                val uid = arr.getJSONObject(i).optString("user_id", "")
+                if (uid == "here" || uid == MENTION_HERE_USER_ID) return true
+            }
+            false
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    private fun mentionsFromForwardContent(content: String): List<MessageMention> {
+        return try {
+            val o = JSONObject(content)
+            val arr = o.optJSONArray("mentions") ?: return emptyList()
+            val list = ArrayList<MessageMention>(arr.length())
+            for (i in 0 until arr.length()) {
+                val m = arr.getJSONObject(i)
+                list.add(messageMention {
+                    s = m.optInt("s")
+                    e = m.optInt("e")
+                    val uidStr = m.optString("user_id", "")
+                    if (uidStr.isNotEmpty() && uidStr != "here") {
+                        uidStr.toLongOrNull()?.let { userId = it }
+                    }
+                    val rid = m.optLong("role_id", 0L)
+                    if (rid != 0L) roleId = rid
+                    val un = m.optString("username", "")
+                    if (un.isNotEmpty()) username = un
+                })
+            }
+            list
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+
+    private fun attachmentsFromEntity(msg: MessageEntity): List<MessageAttachment> {
+        val ais = flattenedAttachmentInfos(msg)
+        val out = ArrayList<MessageAttachment>(ais.size)
+        for (ai in ais) {
+            if (ai.url.isEmpty()) continue
+            out.add(messageAttachment {
+                url = ai.url
+                filename = ai.filename
+                filetype = ai.filetype
+                size = ai.size
+                width = ai.width
+                height = ai.height
+                if (ai.thumb.isNotEmpty()) thumbnail = ai.thumb
+                if (ai.duration != 0) duration = ai.duration
+            })
+        }
+        return out
+    }
+
+    private fun flattenedAttachmentInfos(msg: MessageEntity): List<AttachmentInfo> {
+        val parts = ArrayList<AttachmentInfo>()
+        if (msg.attachmentUrl.isNotEmpty()) {
+            parts.add(
+                AttachmentInfo(
+                    msg.attachmentUrl, msg.attachmentThumb, msg.attachmentWidth, msg.attachmentHeight,
+                    msg.attachmentFilename, msg.attachmentFiletype, msg.attachmentSize, msg.attachmentDuration
+                )
+            )
+        }
+        parts.addAll(msg.extraAttachments)
+        return parts
     }
 }

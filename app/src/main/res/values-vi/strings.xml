@@ -206,6 +206,21 @@
     <string name="message_toast_copy_image_failed">Không thể sao chép ảnh</string>
     <string name="message_paste_failed">Không thể dán ảnh</string>
     <string name="message_forwarded">Đã chuyển tiếp</string>
+    <string name="forward_screen_title">Chuyển tiếp tới</string>
+    <string name="forward_extra_hint">Thêm nhận xét (tuỳ chọn)</string>
+    <string name="forward_cta_send">Chuyển tiếp</string>
+    <string name="forward_messages_success">Đã chuyển tiếp tin nhắn</string>
+    <string name="forward_messages_error">Không thể chuyển tiếp tin nhắn</string>
+    <string name="forward_pick_dest">Chọn ít nhất một đích</string>
+    <string name="forward_empty_destinations">Không có đích</string>
+    <string name="forward_preview_many">Đang chuyển tiếp %1$d tin nhắn</string>
+    <string name="forward_meta_photos">%1$d ảnh</string>
+    <string name="forward_meta_photo">%1$d ảnh</string>
+    <string name="forward_meta_videos">%1$d video</string>
+    <string name="forward_meta_video">%1$d video</string>
+    <string name="forward_meta_files">%1$d tệp</string>
+    <string name="forward_meta_file">%1$d tệp</string>
+    <string name="forward_thumb_more">+%1$d</string>
     <string name="message_reply_deleted">Tin nhắn gốc đã bị xóa</string>
     <string name="report_message_title">Báo cáo tin nhắn</string>
     <string name="report_message_subtitle">Vui lòng chọn tùy chọn mô tả vấn đề tốt nhất.</string>
@@ -269,6 +284,44 @@
     <string name="clan_create_community_guide_link">Nguyên tắc cộng đồng của Mezon.</string>
     <string name="clan_image_too_large">Dung lượng ảnh phải nhỏ hơn %1$dMB</string>
     <string name="clan_create_failed">Không thể tạo clan. Vui lòng thử lại.</string>
+    <string name="clan_invite_need_channel">Thêm kênh văn bản để mời mọi người.</string>
+    <string name="clan_settings_title">Cài đặt clan</string>
+    <string name="clan_settings_section_settings">Cài đặt</string>
+    <string name="clan_settings_section_user_management">Quản lý người dùng</string>
+    <string name="clan_settings_overview">Tổng quan</string>
+    <string name="clan_settings_audit_log">Nhật ký chỉnh sửa</string>
+    <string name="clan_settings_integrations">Tích hợp</string>
+    <string name="clan_settings_emoji">Biểu cảm</string>
+    <string name="clan_settings_sticker">Nhãn dán</string>
+    <string name="clan_settings_sound">Hiệu ứng âm thanh</string>
+    <string name="clan_settings_enable_community">Kích hoạt cộng đồng</string>
+    <string name="clan_settings_members">Thành viên</string>
+    <string name="clan_settings_roles">Vai trò</string>
+    <string name="clan_settings_invites">Lời mời</string>
+    <string name="clan_menu_action_invite">Lời mời</string>
+    <string name="clan_menu_action_notifications">Thông báo</string>
+    <string name="clan_menu_action_settings">Cài đặt</string>
+    <string name="clan_menu_mark_as_read">Đánh dấu là đã đọc</string>
+    <string name="clan_menu_create_category">Tạo danh mục</string>
+    <string name="clan_menu_create_event">Tạo sự kiện</string>
+    <string name="clan_menu_edit_clan_profile">Sửa hồ sơ clan</string>
+    <string name="clan_menu_audit_log_option">Nhật ký kiểm tra</string>
+    <string name="clan_menu_leave_clan">Rời clan</string>
+    <string name="clan_menu_delete_clan">Xóa clan</string>
+    <string name="clan_leave_confirm_message">Bạn có chắc muốn rời \"%1$s\"?</string>
+    <string name="clan_leave_failed">Không thể rời clan.</string>
+    <string name="clan_menu_show_empty_categories">Hiển thị danh mục trống</string>
+    <string name="clan_menu_header_content_description">Mở menu clan</string>
+    <string name="menu_clan_overview_settings">Cài đặt tổng quan</string>
+    <string name="menu_clan_audit_log">Nhật ký kiểm tra</string>
+    <string name="menu_clan_integrations">Tích hợp</string>
+    <string name="menu_clan_emoji">Biểu cảm</string>
+    <string name="menu_clan_sticker">Nhãn dán</string>
+    <string name="menu_clan_sound">Hiệu ứng âm thanh</string>
+    <string name="menu_clan_enable_community">Kích hoạt cộng đồng</string>
+    <string name="menu_clan_members">Thành viên</string>
+    <string name="menu_clan_roles">Vai trò clan</string>
+    <string name="menu_clan_notification_setting">Cài đặt thông báo</string>
 
     <!-- profile -->
     <string name="profile_title">Hồ sơ</string>
@@ -401,6 +454,8 @@
     <string name="channel_apps_title_mezon">Mezon</string>
     <string name="channel_apps_title_subtitle"> Ứng dụng kênh</string>
     <string name="channel_apps_empty">Không có ứng dụng kênh nào</string>
+    <string name="channel_gallery_empty">Chưa có ảnh hoặc video được chia sẻ.</string>
+    <string name="channel_gallery_load_error">Không tải được nội dung media. Hãy thử lại.</string>
     <!-- Edit Profile -->
     <string name="edit_profile_title">Cài đặt hồ sơ</string>
     <string name="edit_profile_tab_personal">Cá nhân</string>
@@ -609,4 +664,7 @@
     <string name="create_thread_failed_title">Tạo Thread thất bại</string>
     <string name="create_thread_failed_message">Không tìm thấy Thread hoặc bạn không có quyền cập nhật</string>
     <string name="create_thread_empty_cta">Tạo Thread</string>
+    <string name="channel_files_search_placeholder">Tìm kiếm tệp</string>
+    <string name="channel_files_media_empty_description">Chúng tôi đã tìm kiếm rất xa. Thật không may, không có kết quả được tìm thấy</string>
+    <string name="channel_files_shared_by">Được chia sẻ bởi %1$s</string>
 </resources>
