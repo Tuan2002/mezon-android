@@ -37,6 +37,7 @@ class ChannelListView(
 
     var onChannelClick: ((channel: ClanChannelEntity) -> Unit)? = null
     var onChannelLongClick: ((channel: ClanChannelEntity, anchorView: android.view.View) -> Unit)? = null
+    var onSectionLongClick: ((categoryId: Long, categoryName: String, anchorView: android.view.View) -> Unit)? = null
     var activeChannelId: Long = 0L
 
     private val recyclerView: RecyclerListView
@@ -84,14 +85,22 @@ class ChannelListView(
             }
         })
         recyclerView.setOnItemLongClickListener(RecyclerListView.OnItemLongClickListener { view, _ ->
-            val cb = onChannelLongClick ?: return@OnItemLongClickListener false
             when (view) {
+                is ChannelSectionCell -> {
+                    val row = adapter.getRowForView(view) as? ChannelRow.Section ?: return@OnItemLongClickListener false
+                    if (row.isFavorite || row.categoryId == FAVORITE_CATEGORY_ID) return@OnItemLongClickListener false
+                    val cb = onSectionLongClick ?: return@OnItemLongClickListener false
+                    cb(row.categoryId, row.categoryName, view)
+                    true
+                }
                 is ChannelItemCell -> {
+                    val cb = onChannelLongClick ?: return@OnItemLongClickListener false
                     val ch = view.channel ?: return@OnItemLongClickListener false
                     cb(ch, view)
                     true
                 }
                 is ChannelThreadCell -> {
+                    val cb = onChannelLongClick ?: return@OnItemLongClickListener false
                     val th = view.thread ?: return@OnItemLongClickListener false
                     cb(th, view)
                     true
@@ -147,6 +156,19 @@ class ChannelListView(
         allExpanded = true
         expandedCategories.clear()
         persistExpansion()
+    }
+
+    fun setCategoriesGloballyExpanded(expandAll: Boolean) {
+        if (expandAll) {
+            resetExpansion()
+        } else {
+            allExpanded = false
+            expandedCategories.clear()
+            persistExpansion()
+        }
+        if (currentSections.isNotEmpty()) {
+            adapter.submitRows(buildRows(currentSections))
+        }
     }
 
     private fun applyExpandState(state: CategoryExpandState) {
