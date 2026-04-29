@@ -216,6 +216,7 @@ class ThemeColors @Inject constructor() {
         currentColors[key_connectedColor] = connectedColor
         currentColors[key_connectingColor] = connectingColor
         currentColors[key_disconnectedColor] = disconnectedColor
+        currentColors[key_color_success] = 0xFF43B581.toInt()
 
         currentColors[key_dialogBackground] = surface
         currentColors[key_dialogTextBlack] = onSurface
@@ -413,6 +414,9 @@ class ThemeColors @Inject constructor() {
     val connectedColor: Int get() = 0xFF43B581.toInt()
     val connectingColor: Int get() = 0xFFFAA61A.toInt()
     val disconnectedColor: Int get() = 0xFFF04747.toInt()
+
+    /** bgSuccess – xanh lá "success" dùng cho icon transaction, trạng thái online, v.v. */
+    val colorSuccess: Int get() = getColor(key_color_success)
 
     val blurple: Int get() = 0xFF5A62F4.toInt()
 
@@ -684,7 +688,8 @@ class ThemeColors @Inject constructor() {
         const val key_sheetItemBackground = 110
         const val key_dialogTextRed = 111
         const val key_dialogIcon = 112
+        const val key_color_success = 113
 
-        const val NUM_KEYS = 113
+        const val NUM_KEYS = 114
     }
 }

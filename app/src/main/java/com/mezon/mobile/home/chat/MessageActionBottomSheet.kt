@@ -48,7 +48,8 @@ class MessageActionBottomSheet(
         CopyMediaLink,
         CopyImage,
         ShareImage,
-        Report
+        Report,
+        GiveACoffee
     }
 
     interface MessageActionListener {
@@ -257,16 +258,25 @@ class MessageActionBottomSheet(
     private fun buildFrequentActions(): List<ActionItem> {
         val actions = mutableListOf<ActionItem>()
 
+        if (!isMyMessage) {
+            actions.add(ActionItem(
+                ActionType.GiveACoffee,
+                context.getString(R.string.action_give_coffee),
+                R.drawable.ic_gift_icon,
+                applyIconTint = false
+            ))
+        }
+
         actions.add(ActionItem(
             ActionType.Reply,
             context.getString(R.string.action_reply),
-            R.drawable.ic_arrowangleleftuplight  
+            R.drawable.ic_arrowangleleftuplight
         ))
 
         actions.add(ActionItem(
             ActionType.ForwardMessage,
             context.getString(R.string.action_forward),
-            R.drawable.ic_arrowanglerightuplight 
+            R.drawable.ic_arrowanglerightuplight
         ))
 
         if (isMyMessage) {

@@ -20,6 +20,7 @@ android {
     kotlinOptions {
         jvmTarget = "1.8"
     }
+
 }
 
 // Proto sources are symlinked from mezon-protocol into src/main/proto/:

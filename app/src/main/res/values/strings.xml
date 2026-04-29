@@ -222,11 +222,16 @@
     <string name="report_message_toast_failed">Failed to report message</string>
 
     <!-- message action aliases (used by MessageActionBottomSheet) -->
+    
     <string name="action_reply">Reply</string>
     <string name="action_forward">Forward</string>
     <string name="action_edit">Edit Message</string>
     <string name="action_create_thread">Create Thread</string>
+    <string name="action_give_coffee">Give Coffee</string>
     <string name="action_copy_text">Copy Text</string>
+    <string name="tokens_sent_title">Funds Transferred: %1$s₫</string>
+    <string name="give_coffee_action">Give coffee action</string>
+    <string name="token_transaction_transfer_button">Mezon transfer</string>
     <string name="action_pin">Pin Message</string>
     <string name="action_unpin">Unpin Message</string>
     <string name="pin_message_confirm_title">Pin Message</string>
