@@ -18,6 +18,8 @@ import com.mezon.mobile.session.SessionManager
 import com.mezon.mobile.util.avatarImgproxyUrl
 import com.mezon.mobile.home.BadgeCoordinator
 import com.mezon.mobile.home.clans.channelapp.ChannelAppController
+import com.mezon.mobile.home.UserClanController
+import com.mezon.mobile.home.profile.UserController
 import dagger.Lazy
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineDispatcher
@@ -27,6 +29,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import javax.inject.Inject
@@ -47,6 +50,9 @@ class ClansController @Inject constructor(
     private val cacheTracker: ApiCacheTracker,
     private val channelController: ChannelController,
     private val channelAppController: ChannelAppController,
+    private val userController: UserController,
+    private val userClanController: UserClanController,
+    private val roleController: RoleController,
     private val mezonSocket: MezonSocket,
     private val badgeCoordinator: Lazy<BadgeCoordinator>,
     @IoDispatcher private val ioDispatcher: CoroutineDispatcher,
@@ -304,6 +310,70 @@ class ClansController @Inject constructor(
         notificationCenter.postNotificationOnMainThread(
             NotificationCenter.updateInterfaces, NotificationCenter.UPDATE_MASK_BADGE
         )
+    }
+
+    fun requestMarkAllClanChannelsRead(clanId: Long) {
+        if (clanId == 0L) return
+        appScope.launch {
+            runCatching {
+                if (!mezonSocket.awaitConnected()) return@launch
+                mezonSocket.markAsRead(channelId = 0L, categoryId = 0L, clanId = clanId)
+            }.onFailure { Log.e(TAG, "requestMarkAllClanChannelsRead($clanId) failed", it) }
+        }
+    }
+
+    fun leaveClan(clanId: Long, onResult: (success: Boolean, message: String?) -> Unit) {
+        val uid = userController.userId
+        if (uid == 0L || clanId == 0L) {
+            appScope.launch(Dispatchers.Main.immediate) { onResult(false, "") }
+            return
+        }
+        appScope.launch {
+            try {
+                sessionManager.withAutoRefresh { session ->
+                    withContext(ioDispatcher) {
+                        api.removeClanUsers(session.apiUrl, session.token, clanId, listOf(uid))
+                    }
+                }
+                withContext(Dispatchers.Main.immediate) {
+                    applyClanLeftLocally(clanId)
+                    onResult(true, null)
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "leaveClan($clanId) failed", e)
+                withContext(Dispatchers.Main.immediate) {
+                    onResult(false, e.message)
+                }
+            }
+        }
+    }
+
+    private fun applyClanLeftLocally(clanId: Long) {
+        cacheTracker.invalidate(apiCacheKey("listClanDescs"))
+        cacheTracker.invalidate(apiCacheKey("listClanUsers", clanId.toString()))
+        cacheTracker.invalidate(apiCacheKey("listClanBadgeCount"))
+        val filtered = _clans.value.filter { it.clanId != clanId }
+        _clans.value = filtered
+        appScope.launch(ioDispatcher) { clanDao.delete(clanId) }
+        userClanController.clearClanMembersCache(clanId)
+        channelController.purgeClanChannelsCache(clanId)
+        channelAppController.purgeAppsForClan(clanId)
+        roleController.forgetClanRoles(clanId)
+        if (_selectedClanId.value == clanId) {
+            val next = filtered.firstOrNull()?.clanId ?: 0L
+            if (next != 0L) {
+                selectClan(next, force = true)
+            } else {
+                _selectedClanId.value = 0L
+                appScope.launch {
+                    withContext(ioDispatcher) {
+                        sessionManager.saveLastClanId(0L)
+                    }
+                }
+                notificationCenter.postNotificationOnMainThread(NotificationCenter.selectedClanChanged, 0L)
+            }
+        }
+        notificationCenter.postNotificationOnMainThread(NotificationCenter.clansDidLoad)
     }
 
     fun reconcileClanBadgeFromChannels(clanId: Long) {

@@ -6,5 +6,6 @@ data class ClanRole(
     val title: String,
     val color: Int,
     val iconUrl: String,
-    val slug: String
+    val slug: String,
+    val permissionSlugs: List<String>
 )
