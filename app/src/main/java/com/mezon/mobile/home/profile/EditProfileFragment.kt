@@ -7,6 +7,7 @@ import android.content.Intent
 import android.graphics.BitmapFactory
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
+import android.os.Bundle
 import android.view.Gravity
 import android.view.View
 import android.view.ViewOutlineProvider
@@ -48,6 +49,13 @@ class EditProfileFragment : BaseFragment() {
         private const val MAX_DM_LOGO_SIZE_BYTES = 1L * 1024 * 1024
         private const val TAB_PERSONAL = 0
         private const val TAB_CLAN = 1
+        private const val ARG_OPEN_CLAN_TAB = "openClanTab"
+
+        fun newOpenClanProfileTab(): EditProfileFragment {
+            return EditProfileFragment().apply {
+                arguments = Bundle().apply { putBoolean(ARG_OPEN_CLAN_TAB, true) }
+            }
+        }
 
         private const val BANNER_H = 150
         private const val AVATAR_S = 110
@@ -422,7 +430,11 @@ class EditProfileFragment : BaseFragment() {
         rootFrame.addView(loadingView, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.MATCH_PARENT))
 
         if (accountController.accountInfo.value.username.isEmpty()) accountController.loadAccount()
-        
+
+        if (arguments?.getBoolean(ARG_OPEN_CLAN_TAB) == true) {
+            switchTab(TAB_CLAN)
+        }
+
         fragmentView = rootFrame
         return rootFrame
     }

@@ -81,6 +81,20 @@ class ChannelController @Inject constructor(
         appScope.launch { loadChannelsForClanNow(clanId, force) }
     }
 
+    fun purgeClanChannelsCache(clanId: Long) {
+        if (clanId == 0L) return
+        val m = _channelsByClan.value.toMutableMap()
+        m.remove(clanId)
+        _channelsByClan.value = m
+        favoritesByClan.remove(clanId)
+        channelListLoading.remove(clanId)
+        channelListNetworkFetchInflight.remove(clanId)
+        appScope.launch(ioDispatcher) {
+            clanChannelDao.deleteByClan(clanId)
+            favoriteChannelDao.deleteByClan(clanId)
+        }
+    }
+
     internal suspend fun loadChannelsForClanNow(clanId: Long, force: Boolean = false) {
         val cacheKey = apiCacheKey("listChannelsByClan", clanId.toString())
         val inMemory = _channelsByClan.value[clanId]
@@ -196,6 +210,33 @@ class ChannelController @Inject constructor(
         updateCache(clanId, merged)
         appScope.launch(ioDispatcher) { clanChannelDao.upsert(channel) }
         notificationCenter.postNotificationOnMainThread(NotificationCenter.channelsDidLoad, clanId)
+    }
+
+    suspend fun createClanChannel(
+        clanId: Long,
+        categoryId: Long,
+        type: Int,
+        channelLabel: String,
+        channelPrivate: Int
+    ): ChannelDescription {
+        return sessionManager.withAutoRefresh { session ->
+            val desc = withContext(ioDispatcher) {
+                api.createChannelDesc(
+                    apiUrl = session.apiUrl,
+                    token = session.token,
+                    type = type,
+                    userIds = emptyList(),
+                    clanId = clanId,
+                    channelPrivate = channelPrivate,
+                    channelLabel = channelLabel.trim(),
+                    categoryId = categoryId,
+                    parentId = 0L,
+                    appId = 0L
+                )
+            }
+            upsertChannel(desc.toClanChannelEntity())
+            desc
+        }
     }
 
     suspend fun findOrFetchChannelLabel(channelId: Long, clanId: Long = 0L): String {
