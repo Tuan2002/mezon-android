@@ -1,5 +1,6 @@
 package com.mezon.mobile.home.sharing
 
+import com.mezon.mobile.home.chat.ForwardDestination
 import com.mezon.mobile.home.clans.ClanChannelEntity
 import com.mezon.mobile.home.messages.DirectMessage
 import com.mezon.mobile.network.CHANNEL_TYPE_DM
@@ -25,6 +26,15 @@ data class SharingTarget(
     val isClanChannel: Boolean get() = !isDm && !isGroup && clanId != 0L
 }
 
+fun SharingTarget.toForwardDestination(): ForwardDestination = ForwardDestination(
+    channelId = channelId,
+    clanId = clanId,
+    channelType = channelType,
+    displayLabel = channelLabel,
+    subtitle = if (isClanChannel && clanName.isNotEmpty()) clanName else "",
+    isChannelPrivate = isPrivate
+)
+
 fun DirectMessage.toSharingTarget(): SharingTarget = SharingTarget(
     channelId = channelId,
     channelLabel = displayName.ifBlank { label },
@@ -44,7 +54,6 @@ fun ClanChannelEntity.toSharingTarget(
     clanLogo: String,
     parentChannelLabel: String = ""
 ): SharingTarget {
-    val thread = parentId != 0L || type == CHANNEL_TYPE_THREAD
     return SharingTarget(
         channelId = channelId,
         channelLabel = channelLabel,
@@ -53,7 +62,7 @@ fun ClanChannelEntity.toSharingTarget(
         clanName = clanName,
         clanLogo = clanLogo,
         channelType = type,
-        isPrivate = thread || isPrivate,
+        isPrivate = isPrivate,
         parentId = parentId,
         parentChannelLabel = parentChannelLabel,
         lastActivityTs = maxOf(lastSeenMessageTs, lastSentMessageTs)
