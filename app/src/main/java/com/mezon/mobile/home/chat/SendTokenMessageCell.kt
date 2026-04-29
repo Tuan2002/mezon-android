@@ -46,8 +46,11 @@ class SendTokenMessageCell(context: Context, private val theme: ThemeColors) : F
     private val dividerView: View
     private val transferButton: TextView
 
+    companion object {
+        private const val MESSAGE_PART_SEPARATOR = " | "
+    }
+
     init {
-        // outer row: avatar | bubble column
         val row = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             setPadding(LayoutHelper.dp(12), LayoutHelper.dp(4), LayoutHelper.dp(12), LayoutHelper.dp(4))
@@ -60,10 +63,8 @@ class SendTokenMessageCell(context: Context, private val theme: ThemeColors) : F
             LayoutHelper.dp(36), LayoutHelper.dp(36)
         ).apply { rightMargin = LayoutHelper.dp(8); gravity = Gravity.TOP; topMargin = LayoutHelper.dp(2) })
 
-        // column: name + time row / card
         val col = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
 
-        // name + time
         val headerRow = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -88,7 +89,6 @@ class SendTokenMessageCell(context: Context, private val theme: ThemeColors) : F
             LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT
         ).apply { bottomMargin = LayoutHelper.dp(4) })
 
-        // card
         cardView = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             background = GradientDrawable().apply {
@@ -99,13 +99,11 @@ class SendTokenMessageCell(context: Context, private val theme: ThemeColors) : F
             clipToOutline = true
         }
 
-        // icon + text info row
         val infoRow = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
 
-        // icon container
         val iconBg = FrameLayout(context)
         transactionIconView = ImageView(context).apply {
             scaleType = ImageView.ScaleType.FIT_CENTER
@@ -118,7 +116,6 @@ class SendTokenMessageCell(context: Context, private val theme: ThemeColors) : F
             LayoutHelper.dp(40), LinearLayout.LayoutParams.WRAP_CONTENT
         ).apply { rightMargin = LayoutHelper.dp(8) })
 
-        // title + detail column
         val textCol = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
         }
@@ -142,7 +139,6 @@ class SendTokenMessageCell(context: Context, private val theme: ThemeColors) : F
             LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
         ).apply { bottomMargin = LayoutHelper.dp(8) })
 
-        // divider
         dividerView = View(context).apply {
             setBackgroundColor(theme.getColor(ThemeColors.key_divider))
         }
@@ -150,7 +146,6 @@ class SendTokenMessageCell(context: Context, private val theme: ThemeColors) : F
             LinearLayout.LayoutParams.MATCH_PARENT, 1
         ))
 
-        // Mezon transfer button
         transferButton = TextView(context).apply {
             text = context.getString(R.string.token_transaction_transfer_button)
             setTextSize(TypedValue.COMPLEX_UNIT_DIP, 14f)
@@ -184,19 +179,16 @@ class SendTokenMessageCell(context: Context, private val theme: ThemeColors) : F
         senderNameView.text = msg.senderName
         timeView.text = formatRelativeTime(msg.timestampSeconds)
 
-        // Load avatar
         avatarView.setInfo(msg.senderId, msg.senderName)
         avatarView.setImageUrl(msg.senderAvatar.ifEmpty { null })
 
-        // Parse content: {"t": "Biến động số dư: 10,000₫ | Hành động tặng cà phê", "mk": []}
         val rawText = try {
             JSONObject(msg.content).optString("t", msg.content)
         } catch (_: JSONException) {
             msg.content
         }
 
-        // Split by " | " → title | description
-        val parts = rawText.split(" | ", limit = 2)
+        val parts = rawText.split(MESSAGE_PART_SEPARATOR, limit = 2)
         val title = parts.getOrElse(0) { rawText }
         val description = parts.getOrElse(1) { "" }
 
