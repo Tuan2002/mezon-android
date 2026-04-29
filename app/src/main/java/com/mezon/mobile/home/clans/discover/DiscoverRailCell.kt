@@ -19,6 +19,14 @@ class DiscoverRailCell(
     private val joinDrawable: Drawable = MezonIcon.joinClanIcon.getDrawable(context)
     private val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG)
 
+    private var embeddedDiscoverHighlight: Boolean = false
+
+    fun setEmbeddedDiscoverHighlight(active: Boolean) {
+        if (embeddedDiscoverHighlight == active) return
+        embeddedDiscoverHighlight = active
+        invalidate()
+    }
+
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
         val w = MeasureSpec.getSize(widthMeasureSpec)
         setMeasuredDimension(w, iconSizePx + LayoutHelper.dp(16))
@@ -28,7 +36,7 @@ class DiscoverRailCell(
         val cx = width / 2f
         val cy = height / 2f
         val half = iconSizePx / 2f
-        bgPaint.color = themeColors.tertiary
+        bgPaint.color = if (embeddedDiscoverHighlight) themeColors.blurple else themeColors.surfaceVariant
         canvas.drawRoundRect(
             cx - half,
             cy - half,
