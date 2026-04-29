@@ -3,8 +3,6 @@ package com.mezon.mobile.home.chat
 import android.animation.ObjectAnimator
 import android.app.Dialog
 import android.app.DownloadManager
-import android.content.ClipData
-import android.content.ClipboardManager
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Color
@@ -34,7 +32,12 @@ import androidx.viewpager2.widget.ViewPager2
 import com.github.chrisbanes.photoview.PhotoView
 import com.mezon.mobile.R
 import com.mezon.mobile.core.LayoutHelper
+import com.mezon.mobile.di.FragmentEntryPoint
 import com.mezon.mobile.util.createImgproxyUrl
+import dagger.hilt.android.EntryPointAccessors
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.util.Locale
 
 class PhotoViewer(context: Context) : Dialog(context, android.R.style.Theme_Black_NoTitleBar_Fullscreen) {
 
@@ -139,7 +142,7 @@ class PhotoViewer(context: Context) : Dialog(context, android.R.style.Theme_Blac
             downloadUrl(currentUrl)
         })
         bottomBar.addView(createToolbarButton(context, android.R.drawable.ic_menu_agenda, "Copy") {
-            copyLink(currentUrl)
+            copyImageFromCurrentUrl()
         })
         val bottomBarParams = FrameLayout.LayoutParams(
             FrameLayout.LayoutParams.MATCH_PARENT,
@@ -355,10 +358,33 @@ class PhotoViewer(context: Context) : Dialog(context, android.R.style.Theme_Blac
         }
     }
 
-    private fun copyLink(url: String) {
-        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-        clipboard.setPrimaryClip(ClipData.newPlainText("url", url))
-        Toast.makeText(context, "Link copied", Toast.LENGTH_SHORT).show()
+    private fun copyImageFromCurrentUrl() {
+        val url = currentUrl
+        if (url.isEmpty()) return
+        val app = context.applicationContext
+        val ep = EntryPointAccessors.fromApplication(app, FragmentEntryPoint::class.java)
+        val coordinator = ep.imageClipboardCoordinator()
+        ep.applicationScope().launch {
+            val ok = coordinator.copyRemoteUrlToClipboard(context, url, guessMimeHintForCopy(url))
+            withContext(ep.mainDispatcher()) {
+                if (ok) {
+                    Toast.makeText(context, context.getString(R.string.message_toast_copy_image_done), Toast.LENGTH_SHORT).show()
+                } else {
+                    Toast.makeText(context, context.getString(R.string.message_toast_copy_image_failed), Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+    }
+
+    private fun guessMimeHintForCopy(url: String): String {
+        val lower = url.lowercase(Locale.US)
+        return when {
+            lower.endsWith(".png") -> "image/png"
+            lower.endsWith(".webp") -> "image/webp"
+            lower.endsWith(".gif") || lower.contains("tenor.com", ignoreCase = true) -> "image/gif"
+            lower.endsWith(".jpg") || lower.endsWith(".jpeg") -> "image/jpeg"
+            else -> "image/jpeg"
+        }
     }
 
     private fun downloadUrl(url: String) {

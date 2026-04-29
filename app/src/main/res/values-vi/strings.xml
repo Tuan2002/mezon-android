@@ -182,7 +182,7 @@
     <!-- message -->
     <string name="message_actions_edit">Chỉnh sửa tin nhắn</string>
     <string name="message_actions_reply">Trả lời</string>
-    <string name="message_actions_create_thread">Tạo chủ đề</string>
+    <string name="message_actions_create_thread">Tạo Thread</string>
     <string name="message_actions_copy_text">Sao chép văn bản</string>
     <string name="message_actions_delete">Xóa tin nhắn</string>
     <string name="message_actions_pin">Ghim tin nhắn</string>
@@ -205,6 +205,10 @@
     <string name="message_delete_description">Bạn có muốn xóa tin nhắn này không?</string>
     <string name="message_jump_to_latest">Đi đến tin nhắn mới nhất</string>
     <string name="message_toast_copy_text">Đã sao chép văn bản tin nhắn</string>
+    <string name="message_paste_option">Dán</string>
+    <string name="message_toast_copy_image_done">Đã sao chép ảnh</string>
+    <string name="message_toast_copy_image_failed">Không thể sao chép ảnh</string>
+    <string name="message_paste_failed">Không thể dán ảnh</string>
     <string name="message_forwarded">Đã chuyển tiếp</string>
     <string name="message_reply_deleted">Tin nhắn gốc đã bị xóa</string>
     <string name="report_message_title">Báo cáo tin nhắn</string>
@@ -333,6 +337,26 @@
     <string name="setting_log_out_yes">Có</string>
     <string name="setting_scan_qr">Quét mã QR</string>
     <string name="setting_devices">Thiết bị</string>
+    <string name="setting_devices_title">Quản lý thiết bị</string>
+    <string name="setting_devices_description1">Đây là tất cả các thiết bị đang đăng nhập vào tài khoản của bạn. Bạn có thể đăng xuất từng thiết bị.</string>
+    <string name="setting_devices_description2">Nếu bạn nhìn thấy một lượt đăng nhập mà bạn không biết, hãy đăng xuất khỏi thiết bị đó và thay đổi mật khẩu tài khoản của bạn ngay lập tức.</string>
+    <string name="setting_devices_current">Thiết bị hiện tại</string>
+    <string name="setting_devices_other">Thiết bị khác</string>
+    <string name="setting_devices_no_devices">Không tìm thấy thiết bị</string>
+    <string name="setting_devices_logged_in_at">Đăng nhập lúc</string>
+    <string name="setting_devices_current_label">Hiện tại</string>
+    <string name="setting_devices_unknown">Không xác định</string>
+    <string name="setting_devices_platform_ios">iOS</string>
+    <string name="setting_devices_platform_android">Android</string>
+    <string name="setting_devices_platform_desktop">Máy tính</string>
+    <string name="setting_devices_platform_web">Web</string>
+    <string name="setting_devices_remove">Đăng xuất khỏi thiết bị này</string>
+    <string name="setting_devices_remove_confirm_title">Đăng xuất thiết bị</string>
+    <string name="setting_devices_remove_confirm_message">Bạn có chắc chắn muốn đăng xuất khỏi thiết bị này không?</string>
+    <string name="setting_devices_remove_confirm_yes">Đăng xuất</string>
+    <string name="setting_devices_remove_confirm_no">Hủy</string>
+    <string name="setting_devices_remove_success">Đăng xuất thiết bị thành công</string>
+    <string name="setting_devices_remove_failed">Đăng xuất thiết bị thất bại</string>
     <string name="setting_app_version_label">Phiên bản ứng dụng</string>
 
     <!-- update gate (matches RN updateGate) -->
@@ -579,4 +603,14 @@
     <string name="send_token_error_amount">Nhập số tiền lớn hơn 0</string>
     <string name="send_token_error_exceeds_balance">Số tiền vượt quá số dư</string>
     <string name="send_token_error_balance_parse">Không đọc được số dư ví</string>
+
+    <string name="create_thread_name_label">Tên Thread</string>
+    <string name="create_thread_name_placeholder">Thread mới</string>
+    <string name="create_thread_new_title">Thread mới</string>
+    <string name="create_thread_private_title">Thread riêng tư</string>
+    <string name="create_thread_private_desc">Chỉ những người bạn mời và quản trị viên mới thấy Thread này</string>
+    <string name="create_thread_error_name">Vui lòng nhập tên Thread hợp lệ (tối đa 64 ký tự, chỉ chữ, số, _ hoặc -).</string>
+    <string name="create_thread_failed_title">Tạo Thread thất bại</string>
+    <string name="create_thread_failed_message">Không tìm thấy Thread hoặc bạn không có quyền cập nhật</string>
+    <string name="create_thread_empty_cta">Tạo Thread</string>
 </resources>

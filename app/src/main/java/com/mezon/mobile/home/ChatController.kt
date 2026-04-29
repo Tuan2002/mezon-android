@@ -142,6 +142,9 @@ class ChatController @Inject constructor(
         }
     }
 
+    suspend fun getMessageById(channelId: Long, messageId: Long): MessageEntity? =
+        withContext(ioDispatcher) { messageDao.getById(channelId, messageId) }
+
     fun openChannel(
         channelId: Long,
         clanId: Long,
@@ -195,6 +198,10 @@ class ChatController @Inject constructor(
                         notificationCenter.postNotificationOnMainThread(
                             NotificationCenter.messagesDidLoad, channelId, ArrayList(fromDb), true, false, true
                         )
+                    } else {
+                        notificationCenter.postNotificationOnMainThread(
+                            NotificationCenter.messagesDidLoad, channelId, ArrayList<MessageEntity>(), false, false, true
+                        )
                     }
                     return@launch
                 }
@@ -205,8 +212,8 @@ class ChatController @Inject constructor(
                         notificationCenter.postNotificationOnMainThread(
                             NotificationCenter.messagesDidLoad, channelId, ArrayList(fromDb), true, false, true
                         )
+                        return@launch
                     }
-                    return@launch
                 }
 
                 sessionManager.withAutoRefresh { session ->
@@ -1040,14 +1047,6 @@ class ChatController @Inject constructor(
 
         appScope.launch(ioDispatcher) {
             try {
-                runCatching {
-                    sessionManager.sessionFlow.first() ?: return@launch
-                    if (mezonSocket.awaitConnected()) {
-                        if (clanId != 0L) mezonSocket.joinClanChat(clanId)
-                        mezonSocket.joinChat(clanId, channelId, channelType, isPublic)
-                    }
-                }
-
                 sessionManager.withAutoRefresh { session ->
                     ensureActiveArchivedThreadIfNeeded(session.apiUrl, session.token, channelId, clanId, channelType)
                     val cdnBaseUrl = BuildConfig.MEZON_BASE_IMG_URL

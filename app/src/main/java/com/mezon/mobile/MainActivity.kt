@@ -553,7 +553,8 @@ class MainActivity : BasePermissionsActivity(),
         messageId: Long = 0L,
         noAnimation: Boolean = false,
         fromNotification: Boolean = false,
-        forceRejoin: Boolean = false
+        forceRejoin: Boolean = false,
+        replaceLastFragment: Boolean = false
     ) {
         val routeMeta = resolveChatRouteMeta(channelId, clanId, channelType)
         val resolvedChannelName = resolveChatDisplayName(channelId, channelName, clanId, routeMeta.channelType)
@@ -582,7 +583,9 @@ class MainActivity : BasePermissionsActivity(),
             isChannelPrivate = routeMeta.isPrivate,
             parentId = routeMeta.parentId
         )
-        val params = INavigationLayout.NavigationParams(fragment).setNoAnimation(noAnimation)
+        val params = INavigationLayout.NavigationParams(fragment)
+            .setNoAnimation(noAnimation)
+            .setRemoveLast(replaceLastFragment)
         actionBarLayout.presentFragment(params)
     }
 
