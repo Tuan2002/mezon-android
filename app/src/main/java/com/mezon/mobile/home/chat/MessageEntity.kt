@@ -95,7 +95,11 @@ data class MessageEntity(
         const val CODE_DELETE_EPHEMERAL = 15
         const val CODE_SHARE_CONTACT = 16
         const val CODE_LOCATION = 17
+        const val CODE_POLL = 18
     }
+
+    val isPollMessage: Boolean
+        get() = code == CODE_POLL
 
     val isUnreadDivider: Boolean
         get() = id == UNREAD_DIVIDER_ID
