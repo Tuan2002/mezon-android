@@ -104,6 +104,7 @@ class NotificationCenter(val currentAccount: Int) {
         val scrollToBottomChat = nextId()
         val userClansDidLoad = nextId()
         val clanMembersDidLoad = nextId()
+        val clanRolesDidLoad = nextId()
         val channelMembersDidLoad = nextId()
         val searchMembersDidLoad = nextId()
         val searchChannelsDidLoad = nextId()
@@ -119,6 +120,10 @@ class NotificationCenter(val currentAccount: Int) {
         val pinMessageAdded = nextId()
         val pinMessageRemoved = nextId()
         val jumpToMessage = nextId()
+        val channelFilesDidLoad = nextId()
+        val channelFilesLoadError = nextId()
+        val channelGalleryDidLoad = nextId()
+        val channelGalleryLoadError = nextId()
 
         val voiceChannelMembersChanged = nextId()
         val voiceLeftRoom = nextId()
