@@ -13,6 +13,7 @@ import com.mezon.mobile.core.NotificationCenter
 import com.mezon.mobile.core.ViewPagerActivity
 import com.mezon.mobile.core.ViewPagerFixed
 import com.mezon.mobile.di.FragmentEntryPoint
+import com.mezon.mobile.home.ChannelFilesController
 import com.mezon.mobile.home.chat.EmojiController
 import com.mezon.mobile.home.clans.ClansFragment
 import com.mezon.mobile.home.messages.MessagesFragment
@@ -39,6 +40,10 @@ class MainTabsActivity : ViewPagerActivity() {
     private lateinit var anonymousController: AnonymousController
     @Suppress("unused")
     private lateinit var pinMessageController: PinMessageController
+    @Suppress("unused")
+    private lateinit var channelGalleryController: ChannelGalleryController
+    @Suppress("unused")
+    private lateinit var channelFilesController: ChannelFilesController
     private lateinit var emojiController: EmojiController
     private lateinit var searchController: com.mezon.mobile.search.SearchController
 
@@ -88,6 +93,8 @@ class MainTabsActivity : ViewPagerActivity() {
         voiceController = entryPoint.voiceController()
         anonymousController = entryPoint.anonymousController()
         pinMessageController = entryPoint.pinMessageController()
+        channelFilesController = entryPoint.channelFilesController()
+        channelGalleryController = entryPoint.channelGalleryController()
         emojiController = entryPoint.emojiController()
         searchController = entryPoint.searchController()
         entryPoint.notificationStore()

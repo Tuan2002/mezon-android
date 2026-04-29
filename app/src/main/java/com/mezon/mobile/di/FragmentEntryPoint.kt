@@ -5,6 +5,8 @@ import com.mezon.mobile.home.AnonymousController
 import com.mezon.mobile.home.ChatController
 import com.mezon.mobile.home.ConnectionController
 import com.mezon.mobile.home.MemberResolver
+import com.mezon.mobile.home.ChannelFilesController
+import com.mezon.mobile.home.ChannelGalleryController
 import com.mezon.mobile.home.PinMessageController
 import com.mezon.mobile.home.chat.AudioPlayerController
 import com.mezon.mobile.home.chat.EmojiController
@@ -65,6 +67,8 @@ interface FragmentEntryPoint {
     fun memberResolver(): MemberResolver
     fun roleController(): RoleController
     fun pinMessageController(): PinMessageController
+    fun channelFilesController(): ChannelFilesController
+    fun channelGalleryController(): ChannelGalleryController
     fun sessionManager(): SessionManager
     fun walletController(): WalletController
 
