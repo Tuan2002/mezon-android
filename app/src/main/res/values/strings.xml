@@ -343,6 +343,7 @@
     <string name="transfer_success_title">Transfer successful!</string>
     <string name="transfer_success_recipient_label">Recipient</string>
     <string name="transfer_success_note_label">Note</string>
+    <string name="transfer_success_dash">—</string>
     <string name="transfer_success_time_label">Time</string>
     <string name="transfer_success_share">Share</string>
     <string name="transfer_success_save_image">Save image</string>
