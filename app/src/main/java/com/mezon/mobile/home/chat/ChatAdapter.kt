@@ -24,6 +24,7 @@ class ChatAdapter(
         private const val TYPE_LOADING_DOWN = 3
         private const val TYPE_SYSTEM = 4
         private const val TYPE_WELCOME = 5
+        private const val TYPE_SEND_TOKEN = 6
     }
 
     var loadingUpRow = -1
@@ -110,6 +111,7 @@ class ChatAdapter(
                 when {
                     msg.isWelcomeMessage -> TYPE_WELCOME
                     msg.isSystemMessage -> TYPE_SYSTEM
+                    msg.code == MessageEntity.CODE_SEND_TOKEN -> TYPE_SEND_TOKEN
                     msg.isMe -> TYPE_SENT
                     else -> TYPE_RECEIVED
                 }
@@ -145,6 +147,15 @@ class ChatAdapter(
                     )
                 }
                 SystemViewHolder(cell)
+            }
+            TYPE_SEND_TOKEN -> {
+                val cell = SendTokenMessageCell(parent.context, themeColors).apply {
+                    layoutParams = RecyclerView.LayoutParams(
+                        RecyclerView.LayoutParams.MATCH_PARENT,
+                        RecyclerView.LayoutParams.WRAP_CONTENT
+                    )
+                }
+                SendTokenViewHolder(cell)
             }
             else -> {
                 val cell = ChatMessageCell(parent.context, themeColors).apply {
@@ -183,6 +194,10 @@ class ChatAdapter(
                 holder.cell.channelName = channelName
                 holder.cell.update(0, messages[idx])
             }
+            is SendTokenViewHolder -> {
+                holder.cell.delegate = sendTokenDelegate
+                holder.cell.update(messages[idx])
+            }
         }
     }
 
@@ -207,9 +222,11 @@ class ChatAdapter(
     var clanId = 0L
     var isChannelPrivate = false
     var loadLinkInvitePreview: (suspend (Long) -> LinkInvitePreview?)? = null
+    var sendTokenDelegate: SendTokenMessageCell.Delegate? = null
 
     class MessageViewHolder(val cell: ChatMessageCell) : RecyclerView.ViewHolder(cell)
     class WelcomeViewHolder(val cell: WelcomeMessageCell) : RecyclerView.ViewHolder(cell)
     class SystemViewHolder(val cell: SystemMessageCell) : RecyclerView.ViewHolder(cell)
+    class SendTokenViewHolder(val cell: SendTokenMessageCell) : RecyclerView.ViewHolder(cell)
     class LoadingViewHolder(view: android.view.View) : RecyclerView.ViewHolder(view)
 }
