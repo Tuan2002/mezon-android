@@ -2,6 +2,10 @@ package com.mezon.mobile.home.sharing
 
 import android.content.Context
 import android.graphics.Canvas
+import android.graphics.Paint
+import android.graphics.RectF
+import android.graphics.PorterDuff
+import android.graphics.PorterDuffColorFilter
 import android.text.Layout
 import android.text.StaticLayout
 import android.text.TextUtils
@@ -10,6 +14,7 @@ import com.mezon.mobile.core.AvatarDrawable
 import com.mezon.mobile.core.LayoutHelper
 import com.mezon.mobile.core.ThemeColors
 import com.mezon.mobile.home.chat.MezonImageLoader
+import com.mezon.mobile.ui.cells.MezonIcon
 import com.mezon.mobile.util.avatarImgproxyUrl
 
 class SharingTargetCell(context: Context, private val theme: ThemeColors) : View(context) {
@@ -20,10 +25,24 @@ class SharingTargetCell(context: Context, private val theme: ThemeColors) : View
     var target: SharingTarget? = null
         private set
 
+    private var showForwardCheckbox: Boolean = false
+    private var forwardSelected: Boolean = false
+
     private var nameLayout: StaticLayout? = null
     private var subtitleLayout: StaticLayout? = null
+    private val checkBoxRect = RectF()
+    private val checkPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeWidth = LayoutHelper.dpf(1.5f)
+    }
+    private val checkFillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.FILL
+    }
+    private val checkMarkDrawable = MezonIcon.checkmarkSmallIcon.getDrawable(context).mutate()
 
-    fun setData(t: SharingTarget) {
+    fun setData(t: SharingTarget, forwardCheckbox: Boolean = false, isForwardSelected: Boolean = false) {
+        showForwardCheckbox = forwardCheckbox
+        forwardSelected = isForwardSelected
         target = t
         avatarDrawable.setInfo(t.channelId, t.channelLabel)
         loadAvatar(t.avatarUrl.ifEmpty { t.clanLogo })
@@ -56,7 +75,8 @@ class SharingTargetCell(context: Context, private val theme: ThemeColors) : View
 
     private fun buildLayouts() {
         val t = target ?: return
-        val availableWidth = measuredWidth - LEFT_PAD - RIGHT_PAD
+        val reserveRight = if (showForwardCheckbox) LayoutHelper.dp(28f) else 0
+        val availableWidth = measuredWidth - LEFT_PAD - RIGHT_PAD - reserveRight
         if (availableWidth <= 0) return
         val primaryText = if (t.isThread && t.parentChannelLabel.isNotEmpty()) {
             "${t.channelLabel} (${t.parentChannelLabel})"
@@ -114,6 +134,31 @@ class SharingTargetCell(context: Context, private val theme: ThemeColors) : View
             sub.draw(canvas)
             canvas.restore()
         }
+
+        if (showForwardCheckbox) {
+            val box = CHECK_BOX_SIZE.toFloat()
+            val left = (measuredWidth - RIGHT_PAD - CHECK_BOX_SIZE).toFloat()
+            val top = (CELL_HEIGHT - CHECK_BOX_SIZE) / 2f
+            checkBoxRect.set(left, top, left + box, top + box)
+            checkFillPaint.color = theme.primary
+            checkPaint.color = if (forwardSelected) theme.primary else theme.outline
+            if (forwardSelected) {
+                canvas.drawRoundRect(checkBoxRect, CHECK_CORNER, CHECK_CORNER, checkFillPaint)
+                checkMarkDrawable.colorFilter = PorterDuffColorFilter(0xFFFFFFFF.toInt(), PorterDuff.Mode.SRC_IN)
+                val cx = checkBoxRect.centerX()
+                val cy = checkBoxRect.centerY()
+                val half = CHECK_ICON / 2f
+                checkMarkDrawable.setBounds(
+                    (cx - half).toInt(),
+                    (cy - half).toInt(),
+                    (cx + half).toInt(),
+                    (cy + half).toInt()
+                )
+                checkMarkDrawable.draw(canvas)
+            } else {
+                canvas.drawRoundRect(checkBoxRect, CHECK_CORNER, CHECK_CORNER, checkPaint)
+            }
+        }
     }
 
     override fun onDetachedFromWindow() {
@@ -129,5 +174,8 @@ class SharingTargetCell(context: Context, private val theme: ThemeColors) : View
         private val LEFT_PAD = H_PAD + AVATAR_SIZE + LayoutHelper.dp(12)
         private val RIGHT_PAD = LayoutHelper.dp(16)
         private val SUBTITLE_GAP = LayoutHelper.dp(2)
+        private val CHECK_BOX_SIZE = LayoutHelper.dp(20f)
+        private val CHECK_CORNER = LayoutHelper.dpf(5f)
+        private val CHECK_ICON = LayoutHelper.dp(12f)
     }
 }

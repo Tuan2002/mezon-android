@@ -1,9 +1,26 @@
 package com.mezon.mobile.home.clans
 
+import android.graphics.drawable.GradientDrawable
+import com.mezon.mobile.core.LayoutHelper
 import com.mezon.mobile.core.ThemeColors
 import com.mezon.mobile.ui.theme.ThemeMode
 
 object CreateClanRnUiTokens {
+
+    fun clanSettingDiagonalGradient(theme: ThemeColors): GradientDrawable {
+        val cols = intArrayOf(
+            theme.serverRailBg,
+            theme.primaryContainer,
+            theme.serverRailBg
+        )
+        return GradientDrawable(GradientDrawable.Orientation.TR_BL, cols).apply {
+            gradientType = GradientDrawable.LINEAR_GRADIENT
+        }
+    }
+
+    fun clanSettingsMenuCornerPx(): Float = LayoutHelper.dp(10f).toFloat()
+
+    fun clanSettingsSectionTitleSp(): Float = LayoutHelper.sp(14f)
 
     fun screenGradientColors(theme: ThemeColors): IntArray {
         return when (theme.resolvedMode) {

@@ -142,7 +142,7 @@ class TransferSuccessFragment : BaseFragment() {
         ))
 
         addDetailRow(context, body, getString(R.string.transfer_success_recipient_label), recipient, isFirst = true)
-        addDetailRow(context, body, getString(R.string.transfer_success_note_label), note.ifEmpty { "—" })
+        addDetailRow(context, body, getString(R.string.transfer_success_note_label), note.ifEmpty { getString(R.string.transfer_success_dash) })
         addDetailRow(context, body, getString(R.string.transfer_success_time_label), time)
 
         outer.addView(scroll, LinearLayout.LayoutParams(
@@ -184,10 +184,10 @@ class TransferSuccessFragment : BaseFragment() {
             gravity = Gravity.CENTER
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
             setTypeface(null, Typeface.BOLD)
-            setTextColor(0xFFFFFFFF.toInt())
+            setTextColor(themeColors.onPrimaryContainer)
             background = GradientDrawable().apply {
                 cornerRadius = LayoutHelper.dp(32f).toFloat()
-                setColor(0xFF111111.toInt())
+                setColor(themeColors.primaryContainer)
             }
             isClickable = true
             isFocusable = true
