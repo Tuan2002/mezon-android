@@ -71,6 +71,8 @@ import com.mezon.mobile.home.chat.input.InputSuggestionsController
 import com.mezon.mobile.home.chat.input.InputSuggestionsPopup
 import com.mezon.mobile.home.chat.input.VoiceRecorder
 import com.mezon.mobile.home.chat.input.VoiceRecordingOverlay
+import com.mezon.mobile.home.sharing.SharingFragment
+import com.mezon.mobile.home.sharing.SharingPayload
 import com.mezon.mobile.home.clans.ChannelItemCell
 import com.mezon.mobile.home.clans.CHANNEL_TYPE_APP
 import com.mezon.mobile.home.clans.CHANNEL_TYPE_STREAMING
@@ -3512,6 +3514,7 @@ class ChatFragment : BaseFragment() {
         val hasMedia = msg.allImageAttachments.isNotEmpty() ||
             msg.attachmentUrl.isNotEmpty() && (msg.attachmentFiletype.startsWith("image/") || msg.attachmentFiletype.startsWith("video/"))
         val hasImage = msg.allImageAttachments.any { it.filetype.startsWith("image/") }
+        val allowFwd = !msg.isPollMessage
 
         val sheet = MessageActionBottomSheet(
             context = ctx,
@@ -3523,6 +3526,7 @@ class ChatFragment : BaseFragment() {
             canManageThread = canShowCreateThreadInMessageMenu(),
             hasMedia = hasMedia,
             hasImage = hasImage,
+            showForwardSingle = allowFwd,
             listener = object : MessageActionBottomSheet.MessageActionListener {
                 override fun onActionSelected(action: MessageActionBottomSheet.ActionType, message: MessageEntity) {
                     handleMessageAction(action, message)
@@ -3542,7 +3546,13 @@ class ChatFragment : BaseFragment() {
         sheet.show()
     }
 
+    private fun openForwardScreen(msg: MessageEntity) {
+        ForwardNavigationStash.pendingMessages = ArrayList<MessageEntity>().apply { add(msg) }
+        presentFragment(SharingFragment(SharingPayload.ForwardFromChat(channelId, clanId, channelType)))
+    }
+
     private fun showUserProfile(msg: MessageEntity) {
+
         val ctx = getContext() ?: return
         val activity = getParentActivity() ?: return
         if (activity.isFinishing || activity.isDestroyed) return
@@ -3626,8 +3636,7 @@ class ChatFragment : BaseFragment() {
                 MezonToast.show(this, ToastOverlay.ToastType.INFO, getString(R.string.message_toast_copy_text))
             }
             MessageActionBottomSheet.ActionType.ForwardMessage -> {
-                getContext() ?: return
-                MezonToast.show(this, ToastOverlay.ToastType.INFO, getString(R.string.feature_coming_soon))
+                openForwardScreen(msg)
             }
             MessageActionBottomSheet.ActionType.PinMessage -> {
                 showPinConfirmation(msg, isUnpin = false)

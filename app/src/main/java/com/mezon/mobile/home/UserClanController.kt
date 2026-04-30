@@ -120,6 +120,14 @@ class UserClanController @Inject constructor(
         return membersByClan.indexOfKey(clanId) >= 0
     }
 
+    @Synchronized
+    fun clearClanMembersCache(clanId: Long) {
+        val ix = membersByClan.indexOfKey(clanId)
+        if (ix >= 0) {
+            membersByClan.removeAt(ix)
+        }
+    }
+
     fun loadClanMembers(clanId: Long, noCache: Boolean = false) {
         if (clanId == 0L) return
         appScope.launch(ioDispatcher) {

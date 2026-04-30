@@ -84,7 +84,12 @@ class NotificationStore @Inject constructor(
 
     fun loadCategory(category: Int, notificationId: Long = 0L) {
         val clanId = currentClanId
-        if (clanId == 0L) return
+        if (clanId == 0L) {
+            notificationCenter.postNotificationOnMainThread(
+                NotificationCenter.notificationsDidLoad, category
+            )
+            return
+        }
 
         appScope.launch {
             if (notificationId == 0L && category !in dbLoadedCategories) {

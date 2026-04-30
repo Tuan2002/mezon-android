@@ -808,10 +808,10 @@ class MainActivity : BasePermissionsActivity(),
         intent.removeExtra(Intent.EXTRA_STREAM)
         intent.removeExtra(Intent.EXTRA_TEXT)
 
-        val fragment = SharingFragment(
-            sharedUris = uris,
-            sharedText = sharedText,
-            sharedMimeType = mimeType
+        val fragment = SharingFragment.fromDevice(
+            uris = uris,
+            text = sharedText,
+            mimeType = mimeType
         )
         val params = INavigationLayout.NavigationParams(fragment)
         actionBarLayout.presentFragment(params)

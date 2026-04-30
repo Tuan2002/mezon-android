@@ -6,12 +6,15 @@ import android.graphics.BitmapFactory
 import android.graphics.Color
 import android.graphics.PorterDuff
 import android.graphics.PorterDuffColorFilter
+import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.RippleDrawable
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
 import android.text.Editable
+import android.text.InputFilter
+import android.text.TextUtils
 import android.text.TextWatcher
 import android.view.Gravity
 import android.view.View
@@ -37,26 +40,37 @@ import com.mezon.mobile.core.RecyclerListView
 import com.mezon.mobile.di.FragmentEntryPoint
 import com.mezon.mobile.home.ChatController
 import com.mezon.mobile.home.DialogsController
+import com.mezon.mobile.home.chat.AttachmentInfo
 import com.mezon.mobile.home.chat.AttachmentPickerItem
+import com.mezon.mobile.home.chat.ForwardDestination
+import com.mezon.mobile.home.chat.ForwardNavigationStash
+import com.mezon.mobile.home.chat.MessageEntity
 import com.mezon.mobile.home.clans.CHANNEL_TYPE_VOICE
+import com.mezon.mobile.home.clans.ChannelController
 import com.mezon.mobile.home.clans.ClansController
+import com.mezon.mobile.home.friends.FriendController
+import com.mezon.mobile.network.CHANNEL_TYPE_CHANNEL
+import com.mezon.mobile.network.CHANNEL_TYPE_DM
+import com.mezon.mobile.network.CHANNEL_TYPE_GROUP
+import com.mezon.mobile.network.CHANNEL_TYPE_THREAD
 import com.mezon.mobile.search.LOCAL_PAGE_SIZE
 import com.mezon.mobile.search.SearchController
 import com.mezon.mobile.session.SessionManager
+import com.mezon.mobile.ui.MezonToast
 import com.mezon.mobile.ui.cells.AvatarView
 import com.mezon.mobile.ui.cells.MezonIcon
 import com.mezon.mobile.ui.cells.PopupMenu
 import com.mezon.mobile.ui.cells.ToastOverlay
+import com.mezon.mobile.util.parseContentPreview
 import com.mezon.mobile.util.parseMarkdownAndStrip
 import android.util.Log
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
+import org.json.JSONObject
 
 class SharingFragment(
-    private val sharedUris: List<Uri>,
-    private val sharedText: String?,
-    private val sharedMimeType: String?
+    private val payload: SharingPayload
 ) : BaseFragment() {
 
     private lateinit var chatController: ChatController
@@ -66,6 +80,41 @@ class SharingFragment(
     private lateinit var sessionManager: SessionManager
     private lateinit var appScope: CoroutineScope
     private lateinit var ioDispatcher: CoroutineDispatcher
+    private lateinit var channelController: ChannelController
+    private lateinit var friendController: FriendController
+
+    private val isForwardMode: Boolean
+        get() = payload is SharingPayload.ForwardFromChat
+
+    private val forwardPayload: SharingPayload.ForwardFromChat?
+        get() = payload as? SharingPayload.ForwardFromChat
+
+    private var forwardMessages = ArrayList<MessageEntity>()
+    private val forwardSelectedKeys = HashSet<String>()
+
+    private var forwardPreviewContentText: TextView? = null
+    private var forwardPreviewEmbedText: TextView? = null
+    private var forwardPreviewImagesRow: LinearLayout? = null
+    private var forwardPreviewVideosRow: LinearLayout? = null
+    private var forwardPreviewFilesRow: LinearLayout? = null
+    private var forwardPreviewImagesLabel: TextView? = null
+    private var forwardPreviewVideosLabel: TextView? = null
+    private var forwardPreviewFilesLabel: TextView? = null
+    private var forwardPreviewThumbHost: ForwardPreviewThumbHost? = null
+    private var forwardPreviewPlus: TextView? = null
+
+    private val rebuildForwardDebounced = Runnable {
+        if (fragmentView != null && !isPaused && isForwardMode) rebuildTargets()
+    }
+
+    private val sharedUris: List<Uri>
+        get() = (payload as? SharingPayload.FromDevice)?.uris ?: emptyList()
+
+    private val sharedText: String?
+        get() = (payload as? SharingPayload.FromDevice)?.text
+
+    private val sharedMimeType: String?
+        get() = (payload as? SharingPayload.FromDevice)?.mimeType
 
     private lateinit var recyclerView: RecyclerListView
     private lateinit var adapter: SharingTargetAdapter
@@ -76,7 +125,7 @@ class SharingFragment(
     private lateinit var sendButton: FrameLayout
     private lateinit var sendIcon: ImageView
     private lateinit var sendProgress: ProgressBar
-    private lateinit var thumbnailContainer: HorizontalScrollView
+    private var thumbnailContainer: HorizontalScrollView? = null
     private lateinit var filterButton: FrameLayout
     private lateinit var searchBarContainer: LinearLayout
     private lateinit var selectedChipView: LinearLayout
@@ -105,25 +154,42 @@ class SharingFragment(
         sessionManager = entryPoint.sessionManager()
         appScope = entryPoint.applicationScope()
         ioDispatcher = entryPoint.ioDispatcher()
+        channelController = entryPoint.channelController()
+        friendController = entryPoint.friendController()
     }
 
     override fun onFragmentCreate(): Boolean {
         super.onFragmentCreate()
+        if (isForwardMode) {
+            friendController.loadBlockedUsers()
+        }
         observe(NotificationCenter.dialogsNeedReload) { _, _, _ ->
             if (fragmentView == null) return@observe
-            rebuildTargets()
+            if (isForwardMode) scheduleRebuildForwardTargets() else rebuildTargets()
         }
         observe(NotificationCenter.searchChannelsDidLoad) { _, _, _ ->
-            if (fragmentView == null) return@observe
+            if (fragmentView == null || isForwardMode) return@observe
             rebuildTargets()
         }
+        observe(NotificationCenter.channelsDidLoad) { _, _, _ ->
+            if (fragmentView == null || !isForwardMode) return@observe
+            scheduleRebuildForwardTargets()
+        }
+        observe(NotificationCenter.clansDidLoad) { _, _, _ ->
+            if (fragmentView == null || !isForwardMode) return@observe
+            scheduleRebuildForwardTargets()
+        }
+        observe(NotificationCenter.blockedUsersLoaded) { _, _, _ ->
+            if (fragmentView == null || !isForwardMode) return@observe
+            scheduleRebuildForwardTargets()
+        }
         observe(NotificationCenter.pendingMessageSent) { _, _, _ ->
-            if (fragmentView == null || !isSending) return@observe
+            if (fragmentView == null || !isSending || isForwardMode) return@observe
             isSending = false
             finishFragment()
         }
         observe(NotificationCenter.pendingMessageError) { _, _, _ ->
-            if (fragmentView == null || !isSending) return@observe
+            if (fragmentView == null || !isSending || isForwardMode) return@observe
             isSending = false
             setSendingState(false)
             showErrorToast()
@@ -136,14 +202,30 @@ class SharingFragment(
         return true
     }
 
+    private fun scheduleRebuildForwardTargets() {
+        val v = fragmentView ?: return
+        v.removeCallbacks(rebuildForwardDebounced)
+        v.postDelayed(rebuildForwardDebounced, 120L)
+    }
+
     override fun onFragmentDestroy() {
+        fragmentView?.removeCallbacks(rebuildForwardDebounced)
         super.onFragmentDestroy()
         debounceRunnable?.let { debounceHandler.removeCallbacks(it) }
     }
 
     override fun createView(context: Context): View {
+        if (isForwardMode) {
+            forwardMessages = ForwardNavigationStash.takeMessages() ?: ArrayList()
+            if (forwardMessages.isEmpty()) {
+                val placeholder = FrameLayout(context)
+                placeholder.post { finishFragment() }
+                return wrapWithActionBar(getString(R.string.forward_screen_title), placeholder)
+            }
+        }
         val content = buildContent(context)
-        return wrapWithActionBar(getString(R.string.sharing_title), content)
+        val title = if (isForwardMode) R.string.forward_screen_title else R.string.sharing_title
+        return wrapWithActionBar(getString(title), content)
     }
 
     private fun buildContent(context: Context): View {
@@ -164,7 +246,7 @@ class SharingFragment(
 
         val listFrame = FrameLayout(context)
         emptyView = TextView(context).apply {
-            text = getString(R.string.sharing_no_conversations)
+            text = getString(if (isForwardMode) R.string.forward_empty_destinations else R.string.sharing_no_conversations)
             setTextColor(themeColors.onSurfaceVariant)
             textSize = 16f
             gravity = Gravity.CENTER
@@ -178,36 +260,52 @@ class SharingFragment(
         }
         (recyclerView.itemAnimator as? SimpleItemAnimator)?.supportsChangeAnimations = false
         recyclerView.itemAnimator = null
-        recyclerView.setEmptyView(emptyView)
+        if (!isForwardMode) {
+            recyclerView.setEmptyView(emptyView)
+        }
         recyclerView.setOnItemClickListener(RecyclerListView.OnItemClickListener { view, _ ->
             if (view is SharingTargetCell) {
                 val t = view.target ?: return@OnItemClickListener
-                selectTarget(t)
-            }
-        })
-        recyclerView.addOnScrollListener(object : RecyclerView.OnScrollListener() {
-            override fun onScrolled(rv: RecyclerView, dx: Int, dy: Int) {
-                if (dy <= 0) return
-                val lm = rv.layoutManager as? LinearLayoutManager ?: return
-                val total = adapter.itemCount
-                val lastVisible = lm.findLastVisibleItemPosition()
-                if (lastVisible >= total - 5 && displayLimit < filteredTargets.size) {
-                    displayLimit += LOCAL_PAGE_SIZE
-                    adapter.setData(filteredTargets.take(displayLimit))
+                if (isForwardMode) {
+                    val key = "${t.channelId}_${t.channelType}"
+                    if (forwardSelectedKeys.contains(key)) forwardSelectedKeys.remove(key) else forwardSelectedKeys.add(key)
+                    adapter.updateForwardSelection(forwardSelectedKeys)
+                    refreshForwardSelectionUi()
+                } else {
+                    selectTarget(t)
                 }
             }
         })
+        if (!isForwardMode) {
+            recyclerView.addOnScrollListener(object : RecyclerView.OnScrollListener() {
+                override fun onScrolled(rv: RecyclerView, dx: Int, dy: Int) {
+                    if (dy <= 0) return
+                    val lm = rv.layoutManager as? LinearLayoutManager ?: return
+                    val total = adapter.itemCount
+                    val lastVisible = lm.findLastVisibleItemPosition()
+                    if (lastVisible >= total - 5 && displayLimit < filteredTargets.size) {
+                        displayLimit += LOCAL_PAGE_SIZE
+                        adapter.setData(filteredTargets.take(displayLimit), false, emptySet())
+                    }
+                }
+            })
+        }
         listFrame.addView(recyclerView, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.MATCH_PARENT))
         rootView.addView(listFrame, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, 0, 1f))
 
-        chatArea = buildChatArea(context)
+        chatArea = if (isForwardMode) buildForwardChatArea(context) else buildDeviceChatArea(context)
         chatArea.visibility = View.GONE
         rootView.addView(chatArea, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT))
 
         adapter = SharingTargetAdapter(themeColors)
         recyclerView.adapter = adapter
 
+        if (isForwardMode) {
+            prefetchChannelCachesIfNeeded()
+            refreshForwardPreviewContent()
+        }
         rebuildTargets()
+        refreshSendButtonEnabled()
 
         return rootView
     }
@@ -257,7 +355,9 @@ class SharingFragment(
         ))
 
         searchEditText = EditText(context).apply {
-            hint = getString(R.string.sharing_select_channel_placeholder)
+            hint = getString(
+                if (isForwardMode) R.string.common_search_placeholder else R.string.sharing_select_channel_placeholder
+            )
             setHintTextColor(themeColors.onSurfaceVariant)
             setTextColor(themeColors.onSurface)
             background = null
@@ -273,7 +373,9 @@ class SharingFragment(
                     debounceRunnable?.let { debounceHandler.removeCallbacks(it) }
                     val query = s?.toString() ?: ""
                     debounceRunnable = Runnable {
-                        displayLimit = LOCAL_PAGE_SIZE
+                        if (!isForwardMode) {
+                            displayLimit = LOCAL_PAGE_SIZE
+                        }
                         applyFilter(query)
                     }
                     debounceHandler.postDelayed(debounceRunnable!!, DEBOUNCE_MS)
@@ -318,19 +420,180 @@ class SharingFragment(
         filterButton.addView(filterIcon, LayoutHelper.createFrame(18, 18, Gravity.CENTER))
         outer.addView(filterButton, LayoutHelper.createLinear(36, 36, 0f, Gravity.CENTER_VERTICAL, 6f, 0f, 0f, 0f))
 
+        if (isForwardMode) {
+            filterButton.visibility = View.GONE
+        }
+
         return outer
     }
 
-    private fun buildChatArea(context: Context): LinearLayout {
+    private fun buildForwardChatArea(context: Context): LinearLayout {
         val area = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(themeColors.surface)
         }
 
-        thumbnailContainer = HorizontalScrollView(context).apply {
+        val previewStrip = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setBackgroundColor(themeColors.channelPanelBg)
+        }
+        val borderAccent = View(context).apply {
+            setBackgroundColor(themeColors.outline)
+        }
+        previewStrip.addView(
+            borderAccent,
+            LinearLayout.LayoutParams(LayoutHelper.dp(2f), ViewGroup.LayoutParams.MATCH_PARENT)
+        )
+        val previewInner = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(LayoutHelper.dp(6f), LayoutHelper.dp(2f), LayoutHelper.dp(6f), LayoutHelper.dp(2f))
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        val previewCol = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+        }
+        forwardPreviewContentText = TextView(context).apply {
+            setTextColor(themeColors.onSurfaceVariant)
+            textSize = 13f
+            maxLines = 4
+            ellipsize = TextUtils.TruncateAt.END
+        }
+        forwardPreviewEmbedText = TextView(context).apply {
+            setTextColor(themeColors.onSurfaceVariant)
+            textSize = 12f
+            maxLines = 2
+            ellipsize = TextUtils.TruncateAt.END
+            visibility = View.GONE
+        }
+        fun metaRow(icon: MezonIcon): Pair<LinearLayout, TextView> {
+            val row = LinearLayout(context).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                visibility = View.GONE
+            }
+            val iv = ImageView(context).apply {
+                setImageDrawable(icon.getDrawable(context))
+                colorFilter = PorterDuffColorFilter(themeColors.onSurfaceVariant, PorterDuff.Mode.SRC_IN)
+            }
+            row.addView(iv, LayoutHelper.createLinear(16, 16, 0f, Gravity.CENTER_VERTICAL, 0f, 0f, 6f, 0f))
+            val tv = TextView(context).apply {
+                setTextColor(themeColors.onSurfaceVariant)
+                textSize = 12f
+            }
+            row.addView(tv, LayoutHelper.createLinear(0, LayoutHelper.WRAP_CONTENT, 1f))
+            return row to tv
+        }
+        val pImg = metaRow(MezonIcon.imageIcon)
+        forwardPreviewImagesRow = pImg.first
+        forwardPreviewImagesLabel = pImg.second
+        val pVid = metaRow(MezonIcon.playCircleIcon)
+        forwardPreviewVideosRow = pVid.first
+        forwardPreviewVideosLabel = pVid.second
+        val pFil = metaRow(MezonIcon.attachmentIcon)
+        forwardPreviewFilesRow = pFil.first
+        forwardPreviewFilesLabel = pFil.second
+        previewCol.addView(forwardPreviewContentText, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT))
+        previewCol.addView(forwardPreviewEmbedText, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT))
+        previewCol.addView(forwardPreviewImagesRow, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT))
+        previewCol.addView(forwardPreviewVideosRow, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT))
+        previewCol.addView(forwardPreviewFilesRow, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT))
+
+        val thumbSize = LayoutHelper.dp(50f)
+        val thumbFrame = FrameLayout(context).apply {
+            layoutParams = LinearLayout.LayoutParams(thumbSize, thumbSize).apply {
+                gravity = Gravity.CENTER_VERTICAL
+                marginStart = LayoutHelper.dp(6f)
+            }
+        }
+        forwardPreviewThumbHost = ForwardPreviewThumbHost(context)
+        thumbFrame.addView(forwardPreviewThumbHost, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.MATCH_PARENT))
+        forwardPreviewPlus = TextView(context).apply {
+            setTextColor(Color.WHITE)
+            textSize = 12f
+            typeface = Typeface.DEFAULT_BOLD
+            setPadding(LayoutHelper.dp(4f), LayoutHelper.dp(2f), LayoutHelper.dp(4f), LayoutHelper.dp(4f))
+            background = GradientDrawable().apply {
+                setColor(0x99000000.toInt())
+                cornerRadius = LayoutHelper.dpf(4f)
+            }
+            visibility = View.GONE
+        }
+        thumbFrame.addView(
+            forwardPreviewPlus,
+            FrameLayout.LayoutParams(LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT).apply {
+                gravity = Gravity.BOTTOM or Gravity.END
+                setMargins(0, 0, LayoutHelper.dp(4f), LayoutHelper.dp(4f))
+            }
+        )
+
+        previewInner.addView(previewCol, LayoutHelper.createLinear(0, LayoutHelper.WRAP_CONTENT, 1f, Gravity.CENTER_VERTICAL))
+        previewInner.addView(thumbFrame)
+        previewStrip.addView(previewInner, LayoutHelper.createLinear(0, LayoutHelper.WRAP_CONTENT, 1f))
+        area.addView(previewStrip, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT))
+
+        val inputRow = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(LayoutHelper.dp(12), LayoutHelper.dp(8), LayoutHelper.dp(8), LayoutHelper.dp(8))
+        }
+
+        captionInput = EditText(context).apply {
+            hint = getString(R.string.forward_extra_hint)
+            setHintTextColor(themeColors.onSurfaceVariant)
+            setTextColor(themeColors.onSurface)
+            background = GradientDrawable().apply {
+                setColor(themeColors.tertiary)
+                cornerRadius = LayoutHelper.dpf(20f)
+            }
+            textSize = 14f
+            maxLines = 4
+            isSingleLine = false
+            filters = arrayOf(InputFilter.LengthFilter(MAX_FORWARD_COMMENT_CHARS))
+            val padH = LayoutHelper.dp(14)
+            val padV = LayoutHelper.dp(8)
+            setPadding(padH, padV, padH, padV)
+        }
+        inputRow.addView(captionInput, LayoutHelper.createLinear(0, LayoutHelper.WRAP_CONTENT, 1f))
+
+        sendButton = FrameLayout(context).apply {
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(themeColors.primary)
+            }
+            alpha = 0.5f
+            isEnabled = false
+            setOnClickListener { onSend() }
+        }
+        sendIcon = ImageView(context).apply {
+            val d = MezonIcon.sendMessageIcon.getDrawable(context)
+            d.colorFilter = PorterDuffColorFilter(Color.WHITE, PorterDuff.Mode.SRC_IN)
+            setImageDrawable(d)
+        }
+        sendButton.addView(sendIcon, LayoutHelper.createFrame(20, 20, Gravity.CENTER))
+        sendProgress = ProgressBar(context).apply {
+            visibility = View.GONE
+            isIndeterminate = true
+            indeterminateTintList = ColorStateList.valueOf(Color.WHITE)
+        }
+        sendButton.addView(sendProgress, LayoutHelper.createFrame(20, 20, Gravity.CENTER))
+        inputRow.addView(sendButton, LayoutHelper.createLinear(40, 40, 0f, Gravity.CENTER_VERTICAL, 8f, 0f, 0f, 0f))
+
+        area.addView(inputRow, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT))
+
+        return area
+    }
+
+    private fun buildDeviceChatArea(context: Context): LinearLayout {
+        val area = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(themeColors.surface)
+        }
+
+        val thumbScroll = HorizontalScrollView(context).apply {
             isHorizontalScrollBarEnabled = false
             setPadding(LayoutHelper.dp(12), LayoutHelper.dp(8), LayoutHelper.dp(12), 0)
         }
+        thumbnailContainer = thumbScroll
         val thumbRow = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
         }
@@ -363,9 +626,9 @@ class SharingFragment(
             if (index > 0) lp.leftMargin = LayoutHelper.dp(8)
             thumbRow.addView(frame, lp)
         }
-        thumbnailContainer.addView(thumbRow)
+        thumbScroll.addView(thumbRow)
         if (sharedUris.isNotEmpty()) {
-            area.addView(thumbnailContainer, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT))
+            area.addView(thumbScroll, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT))
         }
 
         val inputRow = LinearLayout(context).apply {
@@ -445,13 +708,13 @@ class SharingFragment(
         selectedChipLabel.text = t.channelLabel
 
         chatArea.visibility = View.VISIBLE
-        sendButton.alpha = 1f
-        sendButton.isEnabled = true
+        refreshSendButtonEnabled()
 
         captionInput.requestFocus()
     }
 
     private fun clearSelection() {
+        if (isForwardMode) return
         selectedTarget = null
         searchEditText.visibility = View.VISIBLE
         searchEditText.setText("")
@@ -460,13 +723,13 @@ class SharingFragment(
         selectedChipClose.visibility = View.GONE
 
         chatArea.visibility = View.GONE
-        sendButton.alpha = 0.5f
-        sendButton.isEnabled = false
+        refreshSendButtonEnabled()
 
         searchEditText.requestFocus()
     }
 
     private fun showFilterPopup(anchor: View) {
+        if (isForwardMode) return
         AndroidUtilities.hideKeyboard(searchEditText)
 
         val popup = PopupMenu(anchor.context, themeColors)
@@ -497,6 +760,10 @@ class SharingFragment(
     }
 
     private fun rebuildTargets() {
+        if (isForwardMode) rebuildForwardTargets() else rebuildDeviceTargets()
+    }
+
+    private fun rebuildDeviceTargets() {
         allTargets.clear()
 
         val dms = dialogsController.getDialogs()
@@ -523,7 +790,72 @@ class SharingFragment(
         applyFilter(searchEditText.text?.toString() ?: "")
     }
 
+    private fun prefetchChannelCachesIfNeeded() {
+        for (clan in clansController.clans.value) {
+            if (channelController.getChannels(clan.clanId).isEmpty()) {
+                channelController.loadChannelsForClan(clan.clanId)
+            }
+        }
+    }
+
+    private fun rebuildForwardTargets() {
+        allTargets.clear()
+        val blocked = friendController.blockedUsers.value.asSequence().map { it.user.id }.toSet()
+        val clans = clansController.clans.value
+        val channelLabelById = HashMap<Long, String>()
+        for (clan in clans) {
+            for (ch in channelController.getChannels(clan.clanId)) {
+                channelLabelById[ch.channelId] = ch.channelLabel
+            }
+        }
+        for (clan in clans) {
+            for (ch in channelController.getChannels(clan.clanId)) {
+                val t = ch.type
+                if (t != CHANNEL_TYPE_CHANNEL && t != CHANNEL_TYPE_THREAD) continue
+                if (ch.channelLabel.isBlank()) continue
+                val parentLabel = if (ch.parentId != 0L) channelLabelById[ch.parentId].orEmpty() else ""
+                allTargets.add(ch.toSharingTarget(clan.clanName, clan.logo, parentLabel))
+            }
+        }
+        for (dm in dialogsController.getDialogs()) {
+            val t = dm.type
+            if (t != CHANNEL_TYPE_DM && t != CHANNEL_TYPE_GROUP) continue
+            if (dm.label.isBlank()) continue
+            if (t == CHANNEL_TYPE_DM && dm.otherUserId != 0L && dm.otherUserId in blocked) continue
+            allTargets.add(dm.toSharingTarget())
+        }
+        allTargets.sortWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.channelLabel.trim().lowercase() })
+        displayLimit = maxOf(allTargets.size, LOCAL_PAGE_SIZE)
+        applyFilter(searchEditText.text?.toString() ?: "")
+    }
+
     private fun applyFilter(query: String) {
+        if (isForwardMode) {
+            filteredTargets.clear()
+            val qTrim = query.trim()
+            when {
+                qTrim.isEmpty() -> filteredTargets.addAll(allTargets)
+                qTrim.startsWith("#") -> {
+                    val needle = qTrim.drop(1).trim().lowercase()
+                    for (t in allTargets) {
+                        if (t.channelType != CHANNEL_TYPE_CHANNEL && t.channelType != CHANNEL_TYPE_THREAD) continue
+                        if (t.channelLabel.lowercase().contains(needle)) filteredTargets.add(t)
+                    }
+                }
+                else -> {
+                    val needle = qTrim.lowercase()
+                    for (t in allTargets) {
+                        if (t.channelLabel.lowercase().contains(needle)) filteredTargets.add(t)
+                    }
+                }
+            }
+            val empty = filteredTargets.isEmpty()
+            emptyView.visibility = if (empty) View.VISIBLE else View.GONE
+            recyclerView.visibility = if (empty) View.GONE else View.VISIBLE
+            adapter.setData(filteredTargets, true, forwardSelectedKeys)
+            return
+        }
+
         filteredTargets.clear()
 
         val source = when (currentFilter) {
@@ -545,15 +877,149 @@ class SharingFragment(
             }
         }
 
-        adapter.setData(filteredTargets.take(displayLimit))
+        adapter.setData(filteredTargets.take(displayLimit), false, emptySet())
+    }
+
+    private fun refreshForwardSelectionUi() {
+        if (!isForwardMode) return
+        val has = forwardSelectedKeys.isNotEmpty()
+        chatArea.visibility = if (has) View.VISIBLE else View.GONE
+        refreshSendButtonEnabled()
+    }
+
+    private fun refreshSendButtonEnabled() {
+        if (isForwardMode) {
+            val ok = forwardSelectedKeys.isNotEmpty() && !isSending
+            sendButton.isEnabled = ok
+            sendButton.alpha = if (ok) 1f else 0.5f
+            return
+        }
+        val hasTarget = selectedTarget != null
+        sendButton.isEnabled = hasTarget && !isSending
+        sendButton.alpha = if (sendButton.isEnabled) 1f else 0.5f
+    }
+
+    private fun refreshForwardPreviewContent() {
+        val previewContentText = forwardPreviewContentText ?: return
+        val previewEmbedText = forwardPreviewEmbedText ?: return
+        val previewImagesRow = forwardPreviewImagesRow ?: return
+        val previewVideosRow = forwardPreviewVideosRow ?: return
+        val previewFilesRow = forwardPreviewFilesRow ?: return
+        val previewImagesLabel = forwardPreviewImagesLabel ?: return
+        val previewVideosLabel = forwardPreviewVideosLabel ?: return
+        val previewFilesLabel = forwardPreviewFilesLabel ?: return
+        val previewThumbHost = forwardPreviewThumbHost ?: return
+        val previewPlus = forwardPreviewPlus ?: return
+
+        val first = forwardMessages.firstOrNull()
+        if (forwardMessages.size > 1) {
+            previewContentText.text = getString(R.string.forward_preview_many, forwardMessages.size)
+        } else {
+            previewContentText.text = parseContentPreview(first?.content.orEmpty())
+        }
+        previewContentText.visibility = if (previewContentText.text.isNullOrBlank()) View.GONE else View.VISIBLE
+
+        var embedTitle = ""
+        if (first != null && forwardMessages.size <= 1) {
+            try {
+                val embeds = JSONObject(first.content).optJSONArray("embed")
+                embedTitle = embeds?.optJSONObject(0)?.optString("title").orEmpty()
+            } catch (_: Exception) {}
+        }
+        if (embedTitle.isNotEmpty()) {
+            previewEmbedText.text = embedTitle
+            previewEmbedText.visibility = View.VISIBLE
+        } else {
+            previewEmbedText.visibility = View.GONE
+        }
+
+        val mediaMsg = first
+        if (mediaMsg == null || forwardMessages.size > 1) {
+            previewImagesRow.visibility = View.GONE
+            previewVideosRow.visibility = View.GONE
+            previewFilesRow.visibility = View.GONE
+            previewThumbHost.bind(null, null)
+            previewPlus.visibility = View.GONE
+            return
+        }
+
+        val all = mutableListOf<AttachmentInfo>()
+        if (mediaMsg.attachmentUrl.isNotEmpty()) {
+            all.add(
+                AttachmentInfo(
+                    mediaMsg.attachmentUrl,
+                    mediaMsg.attachmentThumb,
+                    mediaMsg.attachmentWidth,
+                    mediaMsg.attachmentHeight,
+                    mediaMsg.attachmentFilename,
+                    mediaMsg.attachmentFiletype,
+                    mediaMsg.attachmentSize,
+                    mediaMsg.attachmentDuration
+                )
+            )
+        }
+        all.addAll(mediaMsg.extraAttachments)
+
+        var img = 0
+        var vid = 0
+        var fil = 0
+        for (a in all) {
+            when {
+                a.filetype.startsWith("image/", ignoreCase = true) ||
+                    a.filetype.contains("gif", ignoreCase = true) ||
+                    a.url.contains("tenor.com", ignoreCase = true) -> img++
+                a.filetype.startsWith("video/", ignoreCase = true) -> vid++
+                else -> fil++
+            }
+        }
+
+        if (img > 0) {
+            previewImagesRow.visibility = View.VISIBLE
+            previewImagesLabel.text = if (img == 1) getString(R.string.forward_meta_photo, img) else getString(R.string.forward_meta_photos, img)
+        } else {
+            previewImagesRow.visibility = View.GONE
+        }
+        if (vid > 0) {
+            previewVideosRow.visibility = View.VISIBLE
+            previewVideosLabel.text = if (vid == 1) getString(R.string.forward_meta_video, vid) else getString(R.string.forward_meta_videos, vid)
+        } else {
+            previewVideosRow.visibility = View.GONE
+        }
+        if (fil > 0) {
+            previewFilesRow.visibility = View.VISIBLE
+            previewFilesLabel.text = if (fil == 1) getString(R.string.forward_meta_file, fil) else getString(R.string.forward_meta_files, fil)
+        } else {
+            previewFilesRow.visibility = View.GONE
+        }
+
+        val mediaOnly = all.filter {
+            it.filetype.startsWith("image/", ignoreCase = true) ||
+                it.filetype.startsWith("video/", ignoreCase = true) ||
+                it.filetype.contains("gif", ignoreCase = true) ||
+                it.url.contains("tenor.com", ignoreCase = true)
+        }
+        if (mediaOnly.isNotEmpty()) {
+            val a0 = mediaOnly[0]
+            previewThumbHost.bind(a0.url, a0.thumb.takeIf { it.isNotBlank() } ?: a0.url)
+            val extra = mediaOnly.size - 1
+            if (extra > 0) {
+                previewPlus.text = getString(R.string.forward_thumb_more, extra)
+                previewPlus.visibility = View.VISIBLE
+            } else {
+                previewPlus.visibility = View.GONE
+            }
+        } else {
+            previewThumbHost.bind(null, null)
+            previewPlus.visibility = View.GONE
+        }
     }
 
     private fun setSendingState(sending: Boolean) {
         isSending = sending
-        sendButton.isEnabled = !sending
+        captionInput.isEnabled = !sending
         sendIcon.visibility = if (sending) View.GONE else View.VISIBLE
         sendProgress.visibility = if (sending) View.VISIBLE else View.GONE
-        captionInput.isEnabled = !sending
+        refreshSendButtonEnabled()
     }
 
     private fun showErrorToast() {
@@ -563,8 +1029,38 @@ class SharingFragment(
     }
 
     private fun onSend() {
-        val target = selectedTarget ?: return
         if (isSending) return
+        if (isForwardMode) {
+            val fp = forwardPayload ?: return
+            val picks = ArrayList<ForwardDestination>()
+            for (t in allTargets) {
+                val key = "${t.channelId}_${t.channelType}"
+                if (forwardSelectedKeys.contains(key)) picks.add(t.toForwardDestination())
+            }
+            if (picks.isEmpty()) {
+                MezonToast.show(this, ToastOverlay.ToastType.INFO, getString(R.string.forward_pick_dest))
+                return
+            }
+            AndroidUtilities.hideKeyboard(captionInput)
+            setSendingState(true)
+            chatController.forwardMessages(
+                fp.sourceChannelId,
+                forwardMessages,
+                picks,
+                captionInput.text?.toString().orEmpty()
+            ) { ok ->
+                setSendingState(false)
+                if (ok) {
+                    MezonToast.show(this, ToastOverlay.ToastType.INFO, getString(R.string.forward_messages_success))
+                    finishFragment()
+                } else {
+                    MezonToast.show(this, ToastOverlay.ToastType.ERROR, getString(R.string.forward_messages_error))
+                }
+            }
+            return
+        }
+
+        val target = selectedTarget ?: return
         AndroidUtilities.hideKeyboard(captionInput)
 
         val contentResolver = getParentActivity()?.contentResolver ?: run {
@@ -674,5 +1170,9 @@ class SharingFragment(
     companion object {
         private const val TAG = "SharingFragment"
         private const val DEBOUNCE_MS = 300L
+        private const val MAX_FORWARD_COMMENT_CHARS = 2000
+
+        fun fromDevice(uris: List<Uri>, text: String?, mimeType: String?) =
+            SharingFragment(SharingPayload.FromDevice(uris, text, mimeType))
     }
 }

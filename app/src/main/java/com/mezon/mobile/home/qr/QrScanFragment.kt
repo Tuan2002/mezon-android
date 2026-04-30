@@ -89,6 +89,7 @@ class QrScanFragment : BaseFragment() {
     private var scanningEnabled = true
     private var scanningStopped = false
     private var lastScanAt = 0L
+    private var permissionDeniedShown = false
     private val resumeScanRunnable = Runnable {
         if (!scanningStopped) {
             scanningEnabled = true
@@ -226,22 +227,19 @@ class QrScanFragment : BaseFragment() {
         scanningStopped = false
         scanningEnabled = true
         lastScanAt = 0L
-        startCameraIfPermitted()
+        val activity = getParentActivity() ?: return
+        val granted = ContextCompat.checkSelfPermission(activity, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
+        if (granted) {
+            permissionDeniedShown = false
+            bindCamera()
+        } else if (!permissionDeniedShown) {
+            ActivityCompat.requestPermissions(activity, arrayOf(Manifest.permission.CAMERA), REQUEST_CAMERA)
+        }
     }
 
     override fun onPause() {
         super.onPause()
         cameraProvider?.unbindAll()
-    }
-
-    private fun startCameraIfPermitted() {
-        val activity = getParentActivity() ?: return
-        val granted = ContextCompat.checkSelfPermission(activity, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
-        if (!granted) {
-            ActivityCompat.requestPermissions(activity, arrayOf(Manifest.permission.CAMERA), REQUEST_CAMERA)
-            return
-        }
-        bindCamera()
     }
 
     private fun bindCamera() {
@@ -403,8 +401,10 @@ class QrScanFragment : BaseFragment() {
         if (requestCode == REQUEST_CAMERA) {
             val granted = grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED
             if (granted) {
+                permissionDeniedShown = false
                 bindCamera()
             } else {
+                permissionDeniedShown = true
                 val ctx = requireContext()
                 AlertsCreator.createConfirmDialog(
                     ctx,

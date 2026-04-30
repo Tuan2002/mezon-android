@@ -1,25 +1,15 @@
 package com.mezon.mobile.home.clans.discover
 
 import android.content.Context
-import android.content.res.ColorStateList
-import android.graphics.drawable.GradientDrawable
-import android.graphics.drawable.RippleDrawable
-import android.os.Handler
-import android.os.Looper
+import android.graphics.Color
 import android.graphics.PorterDuff
 import android.graphics.PorterDuffColorFilter
-import android.text.Editable
-import android.text.TextWatcher
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
-import android.widget.EditText
 import android.widget.FrameLayout
-import android.widget.ImageView
-import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.TextView
-import android.widget.Toast
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
@@ -27,21 +17,26 @@ import com.mezon.mobile.R
 import com.mezon.mobile.core.BaseFragment
 import com.mezon.mobile.core.LayoutHelper
 import com.mezon.mobile.core.RecyclerListView
+import com.mezon.mobile.core.ThemeColors
 import com.mezon.mobile.di.FragmentEntryPoint
-import com.mezon.mobile.home.qr.QrScanFragment
 import com.mezon.mobile.network.MezonApi
 import com.mezon.mobile.session.SessionManager
-import com.mezon.mobile.ui.cells.MezonIcon
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-class DiscoverClansFragment : BaseFragment() {
+class DiscoverClansListSection(
+    private val host: BaseFragment,
+    private val themeColors: ThemeColors,
+    private val embeddedInClanPanel: Boolean
+) {
 
     companion object {
         private const val FOOTER_TYPE = 1
         private const val ROW_TYPE = 0
     }
+
+    lateinit var rootView: FrameLayout
 
     private lateinit var api: MezonApi
     private lateinit var sessionManager: SessionManager
@@ -59,42 +54,22 @@ class DiscoverClansFragment : BaseFragment() {
     private var loadError: String? = null
     private var initialLoadFinished = false
     private lateinit var emptyStateView: TextView
+    private var loadStarted = false
 
-    private val searchDebounceHandler = Handler(Looper.getMainLooper())
-    private var searchDebounceRunnable: Runnable? = null
-
-    override fun onInject(entryPoint: FragmentEntryPoint) {
+    fun inject(entryPoint: FragmentEntryPoint) {
         api = entryPoint.mezonApi()
         sessionManager = entryPoint.sessionManager()
     }
 
-    override fun createView(context: Context): View {
-        val root = LinearLayout(context).apply {
-            orientation = LinearLayout.VERTICAL
-            setBackgroundColor(themeColors.chatBackground)
-        }
-
-        actionBar = createActionBar(context).apply {
-            setTitle(context.getString(R.string.discover_community_on_mezon))
-        }
-        root.addView(actionBar, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT))
-
+    fun buildViews(context: Context) {
         listAdapter = DiscoverAdapter()
-
-        val discoverHeader = buildDiscoverSearchHeader(context)
-        root.addView(discoverHeader, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT))
-
-        val headerDivider = View(context).apply {
-            setBackgroundColor(themeColors.outlineVariant)
-        }
-        root.addView(headerDivider, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, 1))
-
+        val contentBg = if (embeddedInClanPanel) Color.TRANSPARENT else themeColors.chatBackground
         swipeRefresh = SwipeRefreshLayout(context).apply {
             setColorSchemeColors(themeColors.blurple)
             setProgressBackgroundColorSchemeColor(themeColors.secondaryLight)
             setOnRefreshListener { refresh() }
+            setBackgroundColor(if (embeddedInClanPanel) Color.TRANSPARENT else themeColors.secondaryLight)
         }
-
         emptyStateView = TextView(context).apply {
             visibility = View.GONE
             gravity = Gravity.CENTER_HORIZONTAL
@@ -106,6 +81,7 @@ class DiscoverClansFragment : BaseFragment() {
             )
             setTextColor(themeColors.textDisabled)
             textSize = 14f
+            setBackgroundColor(if (embeddedInClanPanel) Color.TRANSPARENT else contentBg)
             setOnClickListener {
                 if (loadError != null) {
                     loadError = null
@@ -113,7 +89,6 @@ class DiscoverClansFragment : BaseFragment() {
                 }
             }
         }
-
         recyclerView = RecyclerListView(context).apply {
             layoutManager = LinearLayoutManager(context).apply {
                 isItemPrefetchEnabled = false
@@ -123,6 +98,7 @@ class DiscoverClansFragment : BaseFragment() {
             isVerticalScrollBarEnabled = false
             setPadding(LayoutHelper.dp(12), LayoutHelper.dp(12), LayoutHelper.dp(12), LayoutHelper.dp(100))
             clipToPadding = false
+            setBackgroundColor(if (embeddedInClanPanel) Color.TRANSPARENT else contentBg)
             setSelectorType(RecyclerListView.SELECTOR_ROUNDRECT)
             setSelectorRadius(LayoutHelper.dp(6))
             addOnScrollListener(object : RecyclerView.OnScrollListener() {
@@ -136,144 +112,48 @@ class DiscoverClansFragment : BaseFragment() {
                 }
             })
         }
-
         recyclerView.adapter = listAdapter
-
         recyclerView.setOnItemClickListener(object : RecyclerListView.OnItemClickListener {
             override fun onItemClick(view: View, position: Int) {
                 if (view !is DiscoverClanCell) return
                 if (position in displayItems.indices) {
-                    presentFragment(DiscoverClanDetailFragment.newInstance(displayItems[position]))
+                    host.presentFragment(DiscoverClanDetailFragment.newInstance(displayItems[position]))
                 }
             }
         })
-
         swipeRefresh.addView(recyclerView, ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
-        val contentWrap = FrameLayout(context).apply {
-            addView(swipeRefresh, FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
+        rootView = FrameLayout(context).apply {
+            setBackgroundColor(if (embeddedInClanPanel) Color.TRANSPARENT else contentBg)
+            addView(swipeRefresh, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.MATCH_PARENT))
             addView(
                 emptyStateView,
-                FrameLayout.LayoutParams(
-                    FrameLayout.LayoutParams.WRAP_CONTENT,
-                    FrameLayout.LayoutParams.WRAP_CONTENT
-                ).apply { gravity = Gravity.CENTER }
+                LayoutHelper.createFrame(LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT, Gravity.CENTER)
             )
         }
-        root.addView(contentWrap, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, 0, 1f))
-
-        fragmentView = root
-        loadInitial()
-        return root
     }
 
-    private fun buildDiscoverSearchHeader(context: Context): LinearLayout {
-        val wrap = LinearLayout(context).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(
-                LayoutHelper.dp(12),
-                LayoutHelper.dp(8),
-                LayoutHelper.dp(12),
-                LayoutHelper.dp(10)
-            )
+    fun ensureLoadsIfEmbedded() {
+        if (!embeddedInClanPanel) return
+        if (!loadStarted) {
+            loadStarted = true
+            host.fragmentScope.launch { loadPage(1, isRefresh = false) }
         }
-        val navBar = LinearLayout(context).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-        }
-        val searchWrap = LinearLayout(context).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            val innerPad = LayoutHelper.dp(12)
-            setPadding(innerPad, 0, innerPad, 0)
-            background = GradientDrawable().apply {
-                setColor(themeColors.secondaryLight)
-                cornerRadius = LayoutHelper.dp(12f).toFloat()
-                setStroke(LayoutHelper.dp(1), themeColors.outlineVariant)
-            }
-            layoutParams = LinearLayout.LayoutParams(0, LayoutHelper.dp(40), 1f)
-        }
-        searchWrap.addView(ImageView(context).apply {
-            setImageDrawable(MezonIcon.magnifyingIcon.getDrawable(context, themeColors.onSurface))
-            val iconSize = LayoutHelper.dp(18)
-            layoutParams = LinearLayout.LayoutParams(iconSize, iconSize).apply {
-                rightMargin = LayoutHelper.dp(8)
-            }
-        })
-        val edit = EditText(context).apply {
-            hint = context.getString(R.string.discover_explore_communities)
-            setHintTextColor(themeColors.onSurfaceVariant)
-            setTextColor(themeColors.onSurface)
-            textSize = 14f
-            gravity = Gravity.CENTER_VERTICAL
-            includeFontPadding = false
-            setPadding(0, 0, 0, 0)
-            setLineSpacing(0f, 1f)
-            isSingleLine = true
-            setBackgroundColor(android.graphics.Color.TRANSPARENT)
-            layoutParams = LinearLayout.LayoutParams(0, LayoutHelper.MATCH_PARENT, 1f)
-            setText(DiscoverFilterHolder.searchQuery)
-        }
-        searchDebounceRunnable = Runnable {
-            DiscoverFilterHolder.searchQuery = edit.text?.toString().orEmpty()
+    }
+
+    fun onEmbeddedVisibilityChanged(active: Boolean) {
+        if (!embeddedInClanPanel) return
+        if (active && !loadStarted) ensureLoadsIfEmbedded()
+        else if (active && loadStarted) {
             rebuildDisplayItems()
-            listAdapter.notifyDataSetChanged()
             updateEmptyState()
+            listAdapter.notifyDataSetChanged()
         }
-        edit.addTextChangedListener(object : TextWatcher {
-            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
-            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
-            override fun afterTextChanged(s: Editable?) {
-                val r = searchDebounceRunnable ?: return
-                searchDebounceHandler.removeCallbacks(r)
-                searchDebounceHandler.postDelayed(r, 300)
-            }
-        })
-        searchWrap.addView(edit)
-        navBar.addView(searchWrap)
-
-        fun iconButton(icon: MezonIcon): ImageView {
-            return ImageView(context).apply {
-                val circleBg = GradientDrawable().apply {
-                    shape = GradientDrawable.OVAL
-                    setColor(themeColors.tertiary)
-                }
-                background = RippleDrawable(
-                    ColorStateList.valueOf(themeColors.onSurface and 0x1AFFFFFF),
-                    circleBg,
-                    GradientDrawable().apply {
-                        shape = GradientDrawable.OVAL
-                        setColor(0xFFFFFFFF.toInt())
-                    }
-                )
-                setImageDrawable(icon.getDrawable(context, themeColors.onSurface))
-                scaleType = ImageView.ScaleType.CENTER_INSIDE
-                val p = LayoutHelper.dp(8)
-                setPadding(p, p, p, p)
-                layoutParams = LinearLayout.LayoutParams(LayoutHelper.dp(32), LayoutHelper.dp(32)).apply {
-                    leftMargin = LayoutHelper.dp(8)
-                }
-            }
-        }
-        val qrBtn = iconButton(MezonIcon.scanQR)
-        qrBtn.setOnClickListener {
-            presentFragment(QrScanFragment())
-        }
-        navBar.addView(qrBtn)
-        val addFriendBtn = iconButton(MezonIcon.userPlusIcon)
-        addFriendBtn.setOnClickListener {
-            showAddFriendBottomSheet()
-        }
-        navBar.addView(addFriendBtn)
-
-        wrap.addView(navBar, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT))
-        return wrap
     }
 
-    override fun onBecomeFullyVisible() {
-        super.onBecomeFullyVisible()
+    fun onSearchFilterChangedFromParent() {
         rebuildDisplayItems()
-        updateEmptyState()
         listAdapter.notifyDataSetChanged()
+        updateEmptyState()
     }
 
     private fun refresh() {
@@ -285,16 +165,12 @@ class DiscoverClansFragment : BaseFragment() {
         allItems.clear()
         rebuildDisplayItems()
         listAdapter.notifyDataSetChanged()
-        fragmentScope.launch { loadPage(1, isRefresh = true) }
-    }
-
-    private fun loadInitial() {
-        fragmentScope.launch { loadPage(1, isRefresh = false) }
+        host.fragmentScope.launch { loadPage(1, isRefresh = true) }
     }
 
     private fun loadMore() {
         if (loadingMore || loading || currentPage >= serverPageCount) return
-        fragmentScope.launch { loadPage(currentPage + 1, isRefresh = false) }
+        host.fragmentScope.launch { loadPage(currentPage + 1, isRefresh = false) }
     }
 
     private suspend fun loadPage(page: Int, isRefresh: Boolean) {
@@ -360,7 +236,7 @@ class DiscoverClansFragment : BaseFragment() {
 
     private fun resolveLoadErrorMessage(e: Throwable): String {
         val msg = e.message.orEmpty()
-        val ctx = fragmentView?.context ?: return msg.ifBlank { "Error" }
+        val ctx = host.fragmentView?.context ?: return msg.ifBlank { "Error" }
         return when {
             msg.contains("404") -> ctx.getString(R.string.discover_list_load_error)
             msg.isNotBlank() -> msg
@@ -401,6 +277,19 @@ class DiscoverClansFragment : BaseFragment() {
         }
     }
 
+    fun loadInitialForFullscreen() {
+        if (embeddedInClanPanel) return
+        loadStarted = true
+        host.fragmentScope.launch { loadPage(1, isRefresh = false) }
+    }
+
+    fun onFullscreenBecomeVisible() {
+        if (embeddedInClanPanel) return
+        rebuildDisplayItems()
+        updateEmptyState()
+        listAdapter.notifyDataSetChanged()
+    }
+
     private inner class DiscoverAdapter : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
 
         init {
@@ -432,7 +321,7 @@ class DiscoverClansFragment : BaseFragment() {
                 val wrap = FrameLayout(parent.context).apply {
                     setPadding(0, LayoutHelper.dp(20), 0, LayoutHelper.dp(20))
                     addView(pb, FrameLayout.LayoutParams(LayoutHelper.dp(32), LayoutHelper.dp(32)).apply {
-                        gravity = android.view.Gravity.CENTER
+                        gravity = Gravity.CENTER
                     })
                 }
                 return object : RecyclerView.ViewHolder(wrap) {}
@@ -444,18 +333,9 @@ class DiscoverClansFragment : BaseFragment() {
         override fun onBindViewHolder(holder: RecyclerView.ViewHolder, position: Int) {
             if (holder.itemView is DiscoverClanCell) {
                 if (position in displayItems.indices) {
-                    holder.itemView.setData(displayItems[position])
+                    (holder.itemView as DiscoverClanCell).setData(displayItems[position])
                 }
             }
         }
-    }
-
-    private fun View.setData(item: DiscoverClanItem) {
-        (this as DiscoverClanCell).setData(item)
-    }
-
-    override fun onFragmentCreate(): Boolean {
-        super.onFragmentCreate()
-        return true
     }
 }
