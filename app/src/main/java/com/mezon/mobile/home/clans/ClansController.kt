@@ -132,7 +132,13 @@ class ClansController @Inject constructor(
                     logo = logo
                 )
             }
-        }.toClanEntity()
+        }.toClanEntity().let { created ->
+            if (created.creatorId == 0L && userController.userId != 0L) {
+                created.copy(creatorId = userController.userId)
+            } else {
+                created
+            }
+        }
         val old = _clans.value
         val next = old + createdClan.copy(clanOrder = old.size)
         _clans.value = next

@@ -14,7 +14,8 @@ data class ClanEntity(
     val badgeCount: Int,
     val isCommunity: Boolean,
     val hasUnread: Boolean,
-    val clanOrder: Int
+    val clanOrder: Int,
+    val creatorId: Long = 0L,
 )
 
 fun ClanDesc.toClanEntity(): ClanEntity = ClanEntity(
@@ -25,5 +26,6 @@ fun ClanDesc.toClanEntity(): ClanEntity = ClanEntity(
     badgeCount = badgeCount,
     isCommunity = isCommunity,
     hasUnread = hasUnreadMessage,
-    clanOrder = clanOrder
+    clanOrder = clanOrder,
+    creatorId = creatorId,
 )
