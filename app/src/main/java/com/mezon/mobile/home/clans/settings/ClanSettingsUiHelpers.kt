@@ -1,4 +1,4 @@
-package com.mezon.mobile.home.clans
+package com.mezon.mobile.home.clans.settings
 
 import android.content.Context
 import android.graphics.PorterDuff
@@ -12,6 +12,7 @@ import android.widget.TextView
 import androidx.core.widget.NestedScrollView
 import com.mezon.mobile.core.LayoutHelper
 import com.mezon.mobile.core.ThemeColors
+import com.mezon.mobile.home.clans.CreateClanRnUiTokens
 import com.mezon.mobile.ui.cells.MezonIcon
 
 object ClanSettingsUiHelpers {
@@ -26,6 +27,8 @@ object ClanSettingsUiHelpers {
         return NestedScrollView(context).apply {
             isFillViewport = false
             overScrollMode = View.OVER_SCROLL_NEVER
+            clipChildren = false
+            clipToPadding = false
         }
     }
 
