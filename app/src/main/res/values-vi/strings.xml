@@ -307,6 +307,11 @@
     <string name="clan_settings_members">Thành viên</string>
     <string name="clan_settings_roles">Vai trò</string>
     <string name="clan_settings_invites">Lời mời</string>
+    <string name="clan_settings_change_logo">Đổi biểu tượng clan</string>
+    <string name="clan_settings_remove_logo">Gỡ biểu tượng clan</string>
+    <string name="clan_settings_logo_permission_denied">Bạn không có quyền thay đổi biểu tượng clan.</string>
+    <string name="clan_settings_logo_too_large">Ảnh clan tối đa 1 MB.</string>
+    <string name="clan_settings_logo_update_failed">Không cập nhật được biểu tượng clan. Thử lại.</string>
     <string name="clan_menu_action_invite">Lời mời</string>
     <string name="clan_menu_action_notifications">Thông báo</string>
     <string name="clan_menu_action_settings">Cài đặt</string>
