@@ -15,7 +15,7 @@ out/
 gradle-app.setting
 
 # Local configuration (contains machine-specific paths)
-# local.properties
+local.properties
 # gradle.properties
 
 # Android Studio

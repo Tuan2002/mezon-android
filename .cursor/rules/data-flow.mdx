@@ -1,0 +1,37 @@
+---
+description: Mezon Android data flow — controllers, NotificationCenter, Room dual-write, sockets
+globs: app/src/main/java/com/mezon/mobile/**/*.kt
+alwaysApply: false
+---
+
+# Data flow and architecture
+
+Mezon Android is **not** MVVM-with-`StateFlow` for primary screens. Follow the existing Telegram-style pipeline.
+
+## Layers
+
+- **Controllers** (`@Singleton`, Hilt `@Inject`): Own synchronized in-memory caches (`ArrayList`, `LongSparseArray`, etc.), call REST/WebSocket, apply socket-driven updates, and persist with Room.
+- **NotificationCenter**: Main-thread event bus keyed by **integer IDs** (`NotificationCenter.messagesDidLoad`, …). UI reacts via observers, not screen-level `StateFlow`.
+- **BaseFragment**: Custom lifecycle (stack managed by `ActionBarLayout`, not AndroidX `FragmentManager` for the main flow). Call `inject(context)` before using `entryPoint()`.
+- **Room**: WAL, `@Upsert`, bounded queries where already used (e.g. message caps per channel).
+
+## End-to-end flow
+
+```text
+WebSocket ──► SocketEventDispatcher (SharedFlows) ──► Controller (merge into caches + async Room)
+REST      ──► MezonApi ──► Controller ──► NotificationCenter.postNotificationOnMainThread / …
+Room      ──► Controller init / cold paths ──► caches + NC events
+
+NotificationCenter ──► BaseFragment.observe() ──► adapters / cell.invalidate / partial row updates
+```
+
+## Rules for agents
+
+1. **Dual-write**: Update in-memory structures **first** on the relevant dispatcher; persist with Room from **`@IoDispatcher`** / `withContext(ioDispatcher)` — avoid blocking the main thread on DB I/O.
+2. **Notify UI from controllers**: After meaningful cache changes, post **`NotificationCenter`** events on the main thread (`postNotificationOnMainThread`, `postNotificationNameOnUIThread`, etc.). Add **new** event IDs only in `NotificationCenter` (use `nextId()` pattern next to existing constants).
+3. **Subscribe from fragments**: Use `observe(eventId) { … }` or `observeGlobal` when the event is account-global. Remove reliance on observers via existing `BaseFragment` teardown (do not leak delegates).
+4. **Sockets**: Do **not** bypass `SocketEventDispatcher` for inbound multiplexing; controllers should collect its `SharedFlow`s from `@ApplicationScope` coroutines (mirror `ChatController` `init`).
+5. **REST caching**: Respect **`ApiCacheTracker`** where the codebase already gates duplicate calls; do not add ad-hoc global caches that fight it.
+6. **Cold start**: Load bounded data from DAOs in controller initialization paths, then refresh from network — match surrounding controller patterns.
+
+When introducing a new feature, extend an existing **controller** + **NC events** + **fragment observers** rather than introducing a parallel reactive stack.

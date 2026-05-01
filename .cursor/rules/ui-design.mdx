@@ -1,0 +1,31 @@
+---
+description: Custom View UI — BaseCell, ThemeColors, lists, performance (no Compose for primary UI)
+globs: app/src/main/java/com/mezon/mobile/**/*.kt
+alwaysApply: false
+---
+
+# UI design and implementation
+
+Primary UI is **custom `View` / `ViewGroup`** (Telegram-style), **not** Jetpack Compose for main screens.
+
+## Core types
+
+- **`BaseFragment`**: Screens use `themeColors`, `LayoutHelper`, `observe` for `NotificationCenter`, and **`wrapWithActionBar`** when adding a standard bar. Navigation is **`ActionBarLayout`** / `MainActivity` stack — not Navigation Component graphs.
+- **`BaseCell`**: List rows and dense UI blocks subclass **`BaseCell`**. Drawing uses **`Canvas`** / `StaticLayout`-style patterns with paints from **`ThemeColors`**.
+- **`ThemeColors`**: **`@Singleton`** — holds shared **`TextPaint`** / **`Paint`** instances and resolved palette values. Cells and fragments should reuse these paints and theme keys instead of allocating new paints every frame.
+
+## Performance rules
+
+1. **`onDraw` / drawing paths**: No per-frame allocations; reuse layouts, paints, and rects from **`ThemeColors`** or instance fields.
+2. **Invalidation**: Use targeted updates (`invalidate`, optional **`invalidateLite`**, **`listenInvalidate`** callbacks) and adapter patterns like **`updateVisibleRows`** / masks where the codebase already does partial updates — avoid full list churn when possible.
+3. **`BaseCell` caching**: Respect **`drawCached`**, **`allowCaching()`**, **`forceNotCacheNextFrame`** semantics; only bypass caching when content truly changed.
+4. **Lists**: Prefer **`DiffUtil`** and visible-row update APIs consistent with existing adapters.
+
+## Rules for agents
+
+- Do **not** add Compose as the primary UI for new features unless the project explicitly migrates; integrate with **`BaseFragment`** + custom views.
+- New row UI → **`BaseCell`** (or established cell subclasses), wired colors/fonts via **`ThemeColors`**.
+- Theme changes flow through **`NotificationCenter.themeChanged`**; action bars wrapped with **`wrapWithActionBar`** already subscribe — follow that pattern for custom chrome.
+- Haptics/long-press are handled in **`BaseCell`**; use **`super`** touch handling patterns when extending.
+
+Match **`LayoutHelper`** and dimension helpers (`dp`, `sp`) used adjacent to your changes.
