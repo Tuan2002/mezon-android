@@ -16,6 +16,8 @@ import com.mezon.mobile.core.ThemeColors
 import com.mezon.mobile.ui.cells.AvatarView
 import com.mezon.mobile.ui.cells.MezonIcon
 import com.mezon.mobile.ui.cells.SwitchView
+import com.mezon.mobile.home.clans.settings.ClanSettingsPermissionState
+import com.mezon.mobile.home.clans.settings.ClanSettingsUiHelpers
 
 class ClanMenuBottomSheet(
     context: Context,
@@ -27,7 +29,8 @@ class ClanMenuBottomSheet(
     private val totalMemberCount: Int,
     notificationMuted: Boolean,
     private val permissionState: ClanSettingsPermissionState,
-    showEmptyCategories: Boolean
+    showEmptyCategories: Boolean,
+    private val onOpenClanSettings: Runnable,
 ) : BottomSheet(context) {
 
     private fun showComingSoon() {
@@ -156,7 +159,7 @@ class ClanMenuBottomSheet(
             theme,
             MezonIcon.settingIcon,
             context.getString(R.string.clan_menu_action_settings),
-            Runnable { showComingSoon() }
+            Runnable { onOpenClanSettings.run() }
         )
 
         val actionRow = LinearLayout(context).apply {

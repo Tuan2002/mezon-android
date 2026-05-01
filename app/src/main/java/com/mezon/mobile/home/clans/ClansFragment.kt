@@ -57,6 +57,8 @@ import com.mezon.mobile.home.clans.discover.DiscoverClansListSection
 import com.mezon.mobile.home.clans.discover.buildDiscoverCommunitySearchToolbar
 import com.mezon.mobile.home.clans.discover.DiscoverRailCell
 import com.mezon.mobile.home.clans.CreateClanRnUiTokens
+import com.mezon.mobile.home.clans.settings.ClanSettingFragment
+import com.mezon.mobile.home.clans.settings.ClanSettingsPermissionState
 import com.mezon.mobile.search.GlobalSearchFragment
 import com.mezon.mobile.ui.cells.MezonIcon
 import com.mezon.mobile.home.qr.QrScanFragment
@@ -814,7 +816,8 @@ class ClansFragment : BaseFragment() {
                 userController,
                 clanId,
                 members,
-                roles
+                roles,
+                clan.creatorId,
             )
             val expandState = channelCategoryExpandStore.load(clanId)
             dismissClanMenuSheet()
@@ -828,7 +831,11 @@ class ClansFragment : BaseFragment() {
                 members.size,
                 false,
                 permissionState,
-                expandState.allExpanded
+                expandState.allExpanded,
+                Runnable {
+                    dismissClanMenuSheet()
+                    presentFragment(ClanSettingFragment.newInstance(clanId))
+                }
             )
             clanMenuSheet = sheet
             sheet.show()
