@@ -80,3 +80,10 @@ mmn-client-kotlin/build
 .idea/
 
 build/
+
+# AI agents
+.claude/skills/
+.claude/rules/
+
+.cursor/skills/
+.cursor/rules/
