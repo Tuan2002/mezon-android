@@ -64,6 +64,7 @@ import com.mezon.mezon.api.listNotificationsRequest
 import com.mezon.mezon.api.searchMessageRequest
 import com.mezon.mezon.api.sessionRefreshRequest
 import com.mezon.mezon.api.Session
+import com.mezon.mezon.api.updateUsernameRequest
 import com.mezon.mezon.api.GenerateMeetTokenResponse
 import com.mezon.mezon.api.VoiceChannelUserList
 import com.mezon.mezon.api.generateMeetTokenRequest
@@ -119,7 +120,9 @@ data class AuthSessionResponse(
     @SerialName("user_id") val userId: String = "",
     @SerialName("api_url") val apiUrl: String = "",
     @SerialName("ws_url") val wsUrl: String = "",
-    @SerialName("id_token") val idToken: String = ""
+    @SerialName("id_token") val idToken: String = "",
+    val username: String? = null,
+    val created: Boolean? = null
 )
 
 @Serializable
@@ -800,6 +803,17 @@ class MezonApi @Inject constructor(
             throw RuntimeException(gatewayJsonErrorUserMessage(errorBody))
         }
         return response.body()
+    }
+
+    suspend fun updateUsername(apiUrl: String, token: String, username: String): Session {
+        val request = updateUsernameRequest {
+            this.username = username
+        }
+        val bytes = rpc(apiUrl, token, "UpdateUsername", request.toByteArray())
+        if (bytes.isEmpty()) {
+            throw RuntimeException("UpdateUsername returned empty body")
+        }
+        return Session.parseFrom(bytes)
     }
 
     suspend fun deleteAccount(apiUrl: String, token: String): ByteArray {
