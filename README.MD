@@ -46,50 +46,24 @@ Native Android client for the Mezon messaging platform. The app is built in **Ko
 
 ## Getting started
 
-### 1. Clone this repository
+### 1. Clone this repository (including submodules)
+
+Protobuf definitions live in **`mezon-protocol`**, included as a **Git submodule** at the repo root.
 
 ```bash
-git clone <mezon-android-repository-url> ~/AndroidStudioProjects/mezon
+git clone --recurse-submodules <mezon-android-repository-url> ~/AndroidStudioProjects/mezon
 ```
 
-### 2. Clone `mezon-protocol` (required for code generation)
-
-Place the protocol repo anywhere on disk and keep the **absolute path** — the `:core-proto` module uses symlinks to it.
-
-```bash
-git clone https://github.com/mezonai/mezon-protocol.git ~/dev/mezon-protocol
-```
-
-### 3. Create proto symlinks
-
-The Gradle Protobuf plugin resolves imports using **absolute** symlink targets (do not use relative paths like `../../../`).
+If you already cloned without submodules:
 
 ```bash
 cd ~/AndroidStudioProjects/mezon
-mkdir -p core-proto/src/main/proto
-
-PROTO_DIR="/absolute/path/to/mezon-protocol"   # set to your actual clone
-
-ln -sf "$PROTO_DIR/api"   core-proto/src/main/proto/api
-ln -sf "$PROTO_DIR/rtapi" core-proto/src/main/proto/rtapi
+git submodule update --init --recursive
 ```
 
-Example:
+The submodule tracks [github.com/mezonai/mezon-protocol](https://github.com/mezonai/mezon-protocol) (pinned commit in `.gitmodules` / superproject).
 
-```bash
-ln -sf /Users/<you>/dev/mezon-protocol/api   core-proto/src/main/proto/api
-ln -sf /Users/<you>/dev/mezon-protocol/rtapi core-proto/src/main/proto/rtapi
-```
-
-Verify:
-
-```bash
-ls -la core-proto/src/main/proto/
-# api   -> /absolute/path/to/mezon-protocol/api
-# rtapi -> /absolute/path/to/mezon-protocol/rtapi
-```
-
-### 4. Open and sync
+### 2. Open and sync
 
 Open the `mezon/` directory in Android Studio and let Gradle sync complete.
 
@@ -98,7 +72,7 @@ Open the `mezon/` directory in Android Studio and let Gradle sync complete.
 ## Protocol buffer setup
 
 - Generated sources live in the **`:core-proto`** module.
-- Symlinks under `core-proto/src/main/proto/` must point to the **`api/`** and **`rtapi/`** trees inside `mezon-protocol`.
+- `.proto` files are read from the **`mezon-protocol`** submodule (Gradle uses the repo root so imports like `api/api.proto` stay valid).
 
 ---
 
@@ -137,15 +111,27 @@ For a full debug build including proto generation:
 
 ## Updating `mezon-protocol`
 
-When the protocol repository changes, pull and regenerate:
+Point the submodule at a newer commit, then regenerate:
 
 ```bash
-cd /path/to/mezon-protocol
+cd /path/to/mezon/mezon-protocol
+git fetch origin
+git checkout main   # or a release tag
 git pull origin main
 
 cd /path/to/mezon
+git add mezon-protocol
+git commit -m "Bump mezon-protocol submodule"
+
 ./gradlew :core-proto:generateDebugProto
 ./gradlew app:compileDebugKotlin
+```
+
+To only sync your working copy to the commit recorded by the parent repo (no bump):
+
+```bash
+cd /path/to/mezon
+git submodule update --init --recursive
 ```
 
 ---
