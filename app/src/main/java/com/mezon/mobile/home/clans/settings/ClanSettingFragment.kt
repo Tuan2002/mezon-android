@@ -15,6 +15,7 @@ import android.view.View
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
+import android.widget.ProgressBar
 import android.widget.TextView
 import com.mezon.mobile.R
 import com.mezon.mobile.core.AndroidUtilities
@@ -35,6 +36,7 @@ import com.mezon.mobile.ui.MezonToast
 import com.mezon.mobile.ui.cells.AvatarView
 import com.mezon.mobile.ui.cells.MezonIcon
 import com.mezon.mobile.ui.cells.ToastOverlay
+import kotlinx.coroutines.launch
 
 class ClanSettingFragment : BaseFragment() {
 
@@ -55,6 +57,7 @@ class ClanSettingFragment : BaseFragment() {
     private lateinit var userController: UserController
 
     private lateinit var scrollInner: LinearLayout
+    private var logoUploadOverlay: FrameLayout? = null
 
     override fun onInject(entryPoint: FragmentEntryPoint) {
         clansController = entryPoint.clansController()
@@ -174,6 +177,12 @@ class ClanSettingFragment : BaseFragment() {
         root.addView(scroll, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, 0, 1f))
 
         refreshMenu()
+        fragmentScope.launch(entryPoint().mainDispatcher()) {
+            clansController.clanLogoUpdateInFlight.collect { ids ->
+                val show = clanId != 0L && clanId in ids
+                logoUploadOverlay?.visibility = if (show) View.VISIBLE else View.GONE
+            }
+        }
         fragmentView = root
         return root
     }
@@ -194,7 +203,7 @@ class ClanSettingFragment : BaseFragment() {
         )
 
         scrollInner.addView(
-            buildLogoStrip(clan, perm.isShowOverviewOption),
+            buildClanLogoStrip(clan, perm.isShowOverviewOption),
             LayoutHelper.createLinear(
                 LayoutHelper.MATCH_PARENT,
                 LayoutHelper.WRAP_CONTENT,
@@ -225,7 +234,7 @@ class ClanSettingFragment : BaseFragment() {
         )
     }
 
-    private fun buildLogoStrip(clan: ClanEntity, canEditClanLogo: Boolean): LinearLayout {
+    private fun buildClanLogoStrip(clan: ClanEntity, canEditClanLogo: Boolean): LinearLayout {
         val ctx = scrollInner.context
         val outer = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
@@ -233,27 +242,33 @@ class ClanSettingFragment : BaseFragment() {
             clipChildren = false
             setPadding(0, LayoutHelper.dp(40f), 0, LayoutHelper.dp(40f))
         }
-        val avatarDp = 60
-        val avPx = LayoutHelper.dp(avatarDp)
+        val tileDp = 76
+        val logoInsetDpInt = 4
+        val avatarInnerDp = (tileDp - 2 * logoInsetDpInt).coerceAtLeast(24)
+        val logoInsetPx = LayoutHelper.dp(logoInsetDpInt.toFloat())
+        val tilePx = LayoutHelper.dp(tileDp)
+        val avPx = LayoutHelper.dp(avatarInnerDp)
+        val tileCornerDp = 20f * tileDp / 60f
         val padding = 12
-        val wrapperSize = avatarDp + padding
-        val removeInset = LayoutHelper.dp(6f)
+        val wrapperSize = tileDp + padding
         val logoWrap = FrameLayout(ctx).apply {
             clipChildren = false
             clipToPadding = false
+            layoutDirection = View.LAYOUT_DIRECTION_LTR
         }
         val innerHolder = FrameLayout(ctx).apply {
             clipChildren = false
+            setPadding(logoInsetPx, logoInsetPx, logoInsetPx, logoInsetPx)
             background = GradientDrawable().apply {
                 shape = GradientDrawable.RECTANGLE
-                cornerRadius = LayoutHelper.dpf(20f)
+                cornerRadius = LayoutHelper.dpf(tileCornerDp)
                 setColor(Color.TRANSPARENT)
                 setStroke(LayoutHelper.dp(1), themeColors.borderDim)
             }
         }
         val avatar = AvatarView(ctx).apply {
-            setSizeDp(avatarDp)
-            setRoundRadius(20f)
+            setSizeDp(avatarInnerDp)
+            setRoundRadius((tileCornerDp - logoInsetDpInt).coerceAtLeast(6f))
             setInfo(clan.clanId, clan.clanName)
             if (clan.logo.isNotEmpty()) setImageUrl(clan.logo)
         }
@@ -261,34 +276,64 @@ class ClanSettingFragment : BaseFragment() {
             avatar,
             FrameLayout.LayoutParams(avPx, avPx, Gravity.CENTER)
         )
-        logoWrap.addView(
-            innerHolder,
-            FrameLayout.LayoutParams(avPx, avPx, Gravity.BOTTOM or Gravity.START)
-        )
         if (canEditClanLogo) {
             avatar.isClickable = true
             avatar.setOnClickListener { openClanLogoPicker() }
-            if (clan.logo.isNotEmpty()) {
-                val removeSz = LayoutHelper.dp(24)
-                val removeBtn = ImageView(ctx).apply {
-                    setImageDrawable(MezonIcon.circleXIcon.getDrawable(context, themeColors.error))
-                    scaleType = ImageView.ScaleType.FIT_CENTER
-                    isClickable = true
-                    setOnClickListener {
-                        removeClanLogo()
-                    }
-                    elevation = LayoutHelper.dpf(1f)
-                }
-                logoWrap.addView(
-                    removeBtn,
-                    FrameLayout.LayoutParams(removeSz, removeSz).apply {
-                        gravity = Gravity.TOP or Gravity.END
-                        topMargin = removeInset
-                        marginEnd = removeInset
-                    }
-                )
-            }
         }
+        logoWrap.addView(
+            innerHolder,
+            FrameLayout.LayoutParams(tilePx, tilePx, Gravity.CENTER)
+        )
+        if (canEditClanLogo && clan.logo.isNotEmpty()) {
+            val removeSzDp = 20f
+            val removeSz = LayoutHelper.dp(removeSzDp)
+            val gapDpF = (wrapperSize - tileDp) / 2f
+            val innerRightDp = gapDpF + tileDp
+            val innerTopDp = gapDpF
+            val removeBtn = ImageView(ctx).apply {
+                setImageDrawable(MezonIcon.circleXIcon.getDrawable(context, themeColors.error))
+                scaleType = ImageView.ScaleType.FIT_CENTER
+                isClickable = true
+                contentDescription = context.getString(R.string.clan_settings_remove_logo)
+                setOnClickListener {
+                    removeClanLogo()
+                }
+                elevation = LayoutHelper.dpf(4f)
+            }
+
+            val badgeLeftDp = innerRightDp - removeSzDp
+            val badgeTopDp = innerTopDp
+            logoWrap.addView(
+                removeBtn,
+                FrameLayout.LayoutParams(removeSz, removeSz).apply {
+                    gravity = Gravity.NO_GRAVITY
+                    leftMargin = LayoutHelper.dp(badgeLeftDp)
+                    topMargin = LayoutHelper.dp(badgeTopDp)
+                }
+            )
+        }
+        val uploading = clanId != 0L && clanId in clansController.clanLogoUpdateInFlight.value
+        val logoBusyOverlay = FrameLayout(ctx).apply {
+            visibility = if (uploading) View.VISIBLE else View.GONE
+            setBackgroundColor(0x66000000)
+            isClickable = true
+            val pb = ProgressBar(ctx).apply {
+                isIndeterminate = true
+                indeterminateTintList = ColorStateList.valueOf(themeColors.colorText)
+            }
+            addView(
+                pb,
+                FrameLayout.LayoutParams(LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT, Gravity.CENTER)
+            )
+        }
+        logoWrap.addView(
+            logoBusyOverlay,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+        )
+        logoUploadOverlay = logoBusyOverlay
         outer.addView(
             logoWrap,
             LayoutHelper.createLinear(
@@ -329,19 +374,20 @@ class ClanSettingFragment : BaseFragment() {
     }
     
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
         if (resultCode != Activity.RESULT_OK || requestCode != REQUEST_CODE_PICK_CLAN_LOGO) return
-        // TODO: Persist picked clan logo
-        // val uri = resolvePickedImageUri(data) ?: return
+        val clip = data?.clipData
+        val uri = clip?.getItemAt(0)?.uri ?: data?.data ?: return
+        presentFragment(ClanLogoTransformFragment.newInstance(clanId, uri.toString()))
     }
-
-    // TODO: Enable when logo upload is wired.
-    private fun handleClanLogoPicked(uri: Uri) {
-       
-    }
-    
-    // TODO: Remove clan logo
     private fun removeClanLogo() {
-      
+        clansController.updateClanLogo(clanId, "") { ok, msg ->
+            if (!ok) {
+                val text = msg?.takeIf { it.isNotBlank() }
+                    ?: getString(R.string.clan_settings_logo_update_failed)
+                MezonToast.show(this, ToastOverlay.ToastType.ERROR, text)
+            }
+        }
     }
 
     private fun buildSettingsRows(ctx: Context, perm: ClanSettingsPermissionState): List<View> {

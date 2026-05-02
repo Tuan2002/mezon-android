@@ -37,6 +37,7 @@ import com.mezon.mezon.api.addFriendsRequest
 import com.mezon.mezon.api.blockFriendsRequest
 import com.mezon.mezon.api.createCategoryDescRequest
 import com.mezon.mezon.api.createClanDescRequest
+import com.mezon.mezon.api.updateClanDescRequest
 import com.mezon.mezon.api.deleteFriendsRequest
 import com.mezon.mezon.api.deleteNotificationsRequest
 import com.mezon.mezon.api.filterParam
@@ -497,6 +498,22 @@ class MezonApi @Inject constructor(
             this.banner = banner
         }
         val bytes = rpc(apiUrl, token, "CreateClanDesc", request.toByteArray())
+        return ClanDesc.parseFrom(bytes)
+    }
+
+    suspend fun updateClanDesc(
+        apiUrl: String,
+        token: String,
+        clanId: Long,
+        logo: String? = null,
+    ): ClanDesc {
+        val request = updateClanDescRequest {
+            this.clanId = clanId
+            if (logo != null) {
+                this.logo = com.google.protobuf.StringValue.of(logo)
+            }
+        }
+        val bytes = rpc(apiUrl, token, "UpdateClanDesc", request.toByteArray())
         return ClanDesc.parseFrom(bytes)
     }
 
