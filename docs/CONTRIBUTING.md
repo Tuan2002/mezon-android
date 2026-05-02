@@ -19,26 +19,6 @@ This guide describes **who does what**, how we expect **human** and **AI-assiste
 - Run a **debug build** (and relevant tests) before requesting review; note gaps if the environment is incomplete (e.g. missing `google-services.json`).
 - Do **not** commit secrets, `local.properties`, or generated paths that are machine-specific. See [README.MD](../README.MD) for Firebase and `mezon.secrets.properties`.
 
-### AI coding agents (Cursor, Claude Code, and similar)
-
-Agents are treated as **tools used by contributors**: output is still **your** change set to review and own.
-
-**Responsibilities**
-
-1. **Load project constraints** before editing:
-   - [Architecture](./ARCHITECTURE.md) and [.cursor/rules/data-flow.mdx](../.cursor/rules/data-flow.mdx), [ui-design.mdx](../.cursor/rules/ui-design.mdx), [name-convention.mdx](../.cursor/rules/name-convention.mdx) (or the mirrored `.claude/rules/` copies if you use Claude Code with those paths).
-   - Optional deep dives: [.claude/skills/data-flow/SKILL.md](../.claude/skills/data-flow/SKILL.md), [ui-design/SKILL.md](../.claude/skills/ui-design/SKILL.md).
-2. **Stay in scope**: implement the requested behavior only; avoid broad refactors, renames, or unrelated file churn.
-3. **Match the codebase**: extend existing controllers and `NotificationCenter` events rather than introducing parallel MVVM/`StateFlow` shells for primary screens; use `BaseFragment` + custom views for main UI, not Compose, unless the project explicitly migrates.
-4. **Preserve threading contracts**: dual-write memory first; Room on I/O; UI signals on the main thread via `NotificationCenter`.
-5. **Do not invent** new socket plumbing: use **`SocketEventDispatcher`** for inbound multiplexing; respect **`ApiCacheTracker`** where already used.
-6. **Secrets and local config**: never add real tokens, `google-services.json`, or team-only properties to the repo; do not paste secrets into prompts that leave the machine uncontrolled.
-7. **MCP (optional)**: [MCP setup](./MCP.md) (FadCat, android-mcp) is for debugging and device automation; it does not replace reading the architecture docs.
-
-**Humans using agents** should paste or attach the relevant rules/skills in the session when possible, and should **verify** diffs (especially `NotificationCenter`, controllers, and Room migrations) before pushing.
-
----
-
 ## Suggested workflow
 
 1. **Branch** from the integration branch your team uses (e.g. `main` or `develop`).
