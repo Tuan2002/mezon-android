@@ -108,6 +108,7 @@ class ClansFragment : BaseFragment() {
     private var renderedIsCommunity: Boolean? = null
     private var renderedBannerUrl: String? = null
     private var renderedSubtitleKey: String? = null
+    private var clanHeaderBannerLoadSeq = 0
 
     override fun onInject(entryPoint: FragmentEntryPoint) {
         clansController = entryPoint.clansController()
@@ -708,12 +709,17 @@ class ClansFragment : BaseFragment() {
                 bannerImage?.visibility = View.VISIBLE
                 val context = bannerImage?.context
                 if (context != null) {
+                    val loadSeq = ++clanHeaderBannerLoadSeq
+                    val url = clan.banner
                     val loader = MezonImageLoader.getInstance(context)
-                    bannerCancellable = loader.load(clan.banner, 800, LayoutHelper.dp(140), onSuccess = { bitmap ->
+                    bannerCancellable = loader.load(url, 800, LayoutHelper.dp(140), onSuccess = { bitmap ->
+                        if (loadSeq != clanHeaderBannerLoadSeq) return@load
+                        if (renderedBannerUrl != url) return@load
                         bannerImage?.setImageBitmap(bitmap)
                     })
                 }
             } else {
+                clanHeaderBannerLoadSeq++
                 bannerImage?.setImageBitmap(null)
                 bannerImage?.visibility = View.GONE
             }

@@ -16,6 +16,9 @@ data class ClanEntity(
     val hasUnread: Boolean,
     val clanOrder: Int,
     val creatorId: Long = 0L,
+    val preventAnonymous: Boolean = false,
+    val welcomeChannelId: Long = 0L,
+    val isOnboarding: Boolean = false,
 )
 
 fun ClanDesc.toClanEntity(): ClanEntity = ClanEntity(
@@ -28,4 +31,14 @@ fun ClanDesc.toClanEntity(): ClanEntity = ClanEntity(
     hasUnread = hasUnreadMessage,
     clanOrder = clanOrder,
     creatorId = creatorId,
+    preventAnonymous = preventAnonymous,
+    welcomeChannelId = welcomeChannelId,
+    isOnboarding = isOnboarding,
 )
+
+fun ClanDesc.mergeOnto(existing: ClanEntity): ClanEntity =
+    toClanEntity().copy(
+        badgeCount = existing.badgeCount,
+        hasUnread = existing.hasUnread,
+        clanOrder = existing.clanOrder,
+    )

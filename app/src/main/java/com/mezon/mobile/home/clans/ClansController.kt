@@ -11,12 +11,16 @@ import com.mezon.mobile.di.ApplicationScope
 import com.mezon.mobile.di.IoDispatcher
 import com.mezon.mobile.network.ApiCacheTracker
 import com.mezon.mezon.api.ClanBadgeCount
+import com.mezon.mezon.api.ClanDesc
+import com.mezon.mezon.api.SystemMessage
+import com.mezon.mezon.api.SystemMessageRequest
 import com.mezon.mobile.network.MezonApi
 import com.mezon.mobile.network.MezonSocket
 import com.mezon.mobile.network.SocketEventDispatcher
 import com.mezon.mobile.network.apiCacheKey
 import com.mezon.mobile.session.SessionManager
 import com.mezon.mobile.util.avatarImgproxyUrl
+import com.mezon.mobile.util.createImgproxyUrl
 import com.mezon.mobile.home.BadgeCoordinator
 import com.mezon.mobile.home.clans.channelapp.ChannelAppController
 import com.mezon.mobile.home.UserClanController
@@ -333,6 +337,107 @@ class ClansController @Inject constructor(
         }
     }
 
+    fun mergeClanFromDesc(desc: ClanDesc, trustedBanner: String? = null) {
+        val list = _clans.value
+        val idx = list.indexOfFirst { it.clanId == desc.clanId }
+        if (idx < 0) return
+        var merged = desc.mergeOnto(list[idx])
+        if (trustedBanner != null) {
+            merged = merged.copy(banner = trustedBanner)
+        }
+        _clans.value = list.toMutableList().also { it[idx] = merged }
+        appScope.launch(ioDispatcher) { clanDao.upsert(merged) }
+        cacheTracker.invalidate(apiCacheKey("listClanDescs"))
+        notificationCenter.postNotificationOnMainThread(NotificationCenter.clanInfoUpdated, desc.clanId)
+    }
+
+    fun invalidateBannerImageCaches(rawSourceUrls: Collection<String>, extraWidthPx: Int = 0) {
+        if (rawSourceUrls.isEmpty()) return
+        val h = LayoutHelper.dp(200f)
+        val minW = LayoutHelper.dp(300f)
+        val screenW = appContext.resources.displayMetrics.widthPixels
+        val widths = buildSet {
+            add(minW)
+            add(screenW.coerceAtLeast(minW))
+            if (extraWidthPx > 0) add(extraWidthPx.coerceAtLeast(minW))
+        }
+        val loader = MezonImageLoader.getInstance(appContext)
+        for (src in rawSourceUrls) {
+            val t = src.trim()
+            if (t.isEmpty()) continue
+            for (w in widths) {
+                val url = createImgproxyUrl(t, w, h, "fit")
+                if (url.isEmpty()) continue
+                loader.invalidateCachedLoad(url, w, h)
+            }
+        }
+    }
+
+    suspend fun updateClanOverviewDesc(
+        clanId: Long,
+        clanName: String,
+        clanBannerUrl: String?,
+        preventAnonymous: Boolean,
+        welcomeChannelId: Long?,
+        isOnboarding: Boolean?,
+        invalidateBannerSources: Collection<String>? = null,
+        bannerExtraWidthPx: Int = 0,
+    ): ClanDesc {
+        val desc = sessionManager.withAutoRefresh { session ->
+            withContext(ioDispatcher) {
+                api.updateClanDesc(
+                    session.apiUrl,
+                    session.token,
+                    clanId,
+                    clanName = clanName,
+                    banner = clanBannerUrl,
+                    clearBanner = false,
+                    preventAnonymous = preventAnonymous,
+                    welcomeChannelId = welcomeChannelId,
+                    isOnboarding = isOnboarding,
+                )
+            }
+        }
+        if (!invalidateBannerSources.isNullOrEmpty()) {
+            invalidateBannerImageCaches(invalidateBannerSources, bannerExtraWidthPx)
+        }
+        mergeClanFromDesc(desc, trustedBanner = clanBannerUrl)
+        return desc
+    }
+
+    suspend fun updateClanSystemMessage(body: SystemMessageRequest): SystemMessage {
+        return sessionManager.withAutoRefresh { session ->
+            withContext(ioDispatcher) {
+                api.updateSystemMessage(session.apiUrl, session.token, body)
+            }
+        }
+    }
+
+    fun deleteClan(clanId: Long, onResult: (success: Boolean, message: String?) -> Unit) {
+        if (clanId == 0L) {
+            appScope.launch(Dispatchers.Main.immediate) { onResult(false, "") }
+            return
+        }
+        appScope.launch {
+            try {
+                sessionManager.withAutoRefresh { session ->
+                    withContext(ioDispatcher) {
+                        api.deleteClanDesc(session.apiUrl, session.token, clanId)
+                    }
+                }
+                withContext(Dispatchers.Main.immediate) {
+                    applyClanLeftLocally(clanId)
+                    onResult(true, null)
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "deleteClan($clanId) failed", e)
+                withContext(Dispatchers.Main.immediate) {
+                    onResult(false, e.message)
+                }
+            }
+        }
+    }
+
     fun leaveClan(clanId: Long, onResult: (success: Boolean, message: String?) -> Unit) {
         val uid = userController.userId
         if (uid == 0L || clanId == 0L) {
@@ -460,12 +565,7 @@ class ClansController @Inject constructor(
                     return@launch
                 }
                 val existing = list[idx]
-                val merged = existing.copy(
-                    clanName = desc.clanName.ifEmpty { existing.clanName },
-                    logo = desc.logo.ifEmpty { logoUrl },
-                    banner = desc.banner.ifEmpty { existing.banner },
-                    isCommunity = desc.isCommunity,
-                )
+                val merged = desc.mergeOnto(existing)
                 _clans.value = list.toMutableList().also { it[idx] = merged }
                 appScope.launch(ioDispatcher) { clanDao.upsert(merged) }
                 cacheTracker.invalidate(apiCacheKey("listClanDescs"))
@@ -499,7 +599,13 @@ class ClansController @Inject constructor(
                 val updated = existing.copy(
                     clanName = event.clanName.ifEmpty { existing.clanName },
                     logo = event.logo.ifEmpty { existing.logo },
-                    isCommunity = event.isCommunity
+                    // Do not use ifEmpty { existing.banner }: clearing the banner is represented as "" over the wire;
+                    // treating empty as "unchanged" would keep a removed banner in Room/UI until restart.
+                    banner = event.banner,
+                    isCommunity = event.isCommunity,
+                    preventAnonymous = event.preventAnonymous,
+                    welcomeChannelId = event.welcomeChannelId.takeIf { it != 0L } ?: existing.welcomeChannelId,
+                    isOnboarding = event.isOnboarding,
                 )
                 _clans.value = _clans.value.map { if (it.clanId == updated.clanId) updated else it }
                 appScope.launch(ioDispatcher) { clanDao.upsert(updated) }
@@ -510,6 +616,9 @@ class ClansController @Inject constructor(
                 }
                 if (event.logo.isNotEmpty() && event.logo != existing.logo) {
                     mask = mask or NotificationCenter.UPDATE_MASK_CHAT_AVATAR
+                }
+                if (event.banner != existing.banner) {
+                    mask = mask or NotificationCenter.UPDATE_MASK_CHAT_NAME
                 }
                 if (mask != 0) {
                     notificationCenter.postNotificationOnMainThread(NotificationCenter.updateInterfaces, mask)
