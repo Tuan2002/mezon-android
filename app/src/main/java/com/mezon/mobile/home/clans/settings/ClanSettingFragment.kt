@@ -410,6 +410,10 @@ class ClanSettingFragment : BaseFragment() {
                         navigationRow(ctx, row.icon, row.labelRes, Runnable {
                             presentFragment(AuditLogSettingFragment.newInstance(clanId))
                         })
+                    R.string.clan_settings_integrations ->
+                        navigationRow(ctx, row.icon, row.labelRes, Runnable {
+                            presentFragment(IntegrationSettingFragment.newInstance(clanId))
+                        })
                     else ->
                         navigationRow(ctx, row.icon, row.labelRes, Runnable {
                             presentFragment(ClanSubSettingPlaceholderFragment.newInstance(row.subScreenTitleRes, clanId))
