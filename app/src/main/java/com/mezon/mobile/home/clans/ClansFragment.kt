@@ -58,6 +58,7 @@ import com.mezon.mobile.home.clans.discover.buildDiscoverCommunitySearchToolbar
 import com.mezon.mobile.home.clans.discover.DiscoverRailCell
 import com.mezon.mobile.home.clans.CreateClanRnUiTokens
 import com.mezon.mobile.home.clans.settings.ClanSettingFragment
+import com.mezon.mobile.home.clans.settings.AuditLogSettingFragment
 import com.mezon.mobile.home.clans.settings.ClanSettingsPermissionState
 import com.mezon.mobile.search.GlobalSearchFragment
 import com.mezon.mobile.ui.cells.MezonIcon
@@ -841,7 +842,11 @@ class ClansFragment : BaseFragment() {
                 Runnable {
                     dismissClanMenuSheet()
                     presentFragment(ClanSettingFragment.newInstance(clanId))
-                }
+                },
+                Runnable {
+                    dismissClanMenuSheet()
+                    presentFragment(AuditLogSettingFragment.newInstance(clanId))
+                },
             )
             clanMenuSheet = sheet
             sheet.show()

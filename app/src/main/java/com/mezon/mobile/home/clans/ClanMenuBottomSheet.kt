@@ -31,6 +31,7 @@ class ClanMenuBottomSheet(
     private val permissionState: ClanSettingsPermissionState,
     showEmptyCategories: Boolean,
     private val onOpenClanSettings: Runnable,
+    private val onOpenAuditLog: Runnable,
 ) : BottomSheet(context) {
 
     private fun showComingSoon() {
@@ -222,7 +223,7 @@ class ClanMenuBottomSheet(
                         theme,
                         context.getString(R.string.clan_menu_audit_log_option),
                         null,
-                        Runnable { showComingSoon() }
+                        Runnable { onOpenAuditLog.run() },
                     ).apply { visibility = if (permissionState.isCanEditRole) View.VISIBLE else View.GONE },
                     ClanSettingsUiHelpers.buildMezonChevronRowWithoutIcon(
                         context,

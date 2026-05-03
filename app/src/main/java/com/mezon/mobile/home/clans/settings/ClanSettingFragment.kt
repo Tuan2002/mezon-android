@@ -401,14 +401,19 @@ class ClanSettingFragment : BaseFragment() {
     private fun menuRowToView(ctx: Context, row: ClanSetting.MenuRow): View {
         return when (row) {
             is ClanSetting.MenuRow.Navigate ->
-                if (row.labelRes == R.string.clan_settings_overview) {
-                    navigationRow(ctx, row.icon, row.labelRes, Runnable {
-                        presentFragment(ClanOverviewSettingFragment.newInstance(clanId))
-                    })
-                } else {
-                    navigationRow(ctx, row.icon, row.labelRes, Runnable {
-                        presentFragment(ClanSubSettingPlaceholderFragment.newInstance(row.subScreenTitleRes, clanId))
-                    })
+                when (row.labelRes) {
+                    R.string.clan_settings_overview ->
+                        navigationRow(ctx, row.icon, row.labelRes, Runnable {
+                            presentFragment(ClanOverviewSettingFragment.newInstance(clanId))
+                        })
+                    R.string.clan_settings_audit_log ->
+                        navigationRow(ctx, row.icon, row.labelRes, Runnable {
+                            presentFragment(AuditLogSettingFragment.newInstance(clanId))
+                        })
+                    else ->
+                        navigationRow(ctx, row.icon, row.labelRes, Runnable {
+                            presentFragment(ClanSubSettingPlaceholderFragment.newInstance(row.subScreenTitleRes, clanId))
+                        })
                 }
             ClanSetting.MenuRow.InvitePeople ->
                 ClanSettingsUiHelpers.buildMezonChevronRow(
