@@ -131,6 +131,7 @@ class NotificationCenter(val currentAccount: Int) {
         val voiceReactionReceived = nextId()
         val voiceAiAgentStateChanged = nextId()
         val audioPlaybackStateChanged = nextId()
+        val messageActivitiesRowsUpdated = nextId()
 
         const val UPDATE_MASK_NAME = 1
         const val UPDATE_MASK_AVATAR = 2

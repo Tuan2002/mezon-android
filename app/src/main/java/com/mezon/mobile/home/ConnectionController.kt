@@ -8,6 +8,7 @@ import com.mezon.mobile.core.NotificationCenter
 import com.mezon.mobile.di.ApplicationScope
 import com.mezon.mobile.di.IoDispatcher
 import com.mezon.mobile.home.clans.ClansController
+import com.mezon.mobile.home.messages.MessageActivitiesController
 import com.mezon.mobile.network.ApiCacheTracker
 import com.mezon.mobile.network.ConnectionState
 import com.mezon.mobile.network.MezonSocket
@@ -34,6 +35,7 @@ class ConnectionController @Inject constructor(
     private val cacheTracker: ApiCacheTracker,
     private val fcmRepository: FcmRepository,
     private val dialogsController: DialogsController,
+    private val messageActivitiesController: MessageActivitiesController,
     private val clansController: ClansController,
     private val badgeCoordinator: dagger.Lazy<BadgeCoordinator>,
     @ApplicationContext private val appContext: Context,
@@ -80,6 +82,8 @@ class ConnectionController @Inject constructor(
         cacheTracker.invalidateAll()
 
         dialogsController.loadDialogs()
+
+        messageActivitiesController.loadListActivities()
 
         clansController.loadClans()
 
