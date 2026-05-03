@@ -16,6 +16,7 @@ import android.widget.TextView
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.mezon.mobile.R
+import com.mezon.mobile.core.AndroidUtilities
 import com.mezon.mobile.core.BaseFragment
 import com.mezon.mobile.core.LayoutHelper
 import com.mezon.mobile.core.NotificationCenter
@@ -24,8 +25,11 @@ import com.mezon.mobile.di.FragmentEntryPoint
 import com.mezon.mobile.home.DialogsController
 import com.mezon.mobile.home.friends.AddFriendFragment
 import com.mezon.mobile.home.friends.FriendController
+import com.mezon.mobile.network.CHANNEL_TYPE_DM
 import com.mezon.mobile.search.GlobalSearchFragment
 import com.mezon.mobile.ui.cells.MezonIcon
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.launch
 
 private const val TAG = "MessagesFragment"
 
@@ -33,6 +37,8 @@ class MessagesFragment : BaseFragment() {
 
     private lateinit var controller: DialogsController
     private lateinit var friendController: FriendController
+    private lateinit var messageActivitiesController: MessageActivitiesController
+    private lateinit var appScope: CoroutineScope
 
     private lateinit var headerTitle: TextView
     private lateinit var addFriendBadgeText: TextView
@@ -41,6 +47,8 @@ class MessagesFragment : BaseFragment() {
     private lateinit var emptyView: TextView
     private lateinit var errorView: TextView
     private lateinit var adapter: DmListAdapter
+    private lateinit var activityStripRecycler: RecyclerListView
+    private lateinit var activityStripAdapter: MessageActivitiesAdapter
     private var scrollingManually = false
     private var dialogsListFrozen = false
     private var frozenDialogsList: List<DirectMessage>? = null
@@ -51,6 +59,8 @@ class MessagesFragment : BaseFragment() {
     override fun onInject(entryPoint: FragmentEntryPoint) {
         controller = entryPoint.dialogsController()
         friendController = entryPoint.friendController()
+        messageActivitiesController = entryPoint.messageActivitiesController()
+        appScope = entryPoint.applicationScope()
     }
 
     override fun onFragmentCreate(): Boolean {
@@ -63,6 +73,7 @@ class MessagesFragment : BaseFragment() {
             (headerTitle.parent as? View)?.setBackgroundColor(themeColors.surface)
             emptyView.setTextColor(themeColors.onSurfaceVariant)
             adapter.notifyDataSetChanged()
+            if (::activityStripAdapter.isInitialized) activityStripAdapter.notifyDataSetChanged()
         }
         observe(NotificationCenter.dialogsNeedReload) { _, _, _ ->
             Log.d(TAG, "dialogsNeedReload received: fragmentView=${fragmentView != null} isPaused=$isPaused frozen=$dialogsListFrozen")
@@ -89,6 +100,10 @@ class MessagesFragment : BaseFragment() {
             if (fragmentView == null) return@observe
             updateAddFriendBadge()
         }
+        observe(NotificationCenter.messageActivitiesRowsUpdated) { _, _, _ ->
+            if (fragmentView == null) return@observe
+            syncMessageActivitiesStrip()
+        }
 
         controller.loadDialogs()
         return true
@@ -101,6 +116,35 @@ class MessagesFragment : BaseFragment() {
         }
 
         root.addView(buildHeader(context), LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT))
+
+        activityStripRecycler = RecyclerListView(context).apply {
+            layoutManager = LinearLayoutManager(context, LinearLayoutManager.HORIZONTAL, false)
+            isHorizontalScrollBarEnabled = false
+            overScrollMode = View.OVER_SCROLL_NEVER
+            visibility = View.GONE
+            clipToPadding = false
+            setPadding(LayoutHelper.dp(16), LayoutHelper.dp(6), LayoutHelper.dp(16), LayoutHelper.dp(4))
+        }
+        activityStripAdapter = MessageActivitiesAdapter(themeColors)
+        activityStripRecycler.adapter = activityStripAdapter
+        activityStripRecycler.setOnItemClickListener(RecyclerListView.OnItemClickListener { view, _ ->
+            val cell = view as? MessageActivityStripCell ?: return@OnItemClickListener
+            val row = cell.row ?: return@OnItemClickListener
+            appScope.launch {
+                val channelId = controller.getOrCreateDm(row.userId)
+                if (channelId != 0L) {
+                    AndroidUtilities.runOnUIThread {
+                        onOpenChat?.invoke(
+                            channelId,
+                            row.displayName.ifBlank { row.username },
+                            0L,
+                            CHANNEL_TYPE_DM
+                        )
+                    }
+                }
+            }
+        })
+        root.addView(activityStripRecycler, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT))
 
         val contentFrame = FrameLayout(context)
         root.addView(contentFrame, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, 0, 1f))
@@ -150,6 +194,8 @@ class MessagesFragment : BaseFragment() {
         adapter = DmListAdapter(themeColors) { channelId -> controller.isBuzzActive(channelId) }
         recyclerView.adapter = adapter
 
+        syncMessageActivitiesStrip()
+
         val dialogs = controller.getDialogs()
         if (dialogs.isNotEmpty()) {
             showList(dialogs)
@@ -159,6 +205,13 @@ class MessagesFragment : BaseFragment() {
         }
 
         return root
+    }
+
+    private fun syncMessageActivitiesStrip() {
+        if (!::activityStripRecycler.isInitialized) return
+        val items = messageActivitiesController.rows.value
+        activityStripAdapter.setData(items)
+        activityStripRecycler.visibility = if (items.isEmpty()) View.GONE else View.VISIBLE
     }
 
     private fun buildHeader(context: Context): View {

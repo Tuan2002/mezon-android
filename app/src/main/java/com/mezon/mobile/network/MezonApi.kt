@@ -78,6 +78,7 @@ import com.mezon.mezon.api.clanDiscover as clanDiscoverProto
 import com.mezon.mezon.api.listClanDiscover
 import com.mezon.mezon.rtapi.ActiveArchivedThread
 import com.mezon.mezon.rtapi.ChannelMessageSend
+import com.mezon.mezon.rtapi.ListActivity
 import android.util.Log
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
@@ -833,6 +834,11 @@ class MezonApi @Inject constructor(
         val request = listFriendsRequest {}
         val bytes = rpc(apiUrl, token, "ListFriends", request.toByteArray())
         return FriendList.parseFrom(bytes)
+    }
+
+    suspend fun listActivities(apiUrl: String, token: String): ListActivity {
+        val bytes = rpc(apiUrl, token, "ListActivity", ByteArray(0))
+        return ListActivity.parseFrom(bytes)
     }
 
     suspend fun blockFriends(apiUrl: String, token: String, ids: List<Long>, usernames: List<String>): ByteArray {
