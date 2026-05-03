@@ -13,6 +13,7 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.TextView
+import androidx.recyclerview.widget.ConcatAdapter
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.mezon.mobile.R
@@ -47,8 +48,7 @@ class MessagesFragment : BaseFragment() {
     private lateinit var emptyView: TextView
     private lateinit var errorView: TextView
     private lateinit var adapter: DmListAdapter
-    private lateinit var activityStripRecycler: RecyclerListView
-    private lateinit var activityStripAdapter: MessageActivitiesAdapter
+    private lateinit var headerStripAdapter: MessageActivitiesStripHeaderAdapter
     private var scrollingManually = false
     private var dialogsListFrozen = false
     private var frozenDialogsList: List<DirectMessage>? = null
@@ -73,7 +73,7 @@ class MessagesFragment : BaseFragment() {
             (headerTitle.parent as? View)?.setBackgroundColor(themeColors.surface)
             emptyView.setTextColor(themeColors.onSurfaceVariant)
             adapter.notifyDataSetChanged()
-            if (::activityStripAdapter.isInitialized) activityStripAdapter.notifyDataSetChanged()
+            if (::headerStripAdapter.isInitialized) headerStripAdapter.notifyDataSetChanged()
         }
         observe(NotificationCenter.dialogsNeedReload) { _, _, _ ->
             Log.d(TAG, "dialogsNeedReload received: fragmentView=${fragmentView != null} isPaused=$isPaused frozen=$dialogsListFrozen")
@@ -116,35 +116,6 @@ class MessagesFragment : BaseFragment() {
         }
 
         root.addView(buildHeader(context), LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT))
-
-        activityStripRecycler = RecyclerListView(context).apply {
-            layoutManager = LinearLayoutManager(context, LinearLayoutManager.HORIZONTAL, false)
-            isHorizontalScrollBarEnabled = false
-            overScrollMode = View.OVER_SCROLL_NEVER
-            visibility = View.GONE
-            clipToPadding = false
-            setPadding(LayoutHelper.dp(16), LayoutHelper.dp(6), LayoutHelper.dp(16), LayoutHelper.dp(4))
-        }
-        activityStripAdapter = MessageActivitiesAdapter(themeColors)
-        activityStripRecycler.adapter = activityStripAdapter
-        activityStripRecycler.setOnItemClickListener(RecyclerListView.OnItemClickListener { view, _ ->
-            val cell = view as? MessageActivityStripCell ?: return@OnItemClickListener
-            val row = cell.row ?: return@OnItemClickListener
-            appScope.launch {
-                val channelId = controller.getOrCreateDm(row.userId)
-                if (channelId != 0L) {
-                    AndroidUtilities.runOnUIThread {
-                        onOpenChat?.invoke(
-                            channelId,
-                            row.displayName.ifBlank { row.username },
-                            0L,
-                            CHANNEL_TYPE_DM
-                        )
-                    }
-                }
-            }
-        })
-        root.addView(activityStripRecycler, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT))
 
         val contentFrame = FrameLayout(context)
         root.addView(contentFrame, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, 0, 1f))
@@ -192,7 +163,22 @@ class MessagesFragment : BaseFragment() {
         contentFrame.addView(errorView, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.MATCH_PARENT))
 
         adapter = DmListAdapter(themeColors) { channelId -> controller.isBuzzActive(channelId) }
-        recyclerView.adapter = adapter
+        headerStripAdapter = MessageActivitiesStripHeaderAdapter(themeColors) { row ->
+            appScope.launch {
+                val channelId = controller.getOrCreateDm(row.userId)
+                if (channelId != 0L) {
+                    AndroidUtilities.runOnUIThread {
+                        onOpenChat?.invoke(
+                            channelId,
+                            row.displayName.ifBlank { row.username },
+                            0L,
+                            CHANNEL_TYPE_DM
+                        )
+                    }
+                }
+            }
+        }
+        recyclerView.adapter = ConcatAdapter(headerStripAdapter, adapter)
 
         syncMessageActivitiesStrip()
 
@@ -208,10 +194,20 @@ class MessagesFragment : BaseFragment() {
     }
 
     private fun syncMessageActivitiesStrip() {
-        if (!::activityStripRecycler.isInitialized) return
+        if (!::headerStripAdapter.isInitialized) return
         val items = messageActivitiesController.rows.value
-        activityStripAdapter.setData(items)
-        activityStripRecycler.visibility = if (items.isEmpty()) View.GONE else View.VISIBLE
+        headerStripAdapter.setStripItems(items)
+        if (items.isNotEmpty() && controller.dialogsLoaded && controller.getDialogs().isEmpty() &&
+            ::recyclerView.isInitialized && recyclerView.visibility != View.VISIBLE) {
+            recyclerView.visibility = View.VISIBLE
+            emptyView.visibility = View.GONE
+            adapter.setData(emptyList())
+        }
+    }
+
+    private fun scrollActivityStripToStart() {
+        if (!::headerStripAdapter.isInitialized) return
+        headerStripAdapter.scrollStripToStart()
     }
 
     private fun buildHeader(context: Context): View {
@@ -406,6 +402,7 @@ class MessagesFragment : BaseFragment() {
 
     override fun onBecomeFullyVisible() {
         super.onBecomeFullyVisible()
+        scrollActivityStripToStart()
         if (viewJustCreated) {
             viewJustCreated = false
             return
@@ -468,9 +465,17 @@ class MessagesFragment : BaseFragment() {
 
     private fun showEmpty() {
         loadingView.visibility = View.GONE
-        recyclerView.visibility = View.GONE
-        emptyView.visibility = View.VISIBLE
         errorView.visibility = View.GONE
+        val hasActivities = messageActivitiesController.rows.value.isNotEmpty()
+        if (hasActivities) {
+            recyclerView.visibility = View.VISIBLE
+            emptyView.visibility = View.GONE
+            adapter.setData(emptyList())
+            syncMessageActivitiesStrip()
+        } else {
+            recyclerView.visibility = View.GONE
+            emptyView.visibility = View.VISIBLE
+        }
     }
 
     private fun showError(message: String) {
