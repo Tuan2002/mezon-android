@@ -69,8 +69,18 @@ class SharingTargetAdapter(
     }
 
     fun updateForwardSelection(selectedKeys: Set<String>) {
+        val old = forwardSelectedKeys
         forwardSelectedKeys = selectedKeys
-        notifyDataSetChanged()
+        if (old == selectedKeys) return
+        for (i in items.indices) {
+            val t = items[i]
+            val key = "${t.channelId}_${t.channelType}"
+            val wasSelected = key in old
+            val isSelected = key in selectedKeys
+            if (wasSelected != isSelected) {
+                notifyItemChanged(i)
+            }
+        }
     }
 
     override fun onDetachedFromRecyclerView(recyclerView: RecyclerView) {

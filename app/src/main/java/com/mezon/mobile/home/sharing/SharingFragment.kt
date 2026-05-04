@@ -687,11 +687,16 @@ class SharingFragment(
 
     private fun loadThumbnail(imageView: ImageView, uri: Uri) {
         val cr = getParentActivity()?.contentResolver ?: return
-        try {
-            val opts = BitmapFactory.Options().apply { inSampleSize = 4 }
-            val bmp = cr.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, opts) }
+        fragmentScope.launch {
+            val bmp = try {
+                kotlinx.coroutines.withContext(ioDispatcher) {
+                    val opts = BitmapFactory.Options().apply { inSampleSize = 4 }
+                    cr.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, opts) }
+                }
+            } catch (_: Exception) {
+                null
+            }
             if (bmp != null) imageView.setImageBitmap(bmp)
-        } catch (_: Exception) {
         }
     }
 

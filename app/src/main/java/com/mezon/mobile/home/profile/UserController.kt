@@ -115,4 +115,19 @@ class UserController @Inject constructor(
     fun reload() {
         appScope.launch { load() }
     }
+
+    fun cleanup() {
+        synchronized(this) {
+            userId = 0L
+            userIdStr = ""
+            username = ""
+            displayName = ""
+            email = ""
+            phoneNumber = ""
+            avatarUrl = ""
+            aboutMe = ""
+            createTimeSeconds = 0L
+            userStatus = ""
+        }
+    }
 }

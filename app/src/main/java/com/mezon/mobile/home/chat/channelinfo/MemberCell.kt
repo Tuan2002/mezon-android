@@ -136,7 +136,7 @@ class MemberCell(context: Context, private val theme: ThemeColors) : BaseCell(co
             canvas.translate(textX, textY)
             layout.draw(canvas)
             canvas.restore()
-            textX += layout.getLineWidth(0) + LayoutHelper.dp(4)
+            textX += layout.getLineWidth(0) + NAME_OWNER_GAP
         }
 
         if (isOwner) {
@@ -171,6 +171,7 @@ class MemberCell(context: Context, private val theme: ThemeColors) : BaseCell(co
         private val AVATAR_SIZE = LayoutHelper.dp(36f)
         private val NAME_LEFT = PADDING_LEFT + AVATAR_SIZE + LayoutHelper.dp(12f)
         private val OWNER_ICON_SIZE = LayoutHelper.dp(16f)
+        private val NAME_OWNER_GAP = LayoutHelper.dp(4)
 
         const val UPDATE_MASK_NAME = 1
         const val UPDATE_MASK_AVATAR = 2

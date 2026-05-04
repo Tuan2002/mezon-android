@@ -76,6 +76,10 @@ class BadgeCoordinator @Inject constructor(
         Log.d(TAG, "onReconnect: cleared coordinator state")
     }
 
+    fun cleanup() {
+        onReconnect()
+    }
+
     fun scheduleLastSeenWrite(
         channelId: Long,
         clanId: Long,

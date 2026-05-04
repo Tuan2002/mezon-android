@@ -63,7 +63,16 @@ class ThreadListAdapter(
             VIEW_TYPE_SECTION -> ThreadSectionCell(parent.context, theme)
             else -> ThreadCell(parent.context, theme)
         }
-        return object : RecyclerView.ViewHolder(view) {}
+        val holder = object : RecyclerView.ViewHolder(view) {}
+        if (viewType == VIEW_TYPE_THREAD) {
+            view.setOnClickListener {
+                val pos = holder.bindingAdapterPosition
+                if (pos == RecyclerView.NO_POSITION) return@setOnClickListener
+                val item = items.getOrNull(pos) as? ThreadInfo ?: return@setOnClickListener
+                onThreadClick(item)
+            }
+        }
+        return holder
     }
 
     override fun onBindViewHolder(holder: RecyclerView.ViewHolder, position: Int) {
@@ -74,7 +83,6 @@ class ThreadListAdapter(
             is ThreadInfo -> {
                 val senderName = senderNameResolver(item.lastSenderId)
                 (holder.itemView as ThreadCell).setData(item, senderName)
-                holder.itemView.setOnClickListener { onThreadClick(item) }
             }
         }
     }
