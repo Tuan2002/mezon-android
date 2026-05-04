@@ -355,6 +355,11 @@
     <string name="clan_settings_members">Members</string>
     <string name="clan_settings_roles">Roles</string>
     <string name="clan_settings_invites">Invites</string>
+    <string name="clan_settings_change_logo">Change clan icon</string>
+    <string name="clan_settings_remove_logo">Remove clan icon</string>
+    <string name="clan_settings_logo_permission_denied">You don\'t have permission to change the clan icon.</string>
+    <string name="clan_settings_logo_too_large">Clan image must be 1 MB or smaller.</string>
+    <string name="clan_settings_logo_update_failed">Couldn\'t update clan icon. Try again.</string>
     <string name="clan_menu_action_invite">Invite</string>
     <string name="clan_menu_action_notifications">Notifications</string>
     <string name="clan_menu_action_settings">Settings</string>
