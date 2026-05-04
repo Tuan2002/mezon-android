@@ -80,6 +80,7 @@ class NotificationCenter(val currentAccount: Int) {
         val channelsDidLoad = nextId()
         val channelAppsDidLoad = nextId()
         val clanInfoUpdated = nextId()
+        val clanBannerCropped = nextId()
         val accountInfoLoaded = nextId()
         val blockedUsersLoaded = nextId()
         val friendsLoaded = nextId()
