@@ -106,15 +106,34 @@ import com.mezon.mobile.util.parseMarkdownAndStrip
 import com.mezon.mobile.util.restoreInputFromContent
 import com.mezon.mobile.util.resolveStickerSourceUrl
 import com.mezon.mobile.core.SharedConfig
+import com.mezon.mobile.home.chat.poll.ChatPollBridge
+import com.mezon.mobile.home.chat.poll.ParsedPoll
+import com.mezon.mobile.home.chat.poll.PollDetailModal
+import com.mezon.mobile.home.chat.poll.PollLocalState
+import com.mezon.mobile.home.chat.poll.PollTap
+import com.mezon.mobile.home.chat.poll.PollVotePersistence
+import com.mezon.mobile.home.chat.poll.mergePollFromGetResponse
+import com.mezon.mobile.home.chat.poll.parsePollContent
+import com.mezon.mobile.home.chat.poll.votedAnswerIndices
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import com.mezon.mobile.core.SizeNotifierFrameLayout
 import com.mezon.mobile.home.chat.emoji.EmojiView
+import java.util.concurrent.ConcurrentHashMap
 
 private const val TAG = "ChatFragment"
+
+/** Soft realtime when BE does not push ChatUpdate for every poll vote — GetPoll on visible rows. */
+private const val POLL_TALLY_TICK_MS = 15_000L
+private const val POLL_TALLY_MIN_GAP_MS = 12_000L
+private const val POLL_TALLY_MAX_PER_TICK = 8
 
 class ChatFragment : BaseFragment() {
 
@@ -294,6 +313,9 @@ class ChatFragment : BaseFragment() {
 
     private val messages = ArrayList<MessageEntity>()
     private val messagesDict = LongSparseArray<MessageEntity>()
+    private val pollStates = mutableMapOf<Long, PollLocalState>()
+    private var pollTallyRefreshJob: Job? = null
+    private val pollTallyLastRequestedAtMs = ConcurrentHashMap<Long, Long>()
     private var transitionAnimationIndex = 0
     private val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
     private var showLoadingPending = false
@@ -769,6 +791,12 @@ class ChatFragment : BaseFragment() {
                 )
                 messages[idx] = merged
                 messagesDict.put(merged.id, merged)
+                if (merged.isPollMessage) {
+                    pollStates[merged.id] = (pollStates[merged.id] ?: PollLocalState()).copy(
+                        optimisticMyIndices = null,
+                        displayMergedPoll = null
+                    )
+                }
                 val mask = if (args.size >= 3) args[2] as? Int ?: NotificationCenter.UPDATE_MASK_MESSAGE_TEXT else NotificationCenter.UPDATE_MASK_MESSAGE_TEXT
                 if (fragmentView != null) updateVisibleRows(mask)
             }
@@ -781,6 +809,7 @@ class ChatFragment : BaseFragment() {
             if (idx >= 0) {
                 messages.removeAt(idx)
                 messagesDict.delete(messageId)
+                pollStates.remove(messageId)
                 if (fragmentView != null) refreshUI()
             }
         }
@@ -1449,6 +1478,29 @@ class ChatFragment : BaseFragment() {
         adapter.clanId = clanId
         adapter.isChannelPrivate = resolveChannelPrivate()
         adapter.currentUserId = StartupCache.userId
+        adapter.pollBridge = object : ChatPollBridge {
+            override fun getLocalState(messageId: Long): PollLocalState {
+                val base = pollStates[messageId] ?: PollLocalState()
+                if (base.optimisticMyIndices != null) return base
+                val msg = messagesDict.get(messageId)
+                val parsed = msg?.takeIf { it.isPollMessage }?.let { parsePollContent(it.content) }
+                if (parsed != null && votedAnswerIndices(parsed, currentUserIdLong()).isNotEmpty()) return base
+                val eff = effectivePollMyAnswerIndices(messageId)
+                return if (eff.isEmpty()) base else base.copy(optimisticMyIndices = eff)
+            }
+            override fun stateFingerprint(messageId: Long) = getLocalState(messageId).fingerprint()
+            override fun pollForLayout(messageId: Long, contentParsed: ParsedPoll): ParsedPoll {
+                val snap = pollStates[messageId]?.displayMergedPoll ?: return contentParsed
+                return contentParsed.copy(
+                    countsByIndex = snap.countsByIndex,
+                    totalVotes = snap.totalVotes.coerceAtLeast(0),
+                    voterDetails = if (snap.voterDetails.isNotEmpty()) snap.voterDetails else contentParsed.voterDetails
+                )
+            }
+            override fun onPollTap(msg: MessageEntity, parsed: ParsedPoll, tap: PollTap) {
+                handleChatPollTap(msg, parsed, tap)
+            }
+        }
         recyclerView.adapter = adapter
 
         setupSwipeInterceptor()
@@ -1468,6 +1520,7 @@ class ChatFragment : BaseFragment() {
                             updateCellVisibility(rv, child)
                         }
                         markVisibleAsRead()
+                        refreshVisiblePollTalliesFromServer()
                     }
                 }
             }
@@ -1602,6 +1655,11 @@ class ChatFragment : BaseFragment() {
             } else {
                 scrollToReplyMessage(jumpId)
             }
+            mainHandler.post { refreshPollSnapshotsForStoredVotes() }
+            startVisiblePollTallyRefreshLoop()
+            if (::recyclerView.isInitialized) {
+                recyclerView.post { refreshVisiblePollTalliesFromServer() }
+            }
             return
         }
 
@@ -1628,6 +1686,11 @@ class ChatFragment : BaseFragment() {
             showLoading()
             chatController.loadMessages(channelId, clanId, forceRefresh = true)
         }
+        mainHandler.post { refreshPollSnapshotsForStoredVotes() }
+        startVisiblePollTallyRefreshLoop()
+        if (::recyclerView.isInitialized) {
+            recyclerView.post { refreshVisiblePollTalliesFromServer() }
+        }
     }
 
     override fun onPause() {
@@ -1646,6 +1709,7 @@ class ChatFragment : BaseFragment() {
         if (::audioPlayerController.isInitialized) {
             audioPlayerController.stop()
         }
+        stopVisiblePollTallyRefreshLoop()
     }
 
     override fun onBackPressed(): Boolean {
@@ -2353,6 +2417,236 @@ class ChatFragment : BaseFragment() {
             if (needScrollRestore) {
                 recyclerView.visibility = View.VISIBLE
                 needScrollRestore = false
+            }
+        }
+    }
+
+    private fun handleChatPollTap(msg: MessageEntity, parsed: ParsedPoll, tap: PollTap) {
+        when (tap) {
+            is PollTap.ToggleOption -> {
+                if (parsed.isClosed) return
+                if (pollExpired(parsed)) return
+                val st0 = pollStates[msg.id] ?: PollLocalState()
+                if (resolvedVotedList(parsed, msg).isNotEmpty()) return
+                val idx = tap.answerIndex
+                val nextSel = if (parsed.isMultiple) {
+                    val m = st0.selection.toMutableSet()
+                    if (!m.add(idx)) m.remove(idx)
+                    m
+                } else {
+                    if (st0.selection.contains(idx)) emptySet() else setOf(idx)
+                }
+                pollStates[msg.id] = st0.copy(selection = nextSel)
+                refreshPollCell(msg.id)
+            }
+            PollTap.PrimaryAction -> handlePollPrimaryAction(msg, parsed)
+            PollTap.FooterStats -> openPollDetailSheet(msg, parsed)
+            PollTap.ToggleExpandOptions -> {
+                val st = pollStates[msg.id] ?: PollLocalState()
+                pollStates[msg.id] = st.copy(optionsExpanded = !st.optionsExpanded)
+                refreshPollCell(msg.id)
+            }
+        }
+    }
+
+    private fun pollExpired(parsed: ParsedPoll): Boolean {
+        val now = System.currentTimeMillis() / 1000L
+        return parsed.expireAtSeconds > 0 && parsed.expireAtSeconds < now
+    }
+
+    /**
+     * Session optimistic indices, else JSON [voter_details], else [PollVotePersistence].
+     * Must match [ChatPollBridge.getLocalState] so the poll card UI keeps "voted" after leaving chat.
+     */
+    private fun effectivePollMyAnswerIndices(messageId: Long): List<Int> {
+        val st = pollStates[messageId] ?: PollLocalState()
+        if (st.optimisticMyIndices != null) return st.optimisticMyIndices!!
+        val msg = messagesDict.get(messageId)
+        val parsed = msg?.takeIf { it.isPollMessage }?.let { parsePollContent(it.content) }
+        if (parsed != null) {
+            val fromJson = votedAnswerIndices(parsed, currentUserIdLong())
+            if (fromJson.isNotEmpty()) return fromJson
+        }
+        return PollVotePersistence.peek(messageId) ?: emptyList()
+    }
+
+    private fun resolvedVotedList(parsed: ParsedPoll, msg: MessageEntity): List<Int> =
+        effectivePollMyAnswerIndices(msg.id)
+
+    private fun currentUserIdLong(): Long = StartupCache.userId.toLongOrNull() ?: 0L
+
+    private fun handlePollPrimaryAction(msg: MessageEntity, parsed: ParsedPoll) {
+        val expired = pollExpired(parsed)
+        if (parsed.isClosed || expired) return
+        val st = pollStates[msg.id] ?: PollLocalState()
+        val voted = resolvedVotedList(parsed, msg).isNotEmpty()
+        when {
+            st.showResultsPreview && !voted -> {
+                pollStates[msg.id] = st.copy(showResultsPreview = false)
+                refreshPollCell(msg.id)
+            }
+            voted -> submitPollVote(msg, parsed, emptyList())
+            st.selection.isNotEmpty() -> submitPollVote(msg, parsed, st.selection.sorted())
+            else -> openPollDetailSheet(msg, parsed)
+        }
+    }
+
+    private fun submitPollVote(msg: MessageEntity, parsed: ParsedPoll, indices: List<Int>) {
+        appScope.launch(Dispatchers.Main) {
+            try {
+                val resp = sessionManager.withAutoRefresh { session ->
+                    mezonApi.votePoll(session.apiUrl, session.token, msg.channelId, msg.id, parsed.pollId, indices)
+                }
+                val my = resp.myAnswerIndicesList.toList()
+                val base = pollStates[msg.id] ?: PollLocalState()
+                pollStates[msg.id] = base.copy(
+                    optimisticMyIndices = my,
+                    selection = my.toSet(),
+                    showResultsPreview = false
+                )
+                PollVotePersistence.remember(msg.id, my)
+                refreshPollCell(msg.id)
+
+                requestPollCountsRefresh(msg.id, msg.channelId)
+            } catch (e: Exception) {
+                Log.e(TAG, "votePoll failed", e)
+                MezonToast.show(this@ChatFragment, ToastOverlay.ToastType.ERROR, getString(R.string.poll_vote_failed))
+            }
+        }
+    }
+
+    private fun requestPollCountsRefresh(messageId: Long, msgChannelId: Long) {
+        if (msgChannelId != channelId) return
+        val msgEntity = messagesDict.get(messageId) ?: return
+        if (!msgEntity.isPollMessage) return
+        val basePoll = parsePollContent(msgEntity.content) ?: return
+        appScope.launch(Dispatchers.IO) {
+            val merged = try {
+                sessionManager.withAutoRefresh { session ->
+                    val r = mezonApi.getPoll(session.apiUrl, session.token, msgChannelId, messageId, basePoll.pollId)
+                    mergePollFromGetResponse(basePoll, r)
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "getPoll after vote", e)
+                null
+            }
+            if (merged == null) return@launch
+            withContext(Dispatchers.Main) {
+                val cur = messagesDict.get(messageId) ?: return@withContext
+                if (!cur.isPollMessage) return@withContext
+                val uid = currentUserIdLong()
+                if (uid != 0L) {
+                    val inferred = votedAnswerIndices(merged, uid)
+                    val breakdown = merged.voterDetails.isNotEmpty()
+                    when {
+                        inferred.isNotEmpty() ->
+                            PollVotePersistence.remember(messageId, inferred)
+                        breakdown ->
+                            PollVotePersistence.remember(messageId, emptyList())
+                        else -> {}
+                    }
+                }
+                pollStates[messageId] = (pollStates[messageId] ?: PollLocalState()).copy(displayMergedPoll = merged)
+                refreshPollCell(messageId)
+            }
+        }
+    }
+
+    /** After re-opening chat or loading history, refill tallies for polls we voted on locally. */
+    private fun refreshPollSnapshotsForStoredVotes() {
+        if (fragmentView == null || messages.isEmpty()) return
+        val seen = mutableSetOf<Long>()
+        for (m in messages) {
+            if (!m.isPollMessage) continue
+            val p = PollVotePersistence.peek(m.id) ?: continue
+            if (p.isEmpty()) continue
+            if (seen.add(m.id)) requestPollCountsRefresh(m.id, m.channelId)
+            if (seen.size >= 32) break
+        }
+    }
+
+    /**
+     * Other users' votes often do not arrive as a WebSocket message with full poll JSON.
+     * Refresh [GetPoll] for items on screen on an interval and after scroll settles (soft realtime).
+     */
+    private fun startVisiblePollTallyRefreshLoop() {
+        pollTallyRefreshJob?.cancel()
+        pollTallyRefreshJob = appScope.launch {
+            while (isActive) {
+                delay(POLL_TALLY_TICK_MS)
+                if (isPaused) continue
+                refreshVisiblePollTalliesFromServer()
+            }
+        }
+    }
+
+    private fun stopVisiblePollTallyRefreshLoop() {
+        pollTallyRefreshJob?.cancel()
+        pollTallyRefreshJob = null
+        pollTallyLastRequestedAtMs.clear()
+    }
+
+    private fun refreshVisiblePollTalliesFromServer() {
+        if (!::recyclerView.isInitialized || !::adapter.isInitialized) return
+        if (isPaused || fragmentView == null) return
+        val lm = recyclerView.layoutManager as? LinearLayoutManager ?: return
+        val first = lm.findFirstVisibleItemPosition()
+        val last = lm.findLastVisibleItemPosition()
+        if (first == RecyclerView.NO_POSITION || last == RecyclerView.NO_POSITION) return
+        val now = android.os.SystemClock.elapsedRealtime()
+        var quota = POLL_TALLY_MAX_PER_TICK
+        for (pos in first..last) {
+            if (quota <= 0) break
+            val msg = adapter.getMessage(pos) ?: continue
+            if (!msg.isPollMessage) continue
+            val lastAt = pollTallyLastRequestedAtMs[msg.id] ?: 0L
+            if (now - lastAt < POLL_TALLY_MIN_GAP_MS) continue
+            pollTallyLastRequestedAtMs[msg.id] = now
+            quota--
+            requestPollCountsRefresh(msg.id, msg.channelId)
+        }
+    }
+
+    private fun openPollDetailSheet(msg: MessageEntity, seed: ParsedPoll) {
+        val ctx = getContext() ?: return
+        val act = getParentActivity()
+        if (act != null && (act.isFinishing || act.isDestroyed)) return
+        try {
+            PollDetailModal(
+                context = ctx,
+                themeColors = themeColors,
+                scope = appScope,
+                seedParsed = seed,
+                loadPoll = {
+                    sessionManager.withAutoRefresh { session ->
+                        val r = mezonApi.getPoll(session.apiUrl, session.token, msg.channelId, msg.id, seed.pollId)
+                        mergePollFromGetResponse(seed, r)
+                    }
+                },
+                memberResolver = { uid ->
+                    try {
+                        memberResolver.resolveMember(uid, clanId, channelId, channelType)
+                    } catch (e: Exception) {
+                        Log.w(TAG, "resolveMember for poll detail", e)
+                        null
+                    }
+                }
+            ).show()
+        } catch (e: Exception) {
+            Log.e(TAG, "openPollDetailSheet", e)
+            MezonToast.show(this@ChatFragment, ToastOverlay.ToastType.ERROR, getString(R.string.poll_detail_open_failed))
+        }
+    }
+
+    private fun refreshPollCell(messageId: Long) {
+        if (fragmentView == null) return
+        val n = recyclerView.childCount
+        for (i in 0 until n) {
+            val cell = recyclerView.getChildAt(i) as? ChatMessageCell ?: continue
+            if (cell.messageEntity?.id == messageId) {
+                val updated = messagesDict.get(messageId) ?: continue
+                cell.update(0, updated)
+                break
             }
         }
     }
