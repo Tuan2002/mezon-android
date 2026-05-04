@@ -23,6 +23,13 @@ class CdnIconView(context: Context, private val theme: ThemeColors) : View(conte
     private var cancellable: MezonImageLoader.Cancellable? = null
     private var attachedToWindow = false
 
+    private var cachedShader: BitmapShader? = null
+    private var cachedShaderBitmap: Bitmap? = null
+    private var cachedShaderWidth = 0
+    private val shaderMatrix = Matrix()
+    private val srcRect = android.graphics.Rect()
+    private val dstRect = android.graphics.Rect()
+
     fun setSizeDp(dp: Int) {
         sizeDp = dp
         requestLayout()
@@ -39,6 +46,8 @@ class CdnIconView(context: Context, private val theme: ThemeColors) : View(conte
         cancellable?.cancel()
         cancellable = null
         bitmap = null
+        cachedShader = null
+        cachedShaderBitmap = null
         if (url.isNullOrEmpty()) {
             invalidate()
             return
@@ -53,10 +62,14 @@ class CdnIconView(context: Context, private val theme: ThemeColors) : View(conte
             url, px, px,
             onSuccess = { bmp ->
                 bitmap = bmp
+                cachedShader = null
+                cachedShaderBitmap = null
                 invalidate()
             },
             onError = {
                 bitmap = null
+                cachedShader = null
+                cachedShaderBitmap = null
                 invalidate()
             }
         )
@@ -64,6 +77,8 @@ class CdnIconView(context: Context, private val theme: ThemeColors) : View(conte
 
     fun setBitmap(bmp: Bitmap?) {
         bitmap = bmp
+        cachedShader = null
+        cachedShaderBitmap = null
         invalidate()
     }
 
@@ -94,18 +109,21 @@ class CdnIconView(context: Context, private val theme: ThemeColors) : View(conte
         val bmp = bitmap
         if (bmp != null && !bmp.isRecycled) {
             if (isCircular) {
-                val scale = width.toFloat() / bmp.width
-                val shader = BitmapShader(bmp, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP)
-                val matrix = Matrix()
-                matrix.setScale(scale, scale)
-                shader.setLocalMatrix(matrix)
-                paint.shader = shader
+                if (cachedShader == null || cachedShaderBitmap !== bmp || cachedShaderWidth != width) {
+                    cachedShader = BitmapShader(bmp, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP)
+                    cachedShaderBitmap = bmp
+                    cachedShaderWidth = width
+                    val scale = width.toFloat() / bmp.width
+                    shaderMatrix.setScale(scale, scale)
+                    cachedShader!!.setLocalMatrix(shaderMatrix)
+                }
+                paint.shader = cachedShader
                 canvas.drawCircle(width / 2f, height / 2f, width / 2f, paint)
                 paint.shader = null
             } else {
-                val src = android.graphics.Rect(0, 0, bmp.width, bmp.height)
-                val dst = android.graphics.Rect(0, 0, width, height)
-                canvas.drawBitmap(bmp, src, dst, paint)
+                srcRect.set(0, 0, bmp.width, bmp.height)
+                dstRect.set(0, 0, width, height)
+                canvas.drawBitmap(bmp, srcRect, dstRect, paint)
             }
         } else {
             placeholderPaint.color = theme.surfaceVariant
@@ -115,5 +133,10 @@ class CdnIconView(context: Context, private val theme: ThemeColors) : View(conte
                 canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), placeholderPaint)
             }
         }
+    }
+
+    fun clearShaderCache() {
+        cachedShader = null
+        cachedShaderBitmap = null
     }
 }

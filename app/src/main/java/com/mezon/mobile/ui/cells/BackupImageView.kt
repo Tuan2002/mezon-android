@@ -29,6 +29,8 @@ class BackupImageView(context: Context) : View(context) {
     private var roundRadiusBR = 0
     private var roundRadiusBL = 0
     private val clipPath = Path()
+    private val radiiArray = FloatArray(8)
+    private var radiiDirty = true
 
     private var omitEmptyPlaceholder = false
 
@@ -51,6 +53,7 @@ class BackupImageView(context: Context) : View(context) {
         roundRadiusTR = 0
         roundRadiusBR = 0
         roundRadiusBL = 0
+        radiiDirty = true
         invalidate()
     }
 
@@ -60,6 +63,7 @@ class BackupImageView(context: Context) : View(context) {
         roundRadiusTR = topRight
         roundRadiusBR = bottomRight
         roundRadiusBL = bottomLeft
+        radiiDirty = true
         invalidate()
     }
 
@@ -135,7 +139,9 @@ class BackupImageView(context: Context) : View(context) {
     override fun onAttachedToWindow() {
         super.onAttachedToWindow()
         attached = true
-        imageUrl?.let { loadImage(it) }
+        if (loadedDrawable == null && cancellable == null) {
+            imageUrl?.let { loadImage(it) }
+        }
     }
 
     override fun onDetachedFromWindow() {
@@ -153,19 +159,23 @@ class BackupImageView(context: Context) : View(context) {
     override fun onDraw(canvas: Canvas) {
         val hasRoundClip = roundRadius > 0 || roundRadiusTL != 0 || roundRadiusTR != 0 || roundRadiusBR != 0 || roundRadiusBL != 0
         if (hasRoundClip) {
+            if (radiiDirty) {
+                if (roundRadius > 0) {
+                    val r = roundRadius.toFloat()
+                    radiiArray[0] = r; radiiArray[1] = r
+                    radiiArray[2] = r; radiiArray[3] = r
+                    radiiArray[4] = r; radiiArray[5] = r
+                    radiiArray[6] = r; radiiArray[7] = r
+                } else {
+                    radiiArray[0] = roundRadiusTL.toFloat(); radiiArray[1] = roundRadiusTL.toFloat()
+                    radiiArray[2] = roundRadiusTR.toFloat(); radiiArray[3] = roundRadiusTR.toFloat()
+                    radiiArray[4] = roundRadiusBR.toFloat(); radiiArray[5] = roundRadiusBR.toFloat()
+                    radiiArray[6] = roundRadiusBL.toFloat(); radiiArray[7] = roundRadiusBL.toFloat()
+                }
+                radiiDirty = false
+            }
             clipPath.reset()
-            val radii = if (roundRadius > 0) floatArrayOf(
-                roundRadius.toFloat(), roundRadius.toFloat(),
-                roundRadius.toFloat(), roundRadius.toFloat(),
-                roundRadius.toFloat(), roundRadius.toFloat(),
-                roundRadius.toFloat(), roundRadius.toFloat()
-            ) else floatArrayOf(
-                roundRadiusTL.toFloat(), roundRadiusTL.toFloat(),
-                roundRadiusTR.toFloat(), roundRadiusTR.toFloat(),
-                roundRadiusBR.toFloat(), roundRadiusBR.toFloat(),
-                roundRadiusBL.toFloat(), roundRadiusBL.toFloat()
-            )
-            clipPath.addRoundRect(0f, 0f, width.toFloat(), height.toFloat(), radii, Path.Direction.CW)
+            clipPath.addRoundRect(0f, 0f, width.toFloat(), height.toFloat(), radiiArray, Path.Direction.CW)
             canvas.save()
             canvas.clipPath(clipPath)
         }

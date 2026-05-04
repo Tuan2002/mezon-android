@@ -19,6 +19,11 @@ class SwitchView(context: Context, private val theme: ThemeColors) : View(contex
     private val trackWidth = LayoutHelper.dpf(36f)
     private val trackHeight = LayoutHelper.dpf(20f)
     private val thumbRadius = LayoutHelper.dpf(8f)
+    private val thumbMargin = LayoutHelper.dpf(2f)
+    private val trackRadius = trackHeight / 2f
+    private val thumbMinX = thumbMargin + thumbRadius
+    private val thumbMaxX = trackWidth - thumbMargin - thumbRadius
+    private val thumbCy = trackHeight / 2f
     var onCheckedChange: ((Boolean) -> Unit)? = null
 
     init {
@@ -66,7 +71,6 @@ class SwitchView(context: Context, private val theme: ThemeColors) : View(contex
     }
 
     override fun onDraw(canvas: Canvas) {
-        val trackRadius = trackHeight / 2f
         trackRect.set(0f, 0f, trackWidth, trackHeight)
 
         val offColor = theme.outline
@@ -77,11 +81,7 @@ class SwitchView(context: Context, private val theme: ThemeColors) : View(contex
         theme.switchTrackPaint.color = (0xFF shl 24) or (r.toInt() shl 16) or (g.toInt() shl 8) or b.toInt()
         canvas.drawRoundRect(trackRect, trackRadius, trackRadius, theme.switchTrackPaint)
 
-        val thumbMargin = LayoutHelper.dpf(2f)
-        val thumbMinX = thumbMargin + thumbRadius
-        val thumbMaxX = trackWidth - thumbMargin - thumbRadius
         val thumbCx = thumbMinX + (thumbMaxX - thumbMinX) * progress
-        val thumbCy = trackHeight / 2f
         canvas.drawCircle(thumbCx, thumbCy, thumbRadius, theme.switchThumbPaint)
     }
 }

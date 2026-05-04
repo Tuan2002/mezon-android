@@ -94,6 +94,7 @@ class ClansController @Inject constructor(
         _clans.value = emptyList()
         _selectedClanId.value = 0L
         clansLoaded = false
+        ClanCell.clearAvatarCache()
     }
 
     fun selectClan(clanId: Long, force: Boolean = false) {

@@ -2,6 +2,7 @@ package com.mezon.mobile.di
 
 import com.mezon.mobile.auth.AuthRepository
 import com.mezon.mobile.home.AnonymousController
+import com.mezon.mobile.home.BadgeCoordinator
 import com.mezon.mobile.home.ChatController
 import com.mezon.mobile.home.ConnectionController
 import com.mezon.mobile.home.MemberResolver
@@ -26,6 +27,7 @@ import com.mezon.mobile.home.notifications.NotificationStore
 import com.mezon.mobile.home.profile.AccountController
 import com.mezon.mobile.home.profile.DeviceController
 import com.mezon.mobile.home.profile.UserController
+import com.mezon.mobile.network.ApiCacheTracker
 import com.mezon.mobile.network.MezonApi
 import com.mezon.mobile.notification.FcmRepository
 import com.mezon.mobile.search.SearchController
@@ -41,6 +43,7 @@ import kotlinx.coroutines.CoroutineScope
 @InstallIn(SingletonComponent::class)
 interface FragmentEntryPoint {
     fun authRepository(): AuthRepository
+    fun badgeCoordinator(): BadgeCoordinator
     fun chatController(): ChatController
     fun clansController(): ClansController
     fun channelController(): ChannelController
@@ -71,6 +74,7 @@ interface FragmentEntryPoint {
     fun channelGalleryController(): ChannelGalleryController
     fun sessionManager(): SessionManager
     fun walletController(): WalletController
+    fun apiCacheTracker(): ApiCacheTracker
 
     @IoDispatcher
     fun ioDispatcher(): CoroutineDispatcher

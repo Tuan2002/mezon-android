@@ -51,6 +51,7 @@ import com.mezon.mezon.api.GenerateHashChannelAppsResponse
 import com.mezon.mezon.api.listChannelAppsRequest
 import com.mezon.mezon.api.generateHashChannelAppsRequest
 import com.mezon.mezon.api.ListChannelBadgeCountResponse
+import com.mezon.mezon.api.ListClanBadgeCountResponse
 import com.mezon.mezon.api.listChannelBadgeCountRequest
 import com.mezon.mezon.api.listChannelDescsRequest
 import com.mezon.mezon.api.listThreadRequest
@@ -72,6 +73,7 @@ import com.mezon.mezon.api.generateMeetTokenRequest
 import com.mezon.mezon.api.meetParticipantRequest
 import com.mezon.mezon.api.messageReaction
 import com.mezon.mezon.api.updateAIAgentRequest
+import com.mezon.mezon.api.LogedDeviceList
 import com.mezon.mezon.api.ListClanDiscover
 import com.mezon.mezon.api.InviteUserRes
 import com.mezon.mezon.api.inviteUserRequest
@@ -98,7 +100,6 @@ import io.ktor.http.isSuccess
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import org.json.JSONObject
-import java.util.Collections
 import javax.inject.Inject
 import javax.inject.Singleton
 class UnauthorizedException(message: String) : RuntimeException(message)
@@ -208,8 +209,7 @@ class MezonApi @Inject constructor(
         private const val DISCOVER_ITEMS_PER_PAGE = 6
     }
 
-    private val linkInvitePreviewCache =
-        Collections.synchronizedMap(mutableMapOf<Long, LinkInvitePreview>())
+    private val linkInvitePreviewCache = android.util.LruCache<Long, LinkInvitePreview>(256)
 
     private fun logRpcRequest(method: String, url: String) {
         if (!BuildConfig.DEBUG) return
@@ -257,7 +257,7 @@ class MezonApi @Inject constructor(
     suspend fun getLinkInvitePreview(inviteId: Long): LinkInvitePreview? {
         if (inviteId == 0L) return null
         synchronized(linkInvitePreviewCache) {
-            linkInvitePreviewCache[inviteId]?.let { return it }
+            linkInvitePreviewCache.get(inviteId)?.let { return it }
         }
         return try {
             val gatewayUrl = BuildConfig.MEZON_GATEWAY_URL.trimEnd('/')
@@ -290,7 +290,7 @@ class MezonApi @Inject constructor(
                 logoUrl = logo
             )
             synchronized(linkInvitePreviewCache) {
-                linkInvitePreviewCache[inviteId] = preview
+                linkInvitePreviewCache.put(inviteId, preview)
             }
             preview
         } catch (_: Exception) {
@@ -544,6 +544,22 @@ class MezonApi @Inject constructor(
         }
         val bytes = rpc(apiUrl, token, "ListChannelBadgeCount", request.toByteArray())
         return ListChannelBadgeCountResponse.parseFrom(bytes)
+    }
+
+    suspend fun listClanBadgeCount(
+        apiUrl: String,
+        token: String
+    ): ListClanBadgeCountResponse {
+        val bytes = rpc(apiUrl, token, "ListClanBadgeCount", ByteArray(0))
+        return ListClanBadgeCountResponse.parseFrom(bytes)
+    }
+
+    suspend fun listLogedDevice(
+        apiUrl: String,
+        token: String
+    ): LogedDeviceList {
+        val bytes = rpc(apiUrl, token, "ListLogedDevice", ByteArray(0))
+        return LogedDeviceList.parseFrom(bytes)
     }
 
     suspend fun listClanDescs(

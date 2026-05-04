@@ -14,8 +14,8 @@ data class FavoriteChannelEntity(
 
 @Dao
 interface FavoriteChannelDao {
-    @Query("SELECT channelId FROM favorite_channels WHERE clanId = :clanId ORDER BY sortOrder ASC")
-    suspend fun getByClan(clanId: Long): List<Long>
+    @Query("SELECT channelId FROM favorite_channels WHERE clanId = :clanId ORDER BY sortOrder ASC LIMIT :limit")
+    suspend fun getByClan(clanId: Long, limit: Int = 500): List<Long>
 
     @Upsert
     suspend fun upsertAll(items: List<FavoriteChannelEntity>)

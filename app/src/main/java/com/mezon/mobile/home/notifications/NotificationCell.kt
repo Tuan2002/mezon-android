@@ -39,6 +39,11 @@ class NotificationCell(context: Context, private val theme: ThemeColors) : BaseC
         avatarDisposable = null
     }
 
+    override fun invalidate() {
+        if (entity == null) return
+        super.invalidate()
+    }
+
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
         setMeasuredDimension(MeasureSpec.getSize(widthMeasureSpec), CELL_HEIGHT)
     }
@@ -162,7 +167,7 @@ class NotificationCell(context: Context, private val theme: ThemeColors) : BaseC
                 proxyUrl, AVATAR_SIZE, AVATAR_SIZE,
                 onSuccess = { bmp ->
                     avatarDrawable.setPhoto(bmp)
-                    post { invalidate() }
+                    invalidate()
                 }
             )
         }
@@ -197,7 +202,7 @@ class NotificationCell(context: Context, private val theme: ThemeColors) : BaseC
             canvas.restore()
         }
 
-        textTop += (subjectLayout?.height ?: 0) + LayoutHelper.dp(2).toFloat()
+        textTop += (subjectLayout?.height ?: 0) + BODY_GAP_AFTER_SUBJECT_PX
 
         bodyLayout?.let {
             canvas.save()
@@ -216,5 +221,6 @@ class NotificationCell(context: Context, private val theme: ThemeColors) : BaseC
         private val PADDING_V = LayoutHelper.dp(14)
         private val GAP_H = LayoutHelper.dp(12)
         private val CELL_HEIGHT = LayoutHelper.dp(76)
+        private val BODY_GAP_AFTER_SUBJECT_PX = LayoutHelper.dp(2).toFloat()
     }
 }

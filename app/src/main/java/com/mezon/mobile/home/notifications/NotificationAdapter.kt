@@ -16,16 +16,24 @@ class NotificationAdapter(
 
     private val items = ArrayList<NotificationEntity>()
     private var hasMore = false
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var diffJob: Job? = null
+
+    init { setHasStableIds(true) }
 
     companion object {
         private const val VIEW_TYPE_ITEM = 0
         private const val VIEW_TYPE_LOADING = 1
+        private const val LOADING_ITEM_ID = Long.MIN_VALUE
+    }
+
+    override fun getItemId(position: Int): Long {
+        return if (position < items.size) items[position].id else LOADING_ITEM_ID
     }
 
     fun setData(list: List<NotificationEntity>, hasMoreData: Boolean = false, isTabChange: Boolean = false) {
+        diffJob?.cancel()
         if (isTabChange) {
-            diffJob?.cancel()
             items.clear()
             items.addAll(list)
             hasMore = hasMoreData
@@ -33,39 +41,42 @@ class NotificationAdapter(
             return
         }
 
-        diffJob?.cancel()
         val oldList = ArrayList(items)
         val oldHasMore = hasMore
 
-        diffJob = CoroutineScope(Dispatchers.Default).launch {
-            val diffResult = DiffUtil.calculateDiff(object : DiffUtil.Callback() {
-                override fun getOldListSize() = oldList.size + if (oldHasMore) 1 else 0
-                override fun getNewListSize() = list.size + if (hasMoreData) 1 else 0
-                override fun areItemsTheSame(o: Int, n: Int): Boolean {
-                    val isOldLoading = o == oldList.size
-                    val isNewLoading = n == list.size
-                    if (isOldLoading && isNewLoading) return true
-                    if (isOldLoading || isNewLoading) return false
-                    return oldList[o].id == list[n].id
-                }
-                override fun areContentsTheSame(o: Int, n: Int): Boolean {
-                    val isOldLoading = o == oldList.size
-                    val isNewLoading = n == list.size
-                    if (isOldLoading && isNewLoading) return true
-                    if (isOldLoading || isNewLoading) return false
-                    return oldList[o] == list[n]
-                }
-            })
-
-            withContext(Dispatchers.Main) {
-                if (!isActive) return@withContext
-                items.clear()
-                items.addAll(list)
-                hasMore = hasMoreData
-                diffResult.dispatchUpdatesTo(this@NotificationAdapter)
-                diffJob = null
+        diffJob = scope.launch {
+            val diffResult = withContext(Dispatchers.Default) {
+                DiffUtil.calculateDiff(object : DiffUtil.Callback() {
+                    override fun getOldListSize() = oldList.size + if (oldHasMore) 1 else 0
+                    override fun getNewListSize() = list.size + if (hasMoreData) 1 else 0
+                    override fun areItemsTheSame(o: Int, n: Int): Boolean {
+                        val isOldLoading = o == oldList.size
+                        val isNewLoading = n == list.size
+                        if (isOldLoading && isNewLoading) return true
+                        if (isOldLoading || isNewLoading) return false
+                        return oldList[o].id == list[n].id
+                    }
+                    override fun areContentsTheSame(o: Int, n: Int): Boolean {
+                        val isOldLoading = o == oldList.size
+                        val isNewLoading = n == list.size
+                        if (isOldLoading && isNewLoading) return true
+                        if (isOldLoading || isNewLoading) return false
+                        return oldList[o] == list[n]
+                    }
+                })
             }
+            items.clear()
+            items.addAll(list)
+            hasMore = hasMoreData
+            diffResult.dispatchUpdatesTo(this@NotificationAdapter)
+            diffJob = null
         }
+    }
+
+    override fun onDetachedFromRecyclerView(recyclerView: RecyclerView) {
+        diffJob?.cancel()
+        scope.cancel()
+        super.onDetachedFromRecyclerView(recyclerView)
     }
 
     override fun getItemCount() = items.size + if (hasMore) 1 else 0
