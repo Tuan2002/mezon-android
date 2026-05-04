@@ -5,7 +5,6 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.PorterDuff
 import android.graphics.PorterDuffColorFilter
-import android.net.Uri
 import android.os.Bundle
 import android.text.InputFilter
 import android.view.Gravity
@@ -15,7 +14,6 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.core.widget.NestedScrollView
-import com.mezon.mobile.BuildConfig
 import com.mezon.mobile.R
 import com.mezon.mobile.core.AlertDialog
 import com.mezon.mobile.core.BaseFragment
@@ -59,8 +57,7 @@ class ClanOverviewSettingFragment : BaseFragment() {
 
     companion object {
         private const val ARG_CLAN_ID = "clanId"
-        private const val REQ_PICK_BANNER = 3101        
-        private const val MAX_BANNER_BYTES = 10 * 1024 * 1024
+        private const val REQ_PICK_BANNER = 3101
 
         fun newInstance(clanId: Long): ClanOverviewSettingFragment =
             ClanOverviewSettingFragment().apply {
@@ -142,6 +139,18 @@ class ClanOverviewSettingFragment : BaseFragment() {
             if (isPaused) return@observe
             val id = args.firstOrNull() as? Long ?: return@observe
             if (id == clanId) refreshLocalClanSnapshot()
+        }
+        observe(NotificationCenter.clanBannerCropped) { _, _, args ->
+            val id = args.firstOrNull() as? Long ?: return@observe
+            if (id != clanId) return@observe
+            val url = args.getOrNull(1) as? String ?: return@observe
+            val prev = draftBanner.trim()
+            draftBanner = url
+            if (prev.isNotBlank() && prev != url.trim()) {
+                invalidateBannerCachesForSources(listOf(prev))
+            }
+            renderBanner()
+            updateSaveUi()
         }
         return true
     }
@@ -247,12 +256,15 @@ class ClanOverviewSettingFragment : BaseFragment() {
             roles,
             clan.creatorId,
         )
+        val preserveNameDraft = draftName.trim() != sourceName.trim()
+        val preserveBannerDraft = draftBanner.trim() != sourceBanner.trim()
+        val preservePreventDraft = draftPrevent != sourcePrevent
         sourceName = clan.clanName
-        draftName = clan.clanName
+        if (!preserveNameDraft) draftName = clan.clanName
         sourceBanner = clan.banner
-        draftBanner = clan.banner
+        if (!preserveBannerDraft) draftBanner = clan.banner
         sourcePrevent = clan.preventAnonymous
-        draftPrevent = clan.preventAnonymous
+        if (!preservePreventDraft) draftPrevent = clan.preventAnonymous
         if (::nameInput.isInitialized) {
             nameInput.setText(draftName)
         }
@@ -759,49 +771,7 @@ class ClanOverviewSettingFragment : BaseFragment() {
         super.onActivityResult(requestCode, resultCode, data)
         if (requestCode != REQ_PICK_BANNER || resultCode != Activity.RESULT_OK) return
         val uri = data?.clipData?.getItemAt(0)?.uri ?: data?.data ?: return
-        uploadBanner(uri)
-    }
-
-    private fun uploadBanner(uri: Uri) {
-        val cr = getContext()?.contentResolver ?: return
-        fragmentScope.launch(mainDispatcher) {
-            runCatching {
-                val bytes = withContext(ioDispatcher) {
-                    cr.openInputStream(uri)?.use { it.readBytes() } ?: throw RuntimeException("read")
-                }
-                if (bytes.size > MAX_BANNER_BYTES) {
-                    MezonToast.show(this@ClanOverviewSettingFragment, ToastOverlay.ToastType.ERROR, getString(R.string.clan_image_too_large, 10))
-                    return@launch
-                }
-                val mime = cr.getType(uri) ?: "image/jpeg"
-                val url = sessionManager.withAutoRefresh { session ->
-                    withContext(ioDispatcher) {
-                        val ts = System.currentTimeMillis() / 1000
-                        val name = "${ts}_banner.jpg"
-                        val presign = api.uploadAttachmentFile(
-                            session.apiUrl,
-                            session.token,
-                            name,
-                            mime,
-                            bytes.size,
-                            1200,
-                            400,
-                        )
-                        api.putFileToPresignedUrl(presign.url, bytes, mime)
-                        "${BuildConfig.MEZON_BASE_IMG_URL}/${presign.filename}"
-                    }
-                }
-                val prevBanner = draftBanner.trim()
-                draftBanner = url
-                if (prevBanner.isNotBlank() && prevBanner != url.trim()) {
-                    invalidateBannerCachesForSources(listOf(prevBanner))
-                }
-                renderBanner()
-                updateSaveUi()
-            }.onFailure {
-                MezonToast.show(this@ClanOverviewSettingFragment, ToastOverlay.ToastType.ERROR, getString(R.string.clan_overview_save_error))
-            }
-        }
+        presentFragment(ClanBannerTransformFragment.newInstance(clanId, uri.toString()))
     }
 
     private fun layoutBannerCameraBadge() {

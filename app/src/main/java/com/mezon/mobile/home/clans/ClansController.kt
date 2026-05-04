@@ -1,6 +1,7 @@
 package com.mezon.mobile.home.clans
 
 import android.content.Context
+import com.mezon.mobile.BuildConfig
 import com.mezon.mobile.R
 import android.util.Log
 import com.mezon.mobile.core.LayoutHelper
@@ -415,6 +416,28 @@ class ClansController @Inject constructor(
         return sessionManager.withAutoRefresh { session ->
             withContext(ioDispatcher) {
                 api.updateSystemMessage(session.apiUrl, session.token, body)
+            }
+        }
+    }
+
+    suspend fun uploadClanBannerJpeg(jpegBytes: ByteArray): String {
+        require(jpegBytes.isNotEmpty())
+        return sessionManager.withAutoRefresh { session ->
+            withContext(ioDispatcher) {
+                val ts = System.currentTimeMillis() / 1000
+                val filename = "${ts}_banner.jpg"
+                val mime = "image/jpeg"
+                val presign = api.uploadAttachmentFile(
+                    session.apiUrl,
+                    session.token,
+                    filename,
+                    mime,
+                    jpegBytes.size,
+                    1920,
+                    1080,
+                )
+                api.putFileToPresignedUrl(presign.url, jpegBytes, mime)
+                "${BuildConfig.MEZON_BASE_IMG_URL}/${presign.filename}"
             }
         }
     }
