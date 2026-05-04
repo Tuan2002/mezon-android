@@ -24,8 +24,9 @@ fun buildChannelFileRows(
     }
     val grouped = groupByYearDay(filtered) { ChannelDocumentItemUtil.parseItemDate(it) }
     val rows = ArrayList<ChannelFilesRow>()
+    val cal = Calendar.getInstance()
     for (g in grouped) {
-        val cal = Calendar.getInstance().apply { timeInMillis = g.dayTs }
+        cal.timeInMillis = g.dayTs
         val title = formatDateHeader(cal, isVietnamese)
         rows.add(ChannelFilesRow.Header(g.year, title, g.isFirstOfYear))
         for (doc in g.items) {
@@ -86,18 +87,6 @@ class ChannelFilesAdapter(
         val ctx = parent.context
         return when (viewType) {
             VIEW_HEADER -> HeaderVH(ChannelFileSectionHeaderView(ctx, theme))
-            VIEW_DOC -> {
-                val v = ChannelFileDocumentRowView(ctx, theme)
-                v.layoutParams =
-                    RecyclerView.LayoutParams(
-                        ViewGroup.LayoutParams.MATCH_PARENT,
-                        ViewGroup.LayoutParams.WRAP_CONTENT
-                    ).apply {
-                        topMargin = LayoutHelper.dp(4f)
-                        bottomMargin = LayoutHelper.dp(4f)
-                    }
-                DocVH(v)
-            }
             else -> {
                 val v = ChannelFileDocumentRowView(ctx, theme)
                 v.layoutParams =
@@ -108,6 +97,11 @@ class ChannelFilesAdapter(
                         topMargin = LayoutHelper.dp(4f)
                         bottomMargin = LayoutHelper.dp(4f)
                     }
+                v.setOnClickListener {
+                    val item = v.tag as? ChannelDocumentItem ?: return@setOnClickListener
+                    val url = item.url
+                    if (url.isNotEmpty()) resolver.openUrl(url)
+                }
                 DocVH(v)
             }
         }
@@ -125,12 +119,7 @@ class ChannelFilesAdapter(
                 val time = resolver.formatTime(d.item.createTimeSeconds)
                 val shared = resolver.formatSharedByLine(name)
                 holder.view.bind(d.item, shared, time)
-                holder.view.setOnClickListener {
-                    val url = d.item.url
-                    if (url.isNotEmpty()) {
-                        resolver.openUrl(url)
-                    }
-                }
+                holder.view.tag = d.item
             }
         }
     }

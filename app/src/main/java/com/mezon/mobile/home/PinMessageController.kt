@@ -234,6 +234,13 @@ class PinMessageController @Inject constructor(
         pinListResyncJobs[channelId] = job
         job.invokeOnCompletion { pinListResyncJobs.remove(channelId, job) }
     }
+
+    fun cleanup() {
+        synchronized(this) { pinMessagesByChannel.clear() }
+        clanHintByChannel.clear()
+        pinListResyncJobs.values.forEach { it.cancel() }
+        pinListResyncJobs.clear()
+    }
 }
 
 private fun PinMessage.toPinMessageData(): PinMessageData = PinMessageData(

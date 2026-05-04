@@ -93,4 +93,13 @@ class FcmRepository @Inject constructor(
         Log.e(TAG, "Failed to register FCM token after $MAX_RETRIES attempts")
         Result.failure(lastError ?: RuntimeException("Unknown error"))
     }
+
+    suspend fun deleteToken() = withContext(ioDispatcher) {
+        runCatching {
+            FirebaseMessaging.getInstance().deleteToken().await()
+            Log.d(TAG, "FCM token deleted")
+        }.onFailure { e ->
+            Log.w(TAG, "Failed to delete FCM token", e)
+        }
+    }
 }

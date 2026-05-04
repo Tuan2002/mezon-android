@@ -71,7 +71,7 @@ class ChannelController @Inject constructor(
     fun cleanup() {
         _channelsByClan.value = emptyMap()
         currentOpenChannelId = 0L
-        processedBadgeKeys.clear()
+        synchronized(badgeKeyLock) { processedBadgeKeys.clear() }
         channelListLoading.clear()
         channelListNetworkFetchInflight.clear()
         favoritesByClan.clear()
@@ -459,27 +459,30 @@ class ChannelController @Inject constructor(
             .thenBy { it.channelId })
     }
 
+    @Volatile
     private var currentOpenChannelId = 0L
-    private val processedBadgeKeys = LinkedHashSet<String>()
+    private val processedBadgeKeys = LinkedHashSet<Long>()
+    private val badgeKeyLock = Any()
 
     fun setCurrentChannel(channelId: Long) { currentOpenChannelId = channelId }
     fun clearCurrentChannel() { currentOpenChannelId = 0L }
 
     private fun isBadgeProcessed(channelId: Long, messageId: Long): Boolean {
         if (messageId == 0L) return false
-        val key = "${channelId}_${messageId}"
-        if (processedBadgeKeys.contains(key)) return true
-        processedBadgeKeys.add(key)
-        if (processedBadgeKeys.size > MAX_BADGE_CACHE) {
-            val iter = processedBadgeKeys.iterator()
-            val removeCount = processedBadgeKeys.size - MAX_BADGE_CACHE / 2
-            repeat(removeCount) { if (iter.hasNext()) { iter.next(); iter.remove() } }
+        val key = (channelId shl 32) xor messageId
+        synchronized(badgeKeyLock) {
+            if (!processedBadgeKeys.add(key)) return true
+            if (processedBadgeKeys.size > MAX_BADGE_CACHE) {
+                val iter = processedBadgeKeys.iterator()
+                val removeCount = processedBadgeKeys.size - MAX_BADGE_CACHE / 2
+                repeat(removeCount) { if (iter.hasNext()) { iter.next(); iter.remove() } }
+            }
         }
         return false
     }
 
     fun clearBadgeDedup() {
-        processedBadgeKeys.clear()
+        synchronized(badgeKeyLock) { processedBadgeKeys.clear() }
     }
 
     private fun findClanIdForChannel(channelId: Long): Long {

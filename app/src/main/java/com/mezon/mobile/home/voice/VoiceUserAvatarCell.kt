@@ -46,6 +46,7 @@ class VoiceUserAvatarCell(
     private var displayName: String = ""
     private var avatarUrl: String? = null
     private var overflowCount: Int = 0
+    private var overflowText: String = ""
     private var isOverflowItem = false
 
     fun setUser(userId: Long, name: String, avatarUrl: String?) {
@@ -63,6 +64,7 @@ class VoiceUserAvatarCell(
     fun setOverflow(count: Int) {
         this.isOverflowItem = true
         this.overflowCount = count
+        this.overflowText = "+$count"
         this.nameLayout = null
         cancelAvatarLoad()
         invalidate()
@@ -131,9 +133,8 @@ class VoiceUserAvatarCell(
                 AVATAR_SIZE / 2f,
                 overflowBgPaint
             )
-            val text = "+$overflowCount"
             val textY = cy - (overflowTextPaint.descent() + overflowTextPaint.ascent()) / 2
-            canvas.drawText(text, avatarLeft + AVATAR_SIZE / 2f, textY, overflowTextPaint)
+            canvas.drawText(overflowText, avatarLeft + AVATAR_SIZE / 2f, textY, overflowTextPaint)
             return
         }
 

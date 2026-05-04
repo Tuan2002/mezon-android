@@ -73,7 +73,7 @@ class AvatarView(context: Context) : View(context) {
         super.onAttachedToWindow()
         attachedToWindow = true
         val url = currentUrl
-        if (url != null && cancellable == null) {
+        if (url != null && cancellable == null && !avatarDrawable.hasPhoto()) {
             loadImage(url)
         }
     }

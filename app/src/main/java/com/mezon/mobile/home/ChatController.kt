@@ -71,6 +71,7 @@ private const val DIRECTION_BEFORE = 3
 
 @Singleton
 class ChatController @Inject constructor(
+    @dagger.hilt.android.qualifiers.ApplicationContext private val appContext: android.content.Context,
     private val api: MezonApi,
     private val mezonSocket: MezonSocket,
     private val messageDao: MessageDao,
@@ -146,6 +147,8 @@ class ChatController @Inject constructor(
             lastMessageByChannel.clear()
             cachedCurrentUserId = 0L
         }
+        pendingApiReactions.clear()
+        lastApiReactionDedup = null
     }
 
     suspend fun getMessageById(channelId: Long, messageId: Long): MessageEntity? =
@@ -212,16 +215,6 @@ class ChatController @Inject constructor(
                     return@launch
                 }
 
-                if (!forceRefresh && cacheTracker.shouldCall(cacheKey) == ApiCacheTracker.ShouldCall.SKIP) {
-                    val fromDb = messageDao.getLatestByChannel(channelId, PAGE_SIZE)
-                    if (fromDb.isNotEmpty()) {
-                        notificationCenter.postNotificationOnMainThread(
-                            NotificationCenter.messagesDidLoad, channelId, ArrayList(fromDb), true, false, true
-                        )
-                        return@launch
-                    }
-                }
-
                 sessionManager.withAutoRefresh { session ->
                     val currentUserId = session.userId.toLongOrNull() ?: 0L
                     val response = api.listChannelMessages(
@@ -265,30 +258,31 @@ class ChatController @Inject constructor(
         appScope.launch(ioDispatcher) {
             try {
                 val cacheKey = apiCacheKey("fetchMessages", clanId, channelId)
+                val isOnlineNow = networkMonitor.isOnline.value
 
-                val fromDb = messageDao.getMessagesAround(channelId, anchorMessageId, PAGE_SIZE)
-                var anchorInDb = false
-                if (fromDb.isNotEmpty()) {
-                    val dbMinId = fromDb.minOf { it.id }
-                    val dbMaxId = fromDb.maxOf { it.id }
-                    anchorInDb = if (requireExactAnchor) {
-                        fromDb.any { it.id == anchorMessageId }
-                    } else {
-                        anchorMessageId in dbMinId..dbMaxId
+                if (!isOnlineNow) {
+                    val fromDb = messageDao.getMessagesAround(channelId, anchorMessageId, PAGE_SIZE)
+                    var anchorInDb = false
+                    if (fromDb.isNotEmpty()) {
+                        val dbMinId = fromDb.minOf { it.id }
+                        val dbMaxId = fromDb.maxOf { it.id }
+                        anchorInDb = if (requireExactAnchor) {
+                            fromDb.any { it.id == anchorMessageId }
+                        } else {
+                            anchorMessageId in dbMinId..dbMaxId
+                        }
+                        if (anchorInDb) {
+                            val lastKnown = synchronized(this@ChatController) { lastMessageByChannel.get(channelId, 0L) }
+                            val hasMoreBottom = lastKnown > 0L && dbMaxId < lastKnown
+                            Log.d(TAG, "loadMessagesAround: DB hit anchor=$anchorMessageId range=$dbMinId..$dbMaxId hasMoreBottom=$hasMoreBottom count=${fromDb.size}")
+                            notificationCenter.postNotificationOnMainThread(
+                                NotificationCenter.messagesDidLoad, channelId, ArrayList(fromDb), true, hasMoreBottom, true
+                            )
+                        } else {
+                            Log.d(TAG, "loadMessagesAround: DB miss anchor=$anchorMessageId not in range=$dbMinId..$dbMaxId, waiting for API")
+                        }
                     }
-                    if (anchorInDb) {
-                        val lastKnown = synchronized(this@ChatController) { lastMessageByChannel.get(channelId, 0L) }
-                        val hasMoreBottom = lastKnown > 0L && dbMaxId < lastKnown
-                        Log.d(TAG, "loadMessagesAround: DB hit anchor=$anchorMessageId range=$dbMinId..$dbMaxId hasMoreBottom=$hasMoreBottom count=${fromDb.size}")
-                        notificationCenter.postNotificationOnMainThread(
-                            NotificationCenter.messagesDidLoad, channelId, ArrayList(fromDb), true, hasMoreBottom, true
-                        )
-                    } else {
-                        Log.d(TAG, "loadMessagesAround: DB miss anchor=$anchorMessageId not in range=$dbMinId..$dbMaxId, waiting for API")
-                    }
-                }
 
-                if (!networkMonitor.isOnline.value) {
                     if (!anchorInDb && fromDb.isNotEmpty()) {
                         Log.d(TAG, "Offline — anchor not in DB, showing latest cached as fallback")
                         val fallback = messageDao.getLatestByChannel(channelId, PAGE_SIZE * 4)
@@ -300,11 +294,6 @@ class ChatController @Inject constructor(
                     } else if (fromDb.isEmpty()) {
                         Log.d(TAG, "Offline — no cached messages for channel $channelId (around)")
                     }
-                    return@launch
-                }
-
-                if (anchorInDb && cacheTracker.shouldCall(cacheKey) == ApiCacheTracker.ShouldCall.SKIP) {
-                    Log.d(TAG, "Cache valid for channel $channelId (around), skipping API")
                     return@launch
                 }
 
@@ -920,6 +909,10 @@ class ChatController @Inject constructor(
 
                     for (item in attachments) {
                         try {
+                            if (com.mezon.mobile.util.AttachmentUploader.isOverSizeLimit(item.size)) {
+                                Log.e(TAG, "Attachment too large, skipping: ${item.filename} size=${item.size}")
+                                continue
+                            }
                             val timestamp = System.currentTimeMillis() / 1000
                             val sanitizedName = item.filename.replace(Regex("[^a-zA-Z0-9._-]"), "_")
                             val uploadFilename = "${timestamp}_$sanitizedName"
@@ -930,9 +923,11 @@ class ChatController @Inject constructor(
                                 item.size.toInt(), item.width, item.height
                             )
 
-                            val fileBytes = contentResolver.openInputStream(item.uri)?.use { it.readBytes() }
+                            val fileBytes = com.mezon.mobile.util.AttachmentUploader.readUriBytesSafely(
+                                contentResolver, item.uri, item.mimeType, appContext.cacheDir
+                            )
                             if (fileBytes == null) {
-                                Log.e(TAG, "Failed to read file: ${item.filename}")
+                                Log.e(TAG, "Failed to read file or over size: ${item.filename}")
                                 continue
                             }
 
@@ -1059,6 +1054,10 @@ class ChatController @Inject constructor(
                     val uploadedAttachments = ArrayList<MessageAttachment>()
 
                     for (item in attachments) {
+                        if (com.mezon.mobile.util.AttachmentUploader.isOverSizeLimit(item.size)) {
+                            Log.e(TAG, "shareMedia: attachment too large, skipping ${item.filename} size=${item.size}")
+                            continue
+                        }
                         var uploaded = false
                         for (attempt in 1..SHARE_MAX_RETRIES) {
                             try {
@@ -1072,9 +1071,11 @@ class ChatController @Inject constructor(
                                     item.size.toInt(), item.width, item.height
                                 )
 
-                                val fileBytes = contentResolver.openInputStream(item.uri)?.use { it.readBytes() }
+                                val fileBytes = com.mezon.mobile.util.AttachmentUploader.readUriBytesSafely(
+                                    contentResolver, item.uri, item.mimeType, appContext.cacheDir
+                                )
                                 if (fileBytes == null) {
-                                    Log.e(TAG, "shareMedia: Failed to read file: ${item.filename}")
+                                    Log.e(TAG, "shareMedia: Failed to read file or over size: ${item.filename}")
                                     break
                                 }
 

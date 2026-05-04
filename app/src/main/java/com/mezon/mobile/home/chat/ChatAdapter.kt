@@ -86,6 +86,41 @@ class ChatAdapter(
         notifyDataSetChanged()
     }
 
+    fun notifyMessageInsertedAt(modelIndex: Int) {
+        val prevMessagesStartRow = messagesStartRow
+        val prevRowCount = rowCount
+        updateRowsInternal()
+        val structuralChange = prevRowCount == 0 ||
+            messagesStartRow != prevMessagesStartRow ||
+            modelIndex !in 0..messages.size
+        if (structuralChange) {
+            notifyDataSetChanged()
+        } else {
+            notifyItemInserted(messagesStartRow + modelIndex)
+        }
+    }
+
+    fun notifyMessageRemovedAt(modelIndex: Int) {
+        if (modelIndex < 0) return
+        val prevMessagesStartRow = messagesStartRow
+        val prevRowCount = rowCount
+        val adapterPos = prevMessagesStartRow + modelIndex
+        updateRowsInternal()
+        val structuralChange = rowCount == 0 ||
+            prevRowCount == 0 ||
+            messagesStartRow != prevMessagesStartRow
+        if (structuralChange) {
+            notifyDataSetChanged()
+        } else {
+            notifyItemRemoved(adapterPos)
+        }
+    }
+
+    fun notifyMessageChangedAt(modelIndex: Int) {
+        if (modelIndex !in messages.indices) return
+        notifyItemChanged(messagesStartRow + modelIndex)
+    }
+
     fun getMessage(position: Int): MessageEntity? {
         val idx = position - messagesStartRow
         return if (idx in messages.indices) messages[idx] else null
@@ -195,6 +230,8 @@ class ChatAdapter(
             }
             is SystemViewHolder -> {
                 holder.cell.channelName = channelName
+                holder.cell.delegate = systemMessageDelegate
+                holder.cell.mentionInteractiveGate = systemMessageMentionGate
                 holder.cell.update(0, messages[idx])
             }
             is SendTokenViewHolder -> {
@@ -228,6 +265,8 @@ class ChatAdapter(
     var isChannelPrivate = false
     var loadLinkInvitePreview: (suspend (Long) -> LinkInvitePreview?)? = null
     var sendTokenDelegate: SendTokenMessageCell.Delegate? = null
+    var systemMessageDelegate: SystemMessageCell.Delegate? = null
+    var systemMessageMentionGate: ((userId: String?, roleId: String?, segmentText: String) -> Boolean)? = null
 
     class MessageViewHolder(val cell: ChatMessageCell) : RecyclerView.ViewHolder(cell)
     class WelcomeViewHolder(val cell: WelcomeMessageCell) : RecyclerView.ViewHolder(cell)

@@ -366,8 +366,16 @@ class VoiceReactionPickerBottomSheet(
 
         fun setPlayingSrc(src: String?) {
             if (playingSrc == src) return
+            val oldSrc = playingSrc
             playingSrc = src
-            notifyDataSetChanged()
+            if (oldSrc != null) {
+                val idx = items.indexOfFirst { it is SoundListItem.Sound && it.sticker.src == oldSrc }
+                if (idx >= 0) notifyItemChanged(idx)
+            }
+            if (src != null) {
+                val idx = items.indexOfFirst { it is SoundListItem.Sound && it.sticker.src == src }
+                if (idx >= 0) notifyItemChanged(idx)
+            }
         }
 
         fun isFullSpan(position: Int): Boolean {

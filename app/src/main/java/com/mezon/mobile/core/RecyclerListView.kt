@@ -640,9 +640,10 @@ open class RecyclerListView(
 
     override fun hasOverlappingRendering(): Boolean = false
 
+    private val sectionBgPaint = Paint()
+
     fun drawSectionBackground(canvas: Canvas, fromPos: Int, toPos: Int, color: Int) {
-        val paint = Paint()
-        paint.color = color
+        sectionBgPaint.color = color
         var top = Int.MAX_VALUE
         var bottom = Int.MIN_VALUE
         for (i in 0 until childCount) {
@@ -654,7 +655,7 @@ open class RecyclerListView(
             }
         }
         if (top < bottom) {
-            canvas.drawRect(0f, top.toFloat(), width.toFloat(), bottom.toFloat(), paint)
+            canvas.drawRect(0f, top.toFloat(), width.toFloat(), bottom.toFloat(), sectionBgPaint)
         }
     }
 
