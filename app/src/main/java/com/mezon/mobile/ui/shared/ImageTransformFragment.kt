@@ -577,14 +577,19 @@ open class ImageTransformFragment : BaseFragment() {
         cropBottomBar.alpha = if (active) 0.35f else 1f
     }
 
+    protected open fun exportSquarePx(): Int = EXPORT_PX
+
+    protected open fun writeExportBitmap(bitmap: Bitmap, maxBytes: Int): File? =
+        writeJpegUnderCap(bitmap, maxBytes)
+
     protected open fun onSaveClicked() {
         if (isWorking || !::transformCanvas.isInitialized || transformCanvas.visibility != View.VISIBLE) return
-        val cropped = transformCanvas.renderCroppedSquare(EXPORT_PX) ?: return
+        val cropped = transformCanvas.renderCroppedSquare(exportSquarePx()) ?: return
         isWorking = true
         setUploadBlocking(true)
         val ep = entryPoint()
         fragmentScope.launch(ep.ioDispatcher()) {
-            val file = writeJpegUnderCap(cropped, maxExportBytes())
+            val file = writeExportBitmap(cropped, maxExportBytes())
             cropped.recycle()
             if (file == null) {
                 withContext(ep.mainDispatcher()) {
