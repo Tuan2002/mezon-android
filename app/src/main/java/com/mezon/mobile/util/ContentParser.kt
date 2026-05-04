@@ -7,6 +7,18 @@ import org.json.JSONObject
 
 private val CONTENT_REGEX = Regex("\"t\"\\s*:\\s*\"((?:[^\"\\\\]|\\\\.)*)\"")
 
+private val THREAD_INFO_REGEX = Regex("\\(([^,]+),\\s*([^)]+)\\)")
+
+data class ParsedThreadInfo(val label: String, val channelId: Long)
+
+fun parseThreadInfoFromPlainText(text: String): ParsedThreadInfo? {
+    val match = THREAD_INFO_REGEX.find(text) ?: return null
+    val label = match.groupValues[1].trim()
+    val id = match.groupValues[2].trim().toLongOrNull() ?: return null
+    if (label.isEmpty()) return null
+    return ParsedThreadInfo(label, id)
+}
+
 fun parseContentText(content: String): String {
     if (content.isBlank()) return ""
     return try {

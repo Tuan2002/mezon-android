@@ -50,19 +50,25 @@ class SessionManager @Inject constructor(
         private const val MAX_REFRESH_RETRIES = 5
         private const val TOKEN_EXPIRY_BUFFER_SEC = 60
         private const val SESSION_SECRET_ALIAS = "mezon_session_v1"
+        private const val ENCRYPTED_PREFIX = "enc:v1:"
     }
 
     private fun encryptSecret(plain: String): String {
         if (plain.isEmpty()) return ""
-        return secretStorage.encryptToString(plain, SESSION_SECRET_ALIAS) ?: plain
+        val encrypted = secretStorage.encryptToString(plain, SESSION_SECRET_ALIAS) ?: return plain
+        return ENCRYPTED_PREFIX + encrypted
     }
 
     private fun decryptSecret(blob: String): String {
         if (blob.isEmpty()) return ""
-        val decrypted = secretStorage.decryptFromString(blob, SESSION_SECRET_ALIAS)
-        if (decrypted != null) return decrypted
-        if (isLikelyEncryptedBlob(blob)) return ""
-        return blob
+        if (blob.startsWith(ENCRYPTED_PREFIX)) {
+            val encryptedPart = blob.removePrefix(ENCRYPTED_PREFIX)
+            return secretStorage.decryptFromString(encryptedPart, SESSION_SECRET_ALIAS) ?: ""
+        }
+        if (isLikelyJwt(blob)) return blob
+        if (!isLikelyEncryptedBlob(blob)) return blob
+        val legacyDecrypted = secretStorage.decryptFromString(blob, SESSION_SECRET_ALIAS)
+        return legacyDecrypted ?: blob
     }
 
     val sessionFlow: Flow<StoredSession?> = dataStore.data.map { prefs ->
