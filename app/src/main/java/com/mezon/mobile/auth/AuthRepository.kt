@@ -2,6 +2,7 @@ package com.mezon.mobile.auth
 
 import android.util.Log
 import com.mezon.mobile.BuildConfig
+import com.mezon.mobile.core.StartupCache
 import com.mezon.mobile.di.IoDispatcher
 import com.mezon.mobile.network.MezonApi
 import com.mezon.mobile.session.SessionManager
@@ -44,6 +45,7 @@ class AuthRepository @Inject constructor(
                 )
                 walletCacheStore.clear()
                 sessionManager.saveSession(stored)
+                StartupCache.needsUsernameSetup = false
                 stored
             }
         }
@@ -80,6 +82,7 @@ class AuthRepository @Inject constructor(
                     reqId = reqId,
                     otpCode = otpCode
                 )
+                StartupCache.needsUsernameSetup = session.created == true
                 val stored = StoredSession(
                     token = session.token,
                     refreshToken = session.refreshToken,
@@ -91,6 +94,31 @@ class AuthRepository @Inject constructor(
                 walletCacheStore.clear()
                 sessionManager.saveSession(stored)
                 stored
+            }
+        }
+
+    suspend fun updateUsername(username: String): Result<StoredSession> =
+        withContext(ioDispatcher) {
+            runCatching {
+                val current = sessionManager.requireValidSession()
+                val r = api.updateUsername(current.apiUrl, current.token, username)
+                if (r.token.isBlank() || r.refreshToken.isBlank()) {
+                    throw IllegalStateException("UpdateUsername did not return session tokens")
+                }
+                val userIdStr = if (r.userId != 0L) r.userId.toString() else current.userId
+                val merged = StoredSession(
+                    token = r.token,
+                    refreshToken = r.refreshToken,
+                    apiUrl = r.apiUrl.ifEmpty { current.apiUrl },
+                    wsUrl = r.wsUrl.ifEmpty { current.wsUrl },
+                    userId = userIdStr,
+                    idToken = r.idToken.ifEmpty { current.idToken },
+                    isRemember = current.isRemember
+                )
+                walletCacheStore.clear()
+                sessionManager.saveSession(merged)
+                StartupCache.needsUsernameSetup = false
+                merged
             }
         }
 

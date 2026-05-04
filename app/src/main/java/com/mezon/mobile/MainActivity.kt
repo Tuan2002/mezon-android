@@ -18,8 +18,10 @@ import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.core.view.WindowCompat
+import androidx.lifecycle.lifecycleScope
 import com.mezon.mobile.auth.LoginFragment
 import com.mezon.mobile.auth.OTPVerificationFragment
+import com.mezon.mobile.auth.UpdateUsernameFragment
 import com.mezon.mobile.core.ActionBarLayout
 import com.mezon.mobile.core.AndroidUtilities
 import com.mezon.mobile.core.BaseFragment
@@ -52,6 +54,9 @@ import com.mezon.mobile.update.AppUpdateGateManager
 import dagger.hilt.android.AndroidEntryPoint
 import dagger.hilt.android.EntryPointAccessors
 import javax.inject.Inject
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @AndroidEntryPoint
 class MainActivity : BasePermissionsActivity(),
@@ -170,8 +175,13 @@ class MainActivity : BasePermissionsActivity(),
 
         if (mainFragmentsStack.isEmpty()) {
             if (hasSession) {
-                showHome()
-                setupSplashDismiss()
+                if (StartupCache.needsUsernameSetup) {
+                    showUpdateUsernameGate()
+                    setupSplashDismiss()
+                } else {
+                    showHome()
+                    setupSplashDismiss()
+                }
             } else {
                 showLogin()
             }
@@ -311,6 +321,9 @@ class MainActivity : BasePermissionsActivity(),
             minimizeVoiceRoom()
             return
         }
+        if (actionBarLayout.getLastFragment() is UpdateUsernameFragment) {
+            return
+        }
         if (!actionBarLayout.onBackPressedInternal()) {
             super.onBackPressed()
         }
@@ -444,12 +457,52 @@ class MainActivity : BasePermissionsActivity(),
     }
 
     private fun showLogin() {
+        StartupCache.needsUsernameSetup = false
         mainFragmentsStack.clear()
         val fragment = LoginFragment().apply {
-            onLoginSuccess = { showHome() }
+            onLoginSuccess = { navigatePostAuth() }
         }
         actionBarLayout.addFragmentToStack(fragment)
         actionBarLayout.showLastFragment()
+    }
+
+    private fun navigatePostAuth() {
+        if (StartupCache.needsUsernameSetup) {
+            showUpdateUsernameGate()
+        } else {
+            showHome()
+        }
+    }
+
+    private fun showUpdateUsernameGate() {
+        notificationHelper.cancelAllNotifications()
+        dismissVoiceRoom()
+        val entryPoint = EntryPointAccessors.fromApplication(
+            applicationContext, FragmentEntryPoint::class.java
+        )
+        entryPoint.voiceController().cleanup()
+        actionBarLayout.removeAllFragments()
+        actionBarLayout.containerView.removeAllViews()
+        actionBarLayout.containerViewBack.removeAllViews()
+        mainFragmentsStack.clear()
+        val fragment = UpdateUsernameFragment().apply {
+            onComplete = { showHome() }
+        }
+        actionBarLayout.addFragmentToStack(fragment)
+        actionBarLayout.showLastFragment()
+    }
+
+    fun logoutToChooseDifferentPhone() {
+        val entryPoint = EntryPointAccessors.fromApplication(
+            applicationContext, FragmentEntryPoint::class.java
+        )
+        lifecycleScope.launch {
+            StartupCache.needsUsernameSetup = false
+            withContext(Dispatchers.IO) {
+                entryPoint.authRepository().logout()
+            }
+            switchToLogin()
+        }
     }
 
     private fun showHome() {
@@ -469,6 +522,7 @@ class MainActivity : BasePermissionsActivity(),
     }
 
     private fun switchToLogin() {
+        StartupCache.needsUsernameSetup = false
         notificationHelper.cancelAllNotifications()
         dismissVoiceRoom()
         val entryPoint = EntryPointAccessors.fromApplication(
@@ -760,8 +814,9 @@ class MainActivity : BasePermissionsActivity(),
 
     private fun rewireTopFragmentCallbacks() {
         when (val top = mainFragmentsStack.lastOrNull()) {
-            is LoginFragment -> top.onLoginSuccess = { showHome() }
-            is OTPVerificationFragment -> top.onVerifySuccess = { showHome() }
+            is LoginFragment -> top.onLoginSuccess = { navigatePostAuth() }
+            is OTPVerificationFragment -> top.onVerifySuccess = { navigatePostAuth() }
+            is UpdateUsernameFragment -> top.onComplete = { showHome() }
             is MainTabsActivity -> {
                 top.onLogout = { switchToLogin() }
                 top.onOpenChat = { channelId, channelName, clanId, channelType ->
