@@ -1487,7 +1487,6 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
                 startX = x
                 startY = y
 
-                // Poll touches must not depend on a prior frame having run draw(); sync rects first.
                 if (pollParsed != null && messageEntity?.isPollMessage == true) {
                     syncPollHitRect()
                     if (!pollHitRect.isEmpty && pollHitRect.contains(x, y)) {
