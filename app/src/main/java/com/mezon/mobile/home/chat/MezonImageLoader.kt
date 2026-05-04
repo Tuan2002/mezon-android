@@ -11,7 +11,6 @@ import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.util.LruCache
-import okhttp3.Cache
 import okhttp3.Call
 import okhttp3.Callback
 import okhttp3.OkHttpClient
@@ -33,11 +32,7 @@ class MezonImageLoader private constructor(context: Context) {
 
     private val appContext = context.applicationContext
 
-    private val httpCacheDir: File = File(context.cacheDir, "http_cache").also { it.mkdirs() }
-    private val httpCache = Cache(httpCacheDir, HTTP_CACHE_BYTES)
-
     private val client = OkHttpClient.Builder()
-        .cache(httpCache)
         .connectTimeout(10, TimeUnit.SECONDS)
         .readTimeout(15, TimeUnit.SECONDS)
         .build()
@@ -61,10 +56,10 @@ class MezonImageLoader private constructor(context: Context) {
     }
 
     private val diskCacheDir: File = File(context.cacheDir, "img_cache").also { it.mkdirs() }
-    private val maxDiskCacheBytes = 512L * 1024 * 1024
+    private val maxDiskCacheBytes = 128L * 1024 * 1024
 
-    private val avatarCacheDir: File = File(context.filesDir, "avatar_cache").also { it.mkdirs() }
-    private val maxAvatarDiskBytes = 256L * 1024 * 1024
+    private val avatarCacheDir: File = File(context.cacheDir, "avatar_cache").also { it.mkdirs() }
+    private val maxAvatarDiskBytes = 64L * 1024 * 1024
 
     private val inflightUrlCalls = ConcurrentHashMap<String, Call>()
     private val pendingDecodes = ConcurrentHashMap<String, MutableList<PendingDecode>>()
@@ -261,21 +256,24 @@ class MezonImageLoader private constructor(context: Context) {
 
     private fun removePendingCallback(url: String, memKey: String, cb: LoadCallback) {
         val list = pendingCallbacks[memKey] ?: return
-        synchronized(list) { list.remove(cb) }
-        if (list.isEmpty()) {
-            pendingCallbacks.remove(memKey)
-            val decodeList = pendingDecodes[url]
-            if (decodeList != null) {
-                synchronized(decodeList) {
-                    decodeList.removeAll { it.memKey == memKey }
-                }
-                if (decodeList.isEmpty()) {
-                    pendingDecodes.remove(url)
-                    if (pendingDecodes[url] == null) {
-                        inflightUrlCalls.remove(url)?.cancel()
-                    }
-                }
-            }
+        val callbacksEmpty = synchronized(list) {
+            list.remove(cb)
+            if (list.isEmpty()) {
+                pendingCallbacks.remove(memKey, list)
+                true
+            } else false
+        }
+        if (!callbacksEmpty) return
+        val decodeList = pendingDecodes[url] ?: return
+        val decodeEmpty = synchronized(decodeList) {
+            decodeList.removeAll { it.memKey == memKey }
+            if (decodeList.isEmpty()) {
+                pendingDecodes.remove(url, decodeList)
+                true
+            } else false
+        }
+        if (decodeEmpty) {
+            inflightUrlCalls.remove(url)?.cancel()
         }
     }
 
@@ -283,7 +281,7 @@ class MezonImageLoader private constructor(context: Context) {
         val callbacks = pendingCallbacks.remove(cacheKey) ?: return
         val copy: List<LoadCallback>
         synchronized(callbacks) { copy = ArrayList(callbacks) }
-        mainHandler.post {
+        runOnMain {
             for (cb in copy) cb.onSuccess(result)
         }
     }
@@ -292,7 +290,7 @@ class MezonImageLoader private constructor(context: Context) {
         val callbacks = pendingCallbacks.remove(cacheKey) ?: return
         val copy: List<LoadCallback>
         synchronized(callbacks) { copy = ArrayList(callbacks) }
-        mainHandler.post {
+        runOnMain {
             for (cb in copy) cb.onError?.invoke(error)
         }
     }
@@ -518,7 +516,6 @@ class MezonImageLoader private constructor(context: Context) {
 
         private const val SMALL_IMAGE_THRESHOLD = 100
         private const val MAX_DECODE_QUEUE = 64
-        private const val HTTP_CACHE_BYTES = 100L * 1024 * 1024
 
         private val AVATAR_BUCKET_MARKERS = arrayOf(
             "/rs:fill:64:64:1/",

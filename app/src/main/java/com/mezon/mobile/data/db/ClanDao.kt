@@ -7,8 +7,8 @@ import com.mezon.mobile.home.clans.ClanEntity
 
 @Dao
 interface ClanDao {
-    @Query("SELECT * FROM clans ORDER BY clanOrder ASC")
-    suspend fun getAll(): List<ClanEntity>
+    @Query("SELECT * FROM clans ORDER BY clanOrder ASC LIMIT :limit")
+    suspend fun getAll(limit: Int = 500): List<ClanEntity>
 
     @Upsert
     suspend fun upsertAll(clans: List<ClanEntity>)

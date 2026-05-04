@@ -191,10 +191,16 @@ class ChannelAppFragment : BaseFragment() {
                 domStorageEnabled = true
                 databaseEnabled = true
                 mediaPlaybackRequiresUserGesture = false
-                mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
+                mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
                 cacheMode = WebSettings.LOAD_DEFAULT
-                javaScriptCanOpenWindowsAutomatically = true
+                javaScriptCanOpenWindowsAutomatically = false
                 setSupportMultipleWindows(false)
+                allowFileAccess = false
+                allowContentAccess = false
+                @Suppress("DEPRECATION")
+                allowFileAccessFromFileURLs = false
+                @Suppress("DEPRECATION")
+                allowUniversalAccessFromFileURLs = false
                 @Suppress("DEPRECATION")
                 setRenderPriority(WebSettings.RenderPriority.HIGH)
             }
@@ -202,6 +208,21 @@ class ChannelAppFragment : BaseFragment() {
             alpha = 0f
             setLayerType(View.LAYER_TYPE_HARDWARE, null)
             webViewClient = object : WebViewClient() {
+                override fun shouldOverrideUrlLoading(
+                    view: WebView?,
+                    request: android.webkit.WebResourceRequest?
+                ): Boolean {
+                    val target = request?.url?.toString() ?: return false
+                    if (!isAllowedAppUrl(target)) {
+                        runCatching {
+                            val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, request.url)
+                            view?.context?.startActivity(intent)
+                        }
+                        return true
+                    }
+                    return false
+                }
+
                 override fun onPageFinished(view: WebView?, url: String?) {
                     super.onPageFinished(view, url)
                     hideSkeleton()
@@ -408,10 +429,20 @@ class ChannelAppFragment : BaseFragment() {
             finishFragment()
             return
         }
+        if (!isAllowedAppUrl(appUrl)) {
+            val ctx = getParentActivity() ?: return
+            Toast.makeText(ctx, "Invalid app URL", Toast.LENGTH_SHORT).show()
+            finishFragment()
+            return
+        }
         loadJob?.cancel()
         loadJob = scope.launch {
             try {
                 val fullUrl = fullUrlDeferred.await()
+                if (!isAllowedAppUrl(fullUrl)) {
+                    finishFragment()
+                    return@launch
+                }
                 webView?.loadUrl(fullUrl)
             } catch (e: Exception) {
                 val ctx = getParentActivity() ?: return@launch
@@ -419,6 +450,13 @@ class ChannelAppFragment : BaseFragment() {
                 finishFragment()
             }
         }
+    }
+
+    private fun isAllowedAppUrl(url: String): Boolean {
+        val parsed = runCatching { android.net.Uri.parse(url) }.getOrNull() ?: return false
+        if (parsed.scheme?.equals("https", ignoreCase = true) != true) return false
+        val host = parsed.host?.trim()?.lowercase() ?: return false
+        return host.isNotEmpty()
     }
 
     override fun onFragmentDestroy() {
@@ -496,32 +534,41 @@ class ChannelAppFragment : BaseFragment() {
         override fun onDraw(canvas: Canvas) {
             val w = width.toFloat()
             if (w <= 0f) return
-            val padH = LayoutHelper.dp(16).toFloat()
-            val rowH = LayoutHelper.dp(14).toFloat()
-            val gap = LayoutHelper.dp(12).toFloat()
-            val radius = LayoutHelper.dp(8).toFloat()
-            var top = LayoutHelper.dp(24).toFloat()
+            var top = TOP_START
 
-            shimmer.draw(canvas, padH, top, w - padH, top + LayoutHelper.dp(28), radius, isDark)
-            top += LayoutHelper.dp(28) + LayoutHelper.dp(20)
+            shimmer.draw(canvas, PAD_H, top, w - PAD_H, top + HEADER_H, RADIUS, isDark)
+            top += HEADER_H + HEADER_GAP
 
-            val blockGap = LayoutHelper.dp(16).toFloat()
-            val blockH = LayoutHelper.dp(72).toFloat()
             repeat(3) {
-                shimmer.draw(canvas, padH, top, w - padH, top + blockH, radius, isDark)
-                top += blockH + blockGap
+                shimmer.draw(canvas, PAD_H, top, w - PAD_H, top + BLOCK_H, RADIUS, isDark)
+                top += BLOCK_H + BLOCK_GAP
             }
 
-            top += LayoutHelper.dp(4)
+            top += ROW_TOP_PAD
             repeat(4) {
-                val right = w - padH - (if (it == 3) LayoutHelper.dp(80) else 0).toFloat()
-                shimmer.draw(canvas, padH, top, right, top + rowH, radius / 2f, isDark)
-                top += rowH + gap
+                val right = w - PAD_H - (if (it == 3) ROW_TRAILING else 0f)
+                shimmer.draw(canvas, PAD_H, top, right, top + ROW_H, ROW_RADIUS, isDark)
+                top += ROW_H + ROW_GAP
             }
 
             if (running && visibility == VISIBLE) {
                 postInvalidateOnAnimation()
             }
+        }
+
+        companion object {
+            private val PAD_H = LayoutHelper.dp(16).toFloat()
+            private val ROW_H = LayoutHelper.dp(14).toFloat()
+            private val ROW_GAP = LayoutHelper.dp(12).toFloat()
+            private val RADIUS = LayoutHelper.dp(8).toFloat()
+            private val ROW_RADIUS = RADIUS / 2f
+            private val TOP_START = LayoutHelper.dp(24).toFloat()
+            private val HEADER_H = LayoutHelper.dp(28).toFloat()
+            private val HEADER_GAP = LayoutHelper.dp(20).toFloat()
+            private val BLOCK_H = LayoutHelper.dp(72).toFloat()
+            private val BLOCK_GAP = LayoutHelper.dp(16).toFloat()
+            private val ROW_TOP_PAD = LayoutHelper.dp(4).toFloat()
+            private val ROW_TRAILING = LayoutHelper.dp(80).toFloat()
         }
     }
 

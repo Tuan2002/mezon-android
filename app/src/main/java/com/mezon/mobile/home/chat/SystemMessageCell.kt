@@ -30,7 +30,6 @@ class SystemMessageCell(context: Context, private val theme: ThemeColors) : View
         if (mask != 0) return false
 
         iconDrawable = resolveIcon(msg)
-        buildLayouts(msg)
         requestLayout()
         invalidate()
         return true

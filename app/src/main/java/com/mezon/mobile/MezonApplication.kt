@@ -1,9 +1,6 @@
 package com.mezon.mobile
 
 import android.app.Application
-import android.os.Handler
-import android.os.Looper
-import android.webkit.WebView
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.stringPreferencesKey
@@ -16,7 +13,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
 import javax.inject.Inject
 
 @HiltAndroidApp
@@ -31,31 +27,19 @@ class MezonApplication : Application() {
         super.onCreate()
         StartupCache.init(this)
 
-        val prefs = runBlocking { dataStore.data.first() }
-
-        StartupCache.seed(
-            hasSession = prefs[SessionKeys.TOKEN] != null,
-            themeMode = prefs[stringPreferencesKey("app_theme")] ?: "dark",
-            locale = prefs[stringPreferencesKey("app_language")] ?: "en"
-        )
-
         if (StartupCache.hasSession) {
             appStartScope.launch { database.openHelper.writableDatabase }
         }
 
-       // warmupWebView()
-    }
-
-    private fun warmupWebView() {
-        Handler(Looper.getMainLooper()).postDelayed({
+        appStartScope.launch {
             runCatching {
-                val wv = WebView(applicationContext)
-                wv.destroy()
+                val prefs = dataStore.data.first()
+                StartupCache.seed(
+                    hasSession = prefs[SessionKeys.TOKEN] != null,
+                    themeMode = prefs[stringPreferencesKey("app_theme")] ?: "dark",
+                    locale = prefs[stringPreferencesKey("app_language")] ?: "en"
+                )
             }
-        }, WEBVIEW_WARMUP_DELAY_MS)
-    }
-
-    companion object {
-        private const val WEBVIEW_WARMUP_DELAY_MS = 3000L
+        }
     }
 }

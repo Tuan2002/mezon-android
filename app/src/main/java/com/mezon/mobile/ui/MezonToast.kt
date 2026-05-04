@@ -13,8 +13,7 @@ object MezonToast {
         description: String? = null
     ) {
         val act = fragment.getParentActivity() as? MainActivity ?: return
-        val parent = fragment.getLayoutContainer()
-            ?: act.drawerLayoutContainer
+        val parent = act.drawerLayoutContainer
         ToastOverlay(act, act.themeColors).show(
             parent,
             type,

@@ -24,3 +24,10 @@ rootProject.name = "Mezon"
 include(":app")
 include(":core-proto")
 include(":mmn-client-kotlin")
+
+buildCache {
+    local {
+        isEnabled = true
+        removeUnusedEntriesAfterDays = 30
+    }
+}

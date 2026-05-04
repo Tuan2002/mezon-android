@@ -40,6 +40,15 @@ class PageDownButton(context: Context, private val theme: ThemeColors) : View(co
     private var badgeCount = 0
     private var badgeText = ""
 
+    companion object {
+        private val MEASURE_PAD = LayoutHelper.dp(12f)
+        private val ARROW_SIZE = LayoutHelper.dp(8f).toFloat()
+        private val BADGE_HEIGHT = LayoutHelper.dp(18f).toFloat()
+        private val BADGE_PAD_H = LayoutHelper.dp(5f).toFloat()
+        private val BADGE_OFFSET_RIGHT = LayoutHelper.dp(2f).toFloat()
+        private val BADGE_OFFSET_TOP = LayoutHelper.dp(4f).toFloat()
+    }
+
     private var wantShow = false
 
     init {
@@ -80,7 +89,7 @@ class PageDownButton(context: Context, private val theme: ThemeColors) : View(co
     fun isButtonVisible(): Boolean = wantShow
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
-        val totalSize = buttonSize + LayoutHelper.dp(12f)
+        val totalSize = buttonSize + MEASURE_PAD
         setMeasuredDimension(totalSize, totalSize)
     }
 
@@ -92,24 +101,21 @@ class PageDownButton(context: Context, private val theme: ThemeColors) : View(co
 
         canvas.drawCircle(cx, btnCy, btnRadius, bgPaint)
 
-        val arrowSize = LayoutHelper.dp(8f).toFloat()
         arrowPath.reset()
-        arrowPath.moveTo(cx - arrowSize, btnCy - arrowSize * 0.5f)
-        arrowPath.lineTo(cx, btnCy + arrowSize * 0.5f)
-        arrowPath.lineTo(cx + arrowSize, btnCy - arrowSize * 0.5f)
+        arrowPath.moveTo(cx - ARROW_SIZE, btnCy - ARROW_SIZE * 0.5f)
+        arrowPath.lineTo(cx, btnCy + ARROW_SIZE * 0.5f)
+        arrowPath.lineTo(cx + ARROW_SIZE, btnCy - ARROW_SIZE * 0.5f)
         canvas.drawPath(arrowPath, arrowPaint)
 
         if (badgeCount > 0) {
-            val badgeH = LayoutHelper.dp(18f).toFloat()
             val textWidth = badgeTextPaint.measureText(badgeText)
-            val padH = LayoutHelper.dp(5f).toFloat()
-            val badgeW = (textWidth + padH * 2).coerceAtLeast(badgeH)
-            val badgeRadius = badgeH / 2f
+            val badgeW = (textWidth + BADGE_PAD_H * 2).coerceAtLeast(BADGE_HEIGHT)
+            val badgeRadius = BADGE_HEIGHT / 2f
 
-            val badgeRight = cx + buttonSize / 2f + LayoutHelper.dp(2f)
+            val badgeRight = cx + buttonSize / 2f + BADGE_OFFSET_RIGHT
             val badgeLeft = badgeRight - badgeW
-            val badgeTop = btnCy - buttonSize / 2f - LayoutHelper.dp(4f)
-            badgeRect.set(badgeLeft, badgeTop, badgeRight, badgeTop + badgeH)
+            val badgeTop = btnCy - buttonSize / 2f - BADGE_OFFSET_TOP
+            badgeRect.set(badgeLeft, badgeTop, badgeRight, badgeTop + BADGE_HEIGHT)
             canvas.drawRoundRect(badgeRect, badgeRadius, badgeRadius, badgeBgPaint)
 
             val textY = badgeRect.centerY() - (badgeTextPaint.descent() + badgeTextPaint.ascent()) / 2

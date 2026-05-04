@@ -44,11 +44,13 @@ class VoiceCollapsedMembersCell(
     private var memberCount = 0
     private var visibleCount = 0
     private var overflowCount = 0
+    private var overflowText = ""
 
     fun setMembers(members: List<VoiceMemberDisplay>) {
         memberCount = members.size
         visibleCount = members.size.coerceAtMost(MAX_VISIBLE_AVATARS)
         overflowCount = if (members.size > MAX_VISIBLE_AVATARS) members.size - MAX_VISIBLE_AVATARS else 0
+        overflowText = if (overflowCount > 0) "+$overflowCount" else ""
 
         for (i in 0 until MAX_VISIBLE_AVATARS) {
             if (i < visibleCount) {
@@ -123,9 +125,8 @@ class VoiceCollapsedMembersCell(
             canvas.drawCircle(badgeCx, cy, badgeR - badgeBorderPaint.strokeWidth / 2f, badgeBorderPaint)
 
             badgeTextPaint.color = themeColors.onSurface
-            val text = "+$overflowCount"
             val textY = cy - (badgeTextPaint.descent() + badgeTextPaint.ascent()) / 2
-            canvas.drawText(text, badgeCx, textY, badgeTextPaint)
+            canvas.drawText(overflowText, badgeCx, textY, badgeTextPaint)
         }
     }
 }

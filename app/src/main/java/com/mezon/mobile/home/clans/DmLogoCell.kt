@@ -65,7 +65,7 @@ class DmLogoCell(
             effectiveUrl, iconSizePx, iconSizePx,
             onSuccess = { bmp ->
                 logoBitmap = bmp
-                post { invalidate() }
+                invalidate()
             }
         )
     }
