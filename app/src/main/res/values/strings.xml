@@ -129,6 +129,15 @@
     <string name="otp_change_confirm_title">Change %1$s?</string>
     <string name="otp_change_confirm_message">This will take you back to the login screen.</string>
 
+    <string name="update_username_title">Enter Mezon name</string>
+    <string name="update_username_subtitle">Please use your actual name to make it easier for people to identify you.</string>
+    <string name="update_username_hint">Your name…</string>
+    <string name="update_username_preview">Username: %1$s</string>
+    <string name="update_username_button">Update</string>
+    <string name="update_username_error">There’s an issue or the name already exists, please choose another one.</string>
+    <string name="update_username_change_phone_question">Want to sign in again with your phone number?</string>
+    <string name="update_username_change_phone_link">Return to login with phone number</string>
+
     <!-- common.sessionExpired -->
     <string name="common_session_expired_title">Session Expired or Network Error</string>
     <string name="common_session_expired_confirm">Login Again</string>

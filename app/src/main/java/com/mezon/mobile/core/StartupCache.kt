@@ -11,6 +11,7 @@ object StartupCache {
     private const val KEY_THEME = "theme"
     private const val KEY_LOCALE = "locale"
     private const val KEY_USER_ID = "user_id"
+    private const val KEY_NEEDS_USERNAME_SETUP = "needs_username_setup"
 
     private lateinit var prefs: SharedPreferences
 
@@ -41,6 +42,12 @@ object StartupCache {
         get() = prefs.getString(KEY_USER_ID, "") ?: ""
         set(value) = prefs.edit().putString(KEY_USER_ID, value).apply()
 
+    var needsUsernameSetup: Boolean
+        get() = prefs.getBoolean(KEY_NEEDS_USERNAME_SETUP, false)
+        set(value) {
+            prefs.edit().putBoolean(KEY_NEEDS_USERNAME_SETUP, value).commit()
+        }
+
     fun init(context: Context) {
         prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
     }
@@ -50,6 +57,11 @@ object StartupCache {
             .putBoolean(KEY_HAS_SESSION, hasSession)
             .putString(KEY_THEME, themeMode)
             .putString(KEY_LOCALE, locale)
+            .apply {
+                if (!hasSession) {
+                    putBoolean(KEY_NEEDS_USERNAME_SETUP, false)
+                }
+            }
             .commit()
     }
 }

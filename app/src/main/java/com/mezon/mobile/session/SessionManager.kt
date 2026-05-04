@@ -210,6 +210,7 @@ class SessionManager @Inject constructor(
 
     suspend fun clearSession() {
         StartupCache.hasSession = false
+        StartupCache.needsUsernameSetup = false
         StartupCache.userId = ""
         lastRefreshToken = ""
         failCount = 0
