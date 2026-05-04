@@ -162,7 +162,7 @@ class MezonSocket @Inject constructor(
     suspend fun send(block: EnvelopeKt.Dsl.() -> Unit): Envelope {
         val cid = cidCounter.incrementAndGet()
         val env = envelope {
-            this.cid = cid.toString()
+            this.cid = cid
             block()
         }
 
@@ -579,8 +579,8 @@ class MezonSocket @Inject constructor(
     private fun handleEnvelope(envelope: Envelope) {
         val cid = envelope.cid
 
-        if (cid != "0") {
-            val deferred = pendingRequests.remove(cid)
+        if (cid != 0) {
+            val deferred = pendingRequests.remove(cid.toString())
             if (deferred != null) {
                 if (envelope.messageCase == Envelope.MessageCase.ERROR) {
                     deferred.completeExceptionally(
