@@ -1,6 +1,7 @@
 package com.mezon.mobile.home.clans
 
 import android.content.Context
+import com.mezon.mobile.R
 import android.util.Log
 import com.mezon.mobile.core.LayoutHelper
 import com.mezon.mobile.core.NotificationCenter
@@ -28,6 +29,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -64,6 +66,9 @@ class ClansController @Inject constructor(
     private val _selectedClanId = MutableStateFlow(0L)
     val selectedClanId: StateFlow<Long> = _selectedClanId.asStateFlow()
 
+    private val _clanLogoUpdateInFlight = MutableStateFlow<Set<Long>>(emptySet())
+    val clanLogoUpdateInFlight: StateFlow<Set<Long>> = _clanLogoUpdateInFlight.asStateFlow()
+
     var clansLoaded = false
         private set
 
@@ -74,7 +79,7 @@ class ClansController @Inject constructor(
                 Log.d(TAG, "init Room cache (${cached.size} clans): ${cached.map { "${it.clanName}(order=${it.clanOrder})" }}")
                 _clans.value = cached
                 clansLoaded = true
-                preWarmLogos(cached)
+                preWarmClanLogos(cached)
                 notificationCenter.postNotificationOnMainThread(NotificationCenter.clansDidLoad)
                 val lastClanId = withContext(ioDispatcher) { sessionManager.getLastClanId() }
                 val initialClan = cached.firstOrNull { it.clanId == lastClanId } ?: cached.first()
@@ -237,7 +242,7 @@ class ClansController @Inject constructor(
                 _clans.value = sorted
                 clansLoaded = true
                 cacheTracker.markCalled(cacheKey)
-                preWarmLogos(sorted)
+                preWarmClanLogos(sorted)
                 withContext(ioDispatcher) { clanDao.upsertAll(sorted) }
                 notificationCenter.postNotificationOnMainThread(NotificationCenter.clansDidLoad)
                 badgeCoordinator.get().processDeferredQueue()
@@ -429,7 +434,55 @@ class ClansController @Inject constructor(
         )
     }
 
-    private fun preWarmLogos(clans: List<ClanEntity>) {
+    fun updateClanLogo(
+        clanId: Long,
+        logoUrl: String,
+        onResult: (success: Boolean, message: String?) -> Unit,
+    ) {
+        if (clanId == 0L) {
+            appScope.launch(Dispatchers.Main.immediate) { onResult(false, null) }
+            return
+        }
+        appScope.launch {
+            _clanLogoUpdateInFlight.update { it + clanId }
+            try {
+                val desc = sessionManager.withAutoRefresh { session ->
+                    withContext(ioDispatcher) {
+                        api.updateClanDesc(session.apiUrl, session.token, clanId, logo = logoUrl)
+                    }
+                }
+                val list = _clans.value
+                val idx = list.indexOfFirst { it.clanId == clanId }
+                if (idx < 0) {
+                    withContext(Dispatchers.Main.immediate) {
+                        onResult(false, appContext.getString(R.string.clan_settings_logo_update_failed))
+                    }
+                    return@launch
+                }
+                val existing = list[idx]
+                val merged = existing.copy(
+                    clanName = desc.clanName.ifEmpty { existing.clanName },
+                    logo = desc.logo.ifEmpty { logoUrl },
+                    banner = desc.banner.ifEmpty { existing.banner },
+                    isCommunity = desc.isCommunity,
+                )
+                _clans.value = list.toMutableList().also { it[idx] = merged }
+                appScope.launch(ioDispatcher) { clanDao.upsert(merged) }
+                cacheTracker.invalidate(apiCacheKey("listClanDescs"))
+                notificationCenter.postNotificationOnMainThread(NotificationCenter.clanInfoUpdated, clanId)
+                withContext(Dispatchers.Main.immediate) { onResult(true, null) }
+            } catch (e: Exception) {
+                Log.e(TAG, "updateClanLogo($clanId) failed", e)
+                val msg = e.message?.takeIf { it.isNotBlank() }
+                    ?: appContext.getString(R.string.clan_settings_logo_update_failed)
+                withContext(Dispatchers.Main.immediate) { onResult(false, msg) }
+            } finally {
+                _clanLogoUpdateInFlight.update { it - clanId }
+            }
+        }
+    }
+
+    private fun preWarmClanLogos(clans: List<ClanEntity>) {
         val loader = MezonImageLoader.getInstance(appContext)
         val sizePx = CLAN_ICON_SIZE_PX
         for (clan in clans) {

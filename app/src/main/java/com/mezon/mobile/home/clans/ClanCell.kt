@@ -122,8 +122,17 @@ class ClanCell(
     }
 
     private fun loadLogoIfNeeded(clan: ClanEntity) {
-        if (clan.logo.isEmpty()) return
         val avatar = cachedAvatars.get(clan.clanId) ?: return
+        if (clan.logo.isEmpty()) {
+            if (currentLogoUrl != null || avatar.hasPhoto()) {
+                currentLogoUrl = null
+                logoCancellable?.cancel()
+                logoCancellable = null
+                avatar.setPhoto(null)
+                invalidate()
+            }
+            return
+        }
         val url = avatarImgproxyUrl(clan.logo, iconSizePx)
         if (url == currentLogoUrl && avatar.hasPhoto()) return
         currentLogoUrl = url
@@ -131,7 +140,7 @@ class ClanCell(
         logoCancellable?.cancel()
         logoCancellable = null
 
-        if (avatar.hasPhoto()) return
+        avatar.setPhoto(null)
 
         val loader = MezonImageLoader.getInstance(context)
         val cached = loader.getBitmapFromMemory(url, iconSizePx, iconSizePx)

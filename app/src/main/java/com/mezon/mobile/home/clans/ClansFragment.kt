@@ -1085,6 +1085,8 @@ class ClansFragment : BaseFragment() {
                 if (old == null ||
                     old.badgeCount != new.badgeCount ||
                     old.hasUnread != new.hasUnread ||
+                    old.logo != new.logo ||
+                    old.clanName != new.clanName ||
                     selected != wasSelected) {
                     notifyItemChanged(clanStart + i)
                 }
