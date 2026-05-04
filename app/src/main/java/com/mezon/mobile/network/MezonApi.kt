@@ -18,6 +18,9 @@ import com.mezon.mezon.api.ChannelDescription
 import com.mezon.mezon.api.ChannelMessageList
 import com.mezon.mezon.api.createChannelDescRequest
 import com.mezon.mezon.api.ClanDescList
+import com.mezon.mezon.api.NotificationSetting
+import com.mezon.mezon.api.SystemMessage
+import com.mezon.mezon.api.SystemMessageRequest
 import com.mezon.mezon.api.PinMessagesList
 import com.mezon.mezon.api.pinMessageRequest
 import com.mezon.mezon.api.deletePinMessage
@@ -37,6 +40,10 @@ import com.mezon.mezon.api.addFriendsRequest
 import com.mezon.mezon.api.blockFriendsRequest
 import com.mezon.mezon.api.createCategoryDescRequest
 import com.mezon.mezon.api.createClanDescRequest
+import com.mezon.mezon.api.deleteClanDescRequest
+import com.mezon.mezon.api.getSystemMessage
+import com.mezon.mezon.api.notificationClan
+import com.mezon.mezon.api.setDefaultNotificationRequest
 import com.mezon.mezon.api.updateClanDescRequest
 import com.mezon.mezon.api.deleteFriendsRequest
 import com.mezon.mezon.api.deleteNotificationsRequest
@@ -100,6 +107,8 @@ import io.ktor.http.isSuccess
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import org.json.JSONObject
+import com.google.protobuf.BoolValue
+import com.google.protobuf.StringValue
 import javax.inject.Inject
 import javax.inject.Singleton
 class UnauthorizedException(message: String) : RuntimeException(message)
@@ -509,15 +518,87 @@ class MezonApi @Inject constructor(
         token: String,
         clanId: Long,
         logo: String? = null,
+        clearLogo: Boolean = false,
+        clanName: String? = null,
+        banner: String? = null,
+        clearBanner: Boolean = false,
+        preventAnonymous: Boolean? = null,
+        welcomeChannelId: Long? = null,
+        isOnboarding: Boolean? = null,
+        isCommunity: Boolean? = null,
     ): ClanDesc {
         val request = updateClanDescRequest {
             this.clanId = clanId
-            if (logo != null) {
-                this.logo = com.google.protobuf.StringValue.of(logo)
+            when {
+                logo != null -> this.logo = StringValue.of(logo)
+                clearLogo -> this.logo = StringValue.of("")
             }
+            if (clanName != null) {
+                this.clanName = clanName
+            }
+            when {
+                banner != null && banner.isNotEmpty() -> this.banner = StringValue.of(banner)
+                banner != null && banner.isEmpty() -> this.banner = StringValue.of("")
+                clearBanner -> this.banner = StringValue.of("")
+            }
+            preventAnonymous?.let { this.preventAnonymous = it }
+            welcomeChannelId?.let { this.welcomeChannelId = it }
+            isOnboarding?.let { this.isOnboarding = BoolValue.of(it) }
+            isCommunity?.let { this.isCommunity = BoolValue.of(it) }
         }
         val bytes = rpc(apiUrl, token, "UpdateClanDesc", request.toByteArray())
         return ClanDesc.parseFrom(bytes)
+    }
+
+    suspend fun getSystemMessageForClan(
+        apiUrl: String,
+        token: String,
+        clanId: Long,
+    ): SystemMessage {
+        val request = getSystemMessage { this.clanId = clanId }
+        val bytes = rpc(apiUrl, token, "GetSystemMessageByClanId", request.toByteArray())
+        return SystemMessage.parseFrom(bytes)
+    }
+
+    suspend fun updateSystemMessage(
+        apiUrl: String,
+        token: String,
+        body: SystemMessageRequest,
+    ): SystemMessage {
+        val bytes = rpc(apiUrl, token, "UpdateSystemMessage", body.toByteArray())
+        return SystemMessage.parseFrom(bytes)
+    }
+
+    suspend fun getClanDefaultNotification(
+        apiUrl: String,
+        token: String,
+        clanId: Long,
+    ): NotificationSetting {
+        val request = notificationClan { this.clanId = clanId }
+        val bytes = rpc(apiUrl, token, "GetNotificationClan", request.toByteArray())
+        return NotificationSetting.parseFrom(bytes)
+    }
+
+    suspend fun setClanDefaultNotification(
+        apiUrl: String,
+        token: String,
+        clanId: Long,
+        notificationType: Int,
+    ) {
+        val request = setDefaultNotificationRequest {
+            this.clanId = clanId
+            this.notificationType = notificationType
+        }
+        rpc(apiUrl, token, "SetNotificationClan", request.toByteArray())
+    }
+
+    suspend fun deleteClanDesc(
+        apiUrl: String,
+        token: String,
+        clanId: Long,
+    ) {
+        val request = deleteClanDescRequest { this.clanDescId = clanId }
+        rpc(apiUrl, token, "DeleteClanDesc", request.toByteArray())
     }
 
     suspend fun createCategoryDesc(
