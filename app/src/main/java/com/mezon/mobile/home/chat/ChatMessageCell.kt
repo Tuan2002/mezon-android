@@ -37,6 +37,11 @@ import com.mezon.mobile.util.parseEmbedData
 import com.mezon.mobile.util.parseContentPreview
 import com.mezon.mobile.util.parseContentText
 import com.mezon.mobile.util.parseContentToSpannable
+import com.mezon.mobile.home.chat.poll.ChatPollBridge
+import com.mezon.mobile.home.chat.poll.ParsedPoll
+import com.mezon.mobile.home.chat.poll.PollLocalState
+import com.mezon.mobile.home.chat.poll.PollMessageLayout
+import com.mezon.mobile.home.chat.poll.parsePollContent
 import com.mezon.mobile.util.parseOgpData
 import android.graphics.Bitmap
 import android.graphics.Typeface
@@ -62,6 +67,13 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
     var messageEntity: MessageEntity? = null
         private set
     private val linkInviteBlock = LinkInviteBlock(this, theme) { messageEntity?.id }
+    private val pollLayoutHelper = PollMessageLayout(context)
+    private var pollParsed: ParsedPoll? = null
+    private val pollHitRect = RectF()
+    /** Y of poll card top from last [drawMessageBubble]; hitTest must use this, not an inflated [pollHitRect].top. */
+    private var pollCardDrawTopY = Float.NaN
+    private var hasPollCard = false
+    var pollBridge: ChatPollBridge? = null
     var loadLinkInvitePreview: (suspend (Long) -> com.mezon.mobile.network.LinkInvitePreview?)?
         get() = linkInviteBlock.loadLinkInvitePreview
         set(v) {
@@ -296,6 +308,10 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
         lastBoundContentHash = 0
         lastBoundCombined = false
         cachedMeasuredWidth = 0
+        pollParsed = null
+        hasPollCard = false
+        pollHitRect.setEmpty()
+        pollCardDrawTopY = Float.NaN
     }
 
     private var lastBoundId = 0L
@@ -310,7 +326,8 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
         if (mask == 0) {
             val contentHash = msg.content.hashCode() xor msg.timestampSeconds.hashCode() xor
                 msg.code xor (if (msg.isForwarded) 1 else 0) xor
-                msg.updateTimeSeconds.hashCode() xor (if (msg.hideEditted) 2 else 0)
+                msg.updateTimeSeconds.hashCode() xor (if (msg.hideEditted) 2 else 0) xor
+                (pollBridge?.stateFingerprint(msg.id) ?: 0)
             if (msg.id == lastBoundId && contentHash == lastBoundContentHash && isCombined == lastBoundCombined) {
                 return false
             }
@@ -652,7 +669,9 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
                 .build()
         }
 
-        val hasText = parsedContent.isNotBlank() && parsedContent != "[file]" && parsedContent != "[embed]"
+        pollParsed = if (msg.isPollMessage) parsePollContent(msg.content) else null
+        val hasText = !msg.isPollMessage &&
+            parsedContent.isNotBlank() && parsedContent != "[file]" && parsedContent != "[embed]"
         contentLayout = if (hasText) {
             val content = msg.content
             val linkColor = theme.blurple
@@ -763,6 +782,12 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
 
         buildReactionLayouts(msg, textWidth)
 
+        if (msg.isPollMessage && pollParsed != null) {
+            val st = pollBridge?.getLocalState(msg.id) ?: PollLocalState()
+            val forLayout = pollBridge?.pollForLayout(msg.id, pollParsed!!) ?: pollParsed!!
+            pollLayoutHelper.prepare(forLayout, st, currentUserId, theme, bubbleMaxW)
+        }
+
         val replyW = if (hasReply) cachedReplyNameW + cachedReplyTextW + REPLY_AVATAR_SIZE + REPLY_H_GAP * 2 else 0f
         val ogpW = if (ogpData != null) maxOf(cachedOgpTitleW, cachedOgpDescW, ogpImageW.toFloat()) else 0f
         val fileW = if (drawFileAttachment) fileRowWidth.toFloat() else 0f
@@ -775,11 +800,51 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
             bubbleMaxW
         } else {
             val allW = maxOf(cachedSenderW, cachedContentW, cachedTimeW, replyW, ogpW, cachedForwardW, fileW, audioW, cachedEphW, embedW, inviteW)
-            allW.toInt().coerceAtMost(bubbleMaxW)
+            var w = allW.toInt().coerceAtMost(bubbleMaxW)
+            if (msg.isPollMessage && pollParsed != null) {
+                w = maxOf(w, pollLayoutHelper.cardWidth)
+            }
+            w
         }
 
         measuredCellHeight = computeHeight(msg)
         updatedContent = true
+        syncPollHitRect()
+    }
+
+    /** Top Y of bubble content stack before poll; must match drawMessageBubble (sender → forward → poll). */
+    private fun verticalOffsetBeforePollCard(): Float {
+        val topPad = if (isCombined) COMBINE_PAD_V else PAD_V
+        var yOff = topPad.toFloat()
+        if (hasReply) yOff += REPLY_ROW_HEIGHT + REPLY_V_GAP
+        senderLayout?.let { yOff += it.height + GAP_V_INNER }
+        forwardLayout?.let { yOff += it.height + GAP_V_INNER }
+        return yOff
+    }
+
+    /** Matches [PollMessageLayout.draw] translate top — never use inflated [pollHitRect].top for coords. */
+    private fun pollHitTestOriginTop(): Float =
+        if (!pollCardDrawTopY.isNaN()) pollCardDrawTopY else verticalOffsetBeforePollCard()
+
+    private fun syncPollHitRect() {
+        val msg = messageEntity
+        if (msg == null || !msg.isPollMessage || pollParsed == null) {
+            hasPollCard = false
+            pollHitRect.setEmpty()
+            pollCardDrawTopY = Float.NaN
+            return
+        }
+        val contentLeft = if (isInPinMode) PIN_PAD_H else PAD_H + AVATAR_SIZE + GAP_AVATAR
+        val drawTop = if (!pollCardDrawTopY.isNaN()) pollCardDrawTopY else verticalOffsetBeforePollCard()
+        val xCard = contentLeft.toFloat()
+        hasPollCard = true
+        val extraTop = LayoutHelper.dp(10).toFloat()
+        pollHitRect.set(
+            xCard,
+            drawTop - extraTop,
+            xCard + pollLayoutHelper.cardWidth,
+            drawTop + pollLayoutHelper.blockHeight
+        )
     }
 
     private fun computeHeight(msg: MessageEntity): Int {
@@ -790,8 +855,12 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
             h += REPLY_ROW_HEIGHT + REPLY_V_GAP
         }
 
-        forwardLayout?.let { h += it.height + GAP_V_INNER }
         senderLayout?.let { h += it.height + GAP_V_INNER }
+        forwardLayout?.let { h += it.height + GAP_V_INNER }
+
+        if (msg.isPollMessage && pollParsed != null) {
+            h += pollLayoutHelper.blockHeight + GAP_V_INNER
+        }
 
         contentLayout?.let {
             h += it.height
@@ -1400,6 +1469,14 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
                 startX = x
                 startY = y
 
+                // Poll touches must not depend on a prior frame having run draw(); sync rects first.
+                if (pollParsed != null && messageEntity?.isPollMessage == true) {
+                    syncPollHitRect()
+                    if (!pollHitRect.isEmpty && pollHitRect.contains(x, y)) {
+                        return true
+                    }
+                }
+
                 if (!isCombined) {
                     var avatarTopPad = PAD_V
                     if (hasReply) avatarTopPad += REPLY_ROW_HEIGHT + REPLY_V_GAP
@@ -1478,8 +1555,11 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
                     val topPad = if (isCombined) COMBINE_PAD_V else PAD_V
                     var reacBaseY = topPad.toFloat()
                     if (hasReply) reacBaseY += REPLY_ROW_HEIGHT + REPLY_V_GAP
-                    forwardLayout?.let { reacBaseY += it.height + GAP_V_INNER }
                     senderLayout?.let { reacBaseY += it.height + GAP_V_INNER }
+                    forwardLayout?.let { reacBaseY += it.height + GAP_V_INNER }
+                    if (messageEntity?.isPollMessage == true && pollParsed != null) {
+                        reacBaseY += pollLayoutHelper.blockHeight + GAP_V_INNER
+                    }
                     contentLayout?.let {
                         reacBaseY += it.height + (if (ogpData != null || linkInviteBlock.isVisible) LINK_INVITE_V_MARGIN else GAP_V_INNER)
                     }
@@ -1569,6 +1649,17 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
                     pressedOnInviteJoin = false
                     pressedReactionIndex = -1
                     return true
+                }
+                val pollMsg = messageEntity
+                if (pollMsg != null && pollMsg.isPollMessage && pollParsed != null) {
+                    syncPollHitRect()
+                    if (!pollHitRect.isEmpty && pollHitRect.contains(x, y)) {
+                        val tap = pollLayoutHelper.hitTest(x, y, pollHitRect.left, pollHitTestOriginTop())
+                        if (tap != null) {
+                            pollBridge?.onPollTap(pollMsg, pollParsed!!, tap)
+                            return true
+                        }
+                    }
                 }
                 if (pressedReactionIndex >= 0) {
                     val idx = pressedReactionIndex
@@ -1836,6 +1927,7 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
     }
 
     private fun drawMessageBubble(canvas: Canvas, msg: MessageEntity) {
+        pollCardDrawTopY = Float.NaN
         val topPad = if (isCombined) COMBINE_PAD_V else PAD_V
         val contentLeft = if (isInPinMode) PIN_PAD_H else PAD_H + AVATAR_SIZE + GAP_AVATAR
 
@@ -1874,6 +1966,20 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
         forwardLayout?.let {
             drawForwardHeader(canvas, contentLeft.toFloat(), yOff, msg)
             yOff += it.height + GAP_V_INNER
+        }
+
+        if (pollParsed != null && msg.isPollMessage) {
+            val pl = pollBridge?.pollForLayout(msg.id, pollParsed!!) ?: pollParsed!!
+            val st = pollBridge?.getLocalState(msg.id) ?: PollLocalState()
+            val xCard = contentLeft.toFloat()
+            pollCardDrawTopY = yOff
+            pollLayoutHelper.draw(canvas, xCard, yOff, pl, st, currentUserId)
+            syncPollHitRect()
+            yOff += pollLayoutHelper.blockHeight + GAP_V_INNER
+        } else {
+            hasPollCard = false
+            pollHitRect.setEmpty()
+            pollCardDrawTopY = Float.NaN
         }
 
         contentLayout?.let {

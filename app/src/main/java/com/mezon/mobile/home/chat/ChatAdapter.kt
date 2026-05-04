@@ -15,6 +15,8 @@ class ChatAdapter(
     var cellDelegate: ChatMessageCell.ChatMessageCellDelegate? = null
 ) : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
 
+    var pollBridge: com.mezon.mobile.home.chat.poll.ChatPollBridge? = null
+
     init { setHasStableIds(true) }
 
     companion object {
@@ -175,6 +177,7 @@ class ChatAdapter(
         when (holder) {
             is MessageViewHolder -> {
                 holder.cell.delegate = cellDelegate
+                holder.cell.pollBridge = pollBridge
                 holder.cell.loadLinkInvitePreview = loadLinkInvitePreview
                 holder.cell.isCombined = computeCombined(idx)
                 holder.cell.currentUserId = currentUserId.toLongOrNull() ?: 0L
@@ -210,8 +213,10 @@ class ChatAdapter(
     private fun computeCombined(idx: Int): Boolean {
         if (idx + 1 >= messages.size) return false
         val current = messages[idx]
+        if (current.isPollMessage) return false
         if (current.content.contains("\"references\"")) return false
         val prev = messages[idx + 1]
+        if (prev.isPollMessage) return false
         if (current.senderId != prev.senderId) return false
         if (prev.isSystemMessage || current.isSystemMessage) return false
         val diff = current.timestampSeconds - prev.timestampSeconds

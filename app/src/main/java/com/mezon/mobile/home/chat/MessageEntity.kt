@@ -10,6 +10,7 @@ import com.mezon.mezon.api.MessageRefList
 import org.json.JSONArray
 import org.json.JSONObject
 import android.util.Log
+import com.mezon.mobile.home.chat.poll.isPollContentJson
 import com.mezon.mobile.util.MENTION_HERE_USER_ID
 
 data class AttachmentInfo(
@@ -99,7 +100,8 @@ data class MessageEntity(
     }
 
     val isPollMessage: Boolean
-        get() = code == CODE_POLL
+        get() = code == CODE_POLL ||
+            (code == CODE_CHAT_UPDATE && isPollContentJson(content))
 
     val isUnreadDivider: Boolean
         get() = id == UNREAD_DIVIDER_ID
@@ -125,7 +127,7 @@ data class MessageEntity(
                 || code == CODE_SHARE_CONTACT || code == CODE_LOCATION
 
     val isRenderable: Boolean
-        get() = isNormalMessage || isSystemMessage
+        get() = isNormalMessage || isSystemMessage || isPollMessage
 
     val isSending: Boolean
         get() = sendState == SEND_STATE_SENDING
