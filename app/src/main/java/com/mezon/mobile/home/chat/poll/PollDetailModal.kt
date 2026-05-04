@@ -2,6 +2,8 @@
 
 import android.app.Dialog
 import android.graphics.Color
+import android.graphics.PorterDuff
+import android.graphics.PorterDuffColorFilter
 import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.GradientDrawable
 import android.util.Log
@@ -11,6 +13,7 @@ import android.view.ViewGroup
 import android.view.Window
 import android.view.WindowManager
 import android.widget.FrameLayout
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
@@ -73,29 +76,27 @@ class PollDetailModal(
             typeface = android.graphics.Typeface.DEFAULT_BOLD
             maxLines = 3
         }
+        val closeSize = LayoutHelper.dp(22)
         header.addView(
             titleView,
             FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
                 FrameLayout.LayoutParams.WRAP_CONTENT,
                 Gravity.START or Gravity.CENTER_VERTICAL
-            ).apply { rightMargin = LayoutHelper.dp(40) }
+            ).apply { rightMargin = closeSize + LayoutHelper.dp(10) }
         )
 
-        val close = TextView(context).apply {
-            text = "âœ•"
-            setTextSize(TypedValue.COMPLEX_UNIT_DIP, 18f)
-            setTextColor(themeColors.onSurfaceVariant)
-            setPadding(LayoutHelper.dp(8), LayoutHelper.dp(4), LayoutHelper.dp(8), LayoutHelper.dp(4))
+        val close = ImageView(context).apply {
+            setImageResource(R.drawable.ic_close_icon)
+            colorFilter =
+                PorterDuffColorFilter(themeColors.onSurfaceVariant, PorterDuff.Mode.SRC_IN)
+            scaleType = ImageView.ScaleType.FIT_CENTER
+            setPadding(LayoutHelper.dp(2), LayoutHelper.dp(2), LayoutHelper.dp(2), LayoutHelper.dp(2))
             setOnClickListener { dismiss() }
         }
         header.addView(
             close,
-            FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.WRAP_CONTENT,
-                FrameLayout.LayoutParams.WRAP_CONTENT,
-                Gravity.END or Gravity.TOP
-            )
+            FrameLayout.LayoutParams(closeSize, closeSize, Gravity.END or Gravity.TOP)
         )
         root.addView(
             header,
@@ -205,12 +206,14 @@ class PollDetailModal(
         rebuildOptions()
         selectOption(selectedAnswerIndex)
 
-        scope.launch(Dispatchers.IO) {
-            val p = try {
-                loadPoll()
-            } catch (e: Exception) {
-                Log.w(TAG, "loadPoll", e)
-                null
+        scope.launch {
+            val p = withContext(Dispatchers.IO) {
+                try {
+                    loadPoll()
+                } catch (e: Exception) {
+                    Log.w(TAG, "loadPoll", e)
+                    null
+                }
             }
             withContext(Dispatchers.Main) {
                 if (!isShowing) return@withContext
