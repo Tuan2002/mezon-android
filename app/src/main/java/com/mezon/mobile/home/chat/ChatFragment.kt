@@ -54,6 +54,7 @@ import com.mezon.mobile.core.RecyclerListView
 import com.mezon.mobile.di.FragmentEntryPoint
 import com.mezon.mobile.home.ChatController
 import com.mezon.mobile.home.chat.thread.CreateThreadFragment
+import com.mezon.mobile.home.chat.thread.ThreadListFragment
 import com.mezon.mobile.home.ClanMember
 import com.mezon.mobile.home.LOAD_TYPE_INITIAL
 import com.mezon.mobile.home.DialogsController
@@ -286,6 +287,7 @@ class ChatFragment : BaseFragment() {
     private var suggestionsAdapter: InputSuggestionsAdapter? = null
     private val mentionTrackers = mutableListOf<MentionData>()
     private val hashtagTrackers = mutableListOf<HashtagData>()
+    private var systemMessageMemberIds: Set<String> = emptySet()
     private var currentTrigger: InputSuggestionsController.TriggerState = InputSuggestionsController.TriggerState.NONE
 
     private var slidingView: ChatMessageCell? = null
@@ -1482,11 +1484,57 @@ class ChatFragment : BaseFragment() {
                 presentFragment(SendTokenFragment.newInstance())
             }
         }
+        adapter.systemMessageMentionGate = gate@{ uid, _, segment ->
+            val seg = segment.trim()
+            if (seg.equals("@here", ignoreCase = true)) return@gate true
+            if (uid == ChatController.ID_MENTION_HERE) return@gate true
+            if (uid.isNullOrEmpty()) return@gate false
+            systemMessageMemberIds.contains(uid)
+        }
+        adapter.systemMessageDelegate = object : SystemMessageCell.Delegate {
+            override fun onOpenThread(threadChannelId: Long, threadTitle: String) {
+                val entity = channelController.findChannelById(threadChannelId, 0L)
+                    ?: searchController.findChannelById(threadChannelId)
+                if (BuildConfig.DEBUG) {
+                    Log.d(
+                        TAG,
+                        "system_msg_open_thread id=$threadChannelId entity=${entity != null} clanId=$clanId"
+                    )
+                }
+                if (entity != null) {
+                    openChannelEntity(entity)
+                } else {
+                    if (!searchController.hasChannels()) searchController.loadChannels()
+                    (getParentActivity() as? MainActivity)?.openChat(
+                        threadChannelId,
+                        threadTitle,
+                        clanId,
+                        CHANNEL_TYPE_THREAD
+                    )
+                }
+            }
+
+            override fun onSeeAllThreads() {
+                if (BuildConfig.DEBUG) {
+                    Log.d(TAG, "system_msg_see_all_threads channelId=$channelId clanId=$clanId")
+                }
+                presentFragment(ThreadListFragment.newInstance(channelId, channelName, clanId))
+            }
+
+            override fun onMentionClick(userId: String?, roleId: String?) {
+                if (!roleId.isNullOrBlank() && roleId != "0") return
+                val uidStr = userId ?: return
+                if (uidStr == ChatController.ID_MENTION_HERE) return
+                val uid = uidStr.toLongOrNull() ?: return
+                showUserProfileFromMentionUserId(uid)
+            }
+        }
         adapter.loadLinkInvitePreview = { id -> mezonApi.getLinkInvitePreview(id) }
         adapter.channelType = channelType
         adapter.clanId = clanId
         adapter.isChannelPrivate = resolveChannelPrivate()
         adapter.currentUserId = StartupCache.userId
+        refreshSystemMessageMemberGateCache()
         recyclerView.adapter = adapter
 
         setupSwipeInterceptor()
@@ -1628,6 +1676,7 @@ class ChatFragment : BaseFragment() {
 
     override fun onBecomeFullyVisible() {
         super.onBecomeFullyVisible()
+        refreshSystemMessageMemberGateCache()
         if (emojiViewVisible || (emojiView != null && emojiView!!.visibility == View.VISIBLE)) {
             dismissEmojiSilently()
         }
@@ -2461,6 +2510,10 @@ class ChatFragment : BaseFragment() {
 
     private fun resolveMentionMembers(): List<ClanMember> {
         return memberResolver.resolveMentionMembers(clanId, channelId, channelType)
+    }
+
+    private fun refreshSystemMessageMemberGateCache() {
+        systemMessageMemberIds = resolveMentionMembers().map { it.userId.toString() }.toSet()
     }
 
     private fun adjustMentionTrackersForChange(editStart: Int, removedLen: Int, addedLen: Int) {
@@ -3657,6 +3710,67 @@ class ChatFragment : BaseFragment() {
             aboutMe = null,
             memberSince = null,
             isOwnProfile = isOwnProfile,
+            isDM = clanId == 0L,
+            listener = object : UserProfileBottomSheet.UserProfileListener {
+                override fun onSendMessage(userId: Long) {
+                    MezonToast.show(this@ChatFragment, ToastOverlay.ToastType.INFO, getString(R.string.feature_coming_soon))
+                }
+                override fun onVoiceCall(userId: Long) {
+                    MezonToast.show(this@ChatFragment, ToastOverlay.ToastType.INFO, getString(R.string.feature_coming_soon))
+                }
+                override fun onAddFriend(userId: Long) {
+                    showAddFriendBottomSheet()
+                }
+            }
+        )
+        sheet.setDrawNavigationBar(true)
+        sheet.show()
+    }
+
+    private fun showUserProfileFromMentionUserId(userId: Long) {
+        val ctx = getContext() ?: return
+        val activity = getParentActivity() ?: return
+        if (activity.isFinishing || activity.isDestroyed) return
+        val currentUserId = chatController.getCurrentUserId()
+        val member = memberResolver.resolveMember(userId, clanId, channelId, channelType)
+        val displayName = when {
+            member != null -> {
+                val nick = member.clanNick.trim()
+                when {
+                    nick.isNotEmpty() -> nick
+                    member.displayName.isNotBlank() -> member.displayName
+                    else -> member.username.ifBlank { "Unknown" }
+                }
+            }
+            else -> "Unknown"
+        }
+        val usernameLine = when {
+            member != null -> {
+                val u = member.username.trim()
+                when {
+                    u.isNotEmpty() -> u
+                    member.displayName.isNotBlank() -> member.displayName
+                    else -> ""
+                }
+            }
+            else -> ""
+        }
+        val avatarForUi = when {
+            member != null -> {
+                val ca = member.clanAvatar.trim()
+                if (ca.isNotEmpty()) ca else member.avatarUrl
+            }
+            else -> ""
+        }
+        val sheet = UserProfileBottomSheet(
+            context = ctx,
+            userId = userId,
+            displayName = displayName,
+            username = usernameLine,
+            avatarUrl = avatarForUi,
+            aboutMe = null,
+            memberSince = null,
+            isOwnProfile = userId == currentUserId,
             isDM = clanId == 0L,
             listener = object : UserProfileBottomSheet.UserProfileListener {
                 override fun onSendMessage(userId: Long) {
