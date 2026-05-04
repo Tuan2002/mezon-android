@@ -83,6 +83,12 @@ class ChannelFilesController @Inject constructor(
             }
         }
     }
+
+    fun cleanup() {
+        synchronized(this) { docsByChannel.clear() }
+        synchronized(loadFailed) { loadFailed.clear() }
+        synchronized(loadingChannels) { loadingChannels.clear() }
+    }
 }
 
 private fun ChannelAttachment.toFilteredDocumentOrNull(): ChannelDocumentItem? {

@@ -20,9 +20,10 @@ enum class AudioOutputDevice {
     BLUETOOTH
 }
 
-class VoiceAudioManager(private val context: Context) {
+class VoiceAudioManager(context: Context) {
 
-    private val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+    private val context: Context = context.applicationContext
+    private val audioManager = this.context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
     private var audioFocusRequest: AudioFocusRequest? = null
     private var currentDevice = AudioOutputDevice.EARPIECE
     private var bluetoothAvailable = false

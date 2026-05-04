@@ -7,7 +7,6 @@ import android.graphics.Path
 import android.graphics.RectF
 import android.graphics.Typeface
 import android.text.TextPaint
-import android.util.LongSparseArray
 import com.mezon.mobile.core.AvatarDrawable
 import com.mezon.mobile.core.BaseCell
 import com.mezon.mobile.core.LayoutHelper
@@ -22,7 +21,25 @@ class ClanCell(
 ) : BaseCell(context) {
 
     companion object {
-        private val cachedAvatars = LongSparseArray<AvatarDrawable>(30)
+        private val cachedAvatars = object : android.util.LruCache<Long, AvatarDrawable>(64) {
+            override fun entryRemoved(
+                evicted: Boolean,
+                key: Long,
+                oldValue: AvatarDrawable,
+                newValue: AvatarDrawable?
+            ) {
+                oldValue.setPhoto(null)
+            }
+        }
+
+        fun clearAvatarCache() {
+            cachedAvatars.evictAll()
+        }
+
+        private val BADGE_HEIGHT = LayoutHelper.dp(16f).toFloat()
+        private val BADGE_PAD_H = LayoutHelper.dp(4f).toFloat()
+        private val BADGE_OFFSET_RIGHT = LayoutHelper.dp(2f).toFloat()
+        private val BADGE_OFFSET_TOP = LayoutHelper.dp(2f).toFloat()
     }
 
     var currentClan: ClanEntity? = null
@@ -121,9 +138,23 @@ class ClanCell(
         }
     }
 
+    override fun invalidate() {
+        if (currentClan == null) return
+        super.invalidate()
+    }
+
     private fun loadLogoIfNeeded(clan: ClanEntity) {
-        if (clan.logo.isEmpty()) return
         val avatar = cachedAvatars.get(clan.clanId) ?: return
+        if (clan.logo.isEmpty()) {
+            if (currentLogoUrl != null || avatar.hasPhoto()) {
+                currentLogoUrl = null
+                logoCancellable?.cancel()
+                logoCancellable = null
+                avatar.setPhoto(null)
+                invalidate()
+            }
+            return
+        }
         val url = avatarImgproxyUrl(clan.logo, iconSizePx)
         if (url == currentLogoUrl && avatar.hasPhoto()) return
         currentLogoUrl = url
@@ -131,7 +162,7 @@ class ClanCell(
         logoCancellable?.cancel()
         logoCancellable = null
 
-        if (avatar.hasPhoto()) return
+        avatar.setPhoto(null)
 
         val loader = MezonImageLoader.getInstance(context)
         val cached = loader.getBitmapFromMemory(url, iconSizePx, iconSizePx)
@@ -144,7 +175,7 @@ class ClanCell(
             url, iconSizePx, iconSizePx,
             onSuccess = { bmp ->
                 avatar.setPhoto(bmp)
-                post { invalidate() }
+                invalidate()
             }
         )
     }
@@ -212,17 +243,15 @@ class ClanCell(
 
         if (clan.badgeCount > 0) {
             badgeBgPaint.color = themeColors.badgeRed
-            val badgeH = LayoutHelper.dp(16f).toFloat()
             val text = if (clan.badgeCount > 99) "99+" else clan.badgeCount.toString()
             val textW = badgeTextPaint.measureText(text)
-            val padH = LayoutHelper.dp(4f).toFloat()
-            val badgeW = (textW + padH * 2).coerceAtLeast(badgeH)
-            val badgeRadius = badgeH / 2f
+            val badgeW = (textW + BADGE_PAD_H * 2).coerceAtLeast(BADGE_HEIGHT)
+            val badgeRadius = BADGE_HEIGHT / 2f
 
-            val badgeRight = right + LayoutHelper.dp(2f)
+            val badgeRight = right + BADGE_OFFSET_RIGHT
             val badgeLeft = badgeRight - badgeW
-            val badgeTop = top - LayoutHelper.dp(2f)
-            badgeRect.set(badgeLeft, badgeTop, badgeRight, badgeTop + badgeH)
+            val badgeTop = top - BADGE_OFFSET_TOP
+            badgeRect.set(badgeLeft, badgeTop, badgeRight, badgeTop + BADGE_HEIGHT)
 
             canvas.drawRoundRect(badgeRect, badgeRadius, badgeRadius, badgeBgPaint)
             val textY = badgeRect.centerY() - (badgeTextPaint.descent() + badgeTextPaint.ascent()) / 2

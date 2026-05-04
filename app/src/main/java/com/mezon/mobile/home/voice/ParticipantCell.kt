@@ -48,6 +48,7 @@ class ParticipantCell(
         private val BADGE_ICON_SIZE = LayoutHelper.dp(18)
         private val BADGE_MARGIN = LayoutHelper.dp(4)
         private val SHARE_ICON_SIZE = LayoutHelper.dp(14)
+        private val MIC_NAME_GAP = LayoutHelper.dp(4)
 
         private val speakingBorderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             style = Paint.Style.STROKE
@@ -397,14 +398,14 @@ class ParticipantCell(
     }
 
     private fun drawAudioNameRow(canvas: Canvas, nl: StaticLayout) {
-        val totalW = MIC_ICON_SIZE + LayoutHelper.dp(4) + nl.width
+        val totalW = MIC_ICON_SIZE + MIC_NAME_GAP + nl.width
         val startX = (width - totalW) / 2f
         val y = height - NAME_BOTTOM_PADDING - nl.height.toFloat()
 
         drawMicIcon(canvas, startX.toInt(), (y + (nl.height - MIC_ICON_SIZE) / 2f).toInt())
 
         canvas.save()
-        canvas.translate(startX + MIC_ICON_SIZE + LayoutHelper.dp(4), y)
+        canvas.translate(startX + MIC_ICON_SIZE + MIC_NAME_GAP, y)
         nl.draw(canvas)
         canvas.restore()
     }

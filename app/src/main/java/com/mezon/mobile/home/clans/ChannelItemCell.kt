@@ -44,6 +44,11 @@ class ChannelItemCell(
 
         private const val VOICE_ACTIVE_GREEN = 0xFF16A34A.toInt()
 
+        private val ACTIVE_RADIUS = LayoutHelper.dp(6).toFloat()
+        private val ACTIVE_INSET = LayoutHelper.dp(2).toFloat()
+        private val BADGE_GAP = LayoutHelper.dp(4)
+        private val BADGE_TEXT_PAD = LayoutHelper.dp(8).toFloat()
+
         fun resolveChannelIcon(type: Int, isPrivate: Boolean): MezonIcon = when (type) {
             CHANNEL_TYPE_VOICE -> MezonIcon.channelVoice
             CHANNEL_TYPE_STREAMING -> MezonIcon.channelStream
@@ -63,6 +68,10 @@ class ChannelItemCell(
     private var currentIconDrawable: Drawable? = null
     private var currentIconType: Int = -1
     private var currentIconPrivate: Boolean = false
+    private var cachedIconColorFilter: PorterDuffColorFilter? = null
+    private var cachedIconColor: Int = 0
+    private val voiceActiveColorFilter = PorterDuffColorFilter(VOICE_ACTIVE_GREEN, PorterDuff.Mode.SRC_IN)
+    private val badgeRectF = RectF()
 
     private val cellHeightPx = LayoutHelper.dp(40)
     private val paddingHPx = LayoutHelper.dp(16)
@@ -133,12 +142,11 @@ class ChannelItemCell(
 
         if (isActive) {
             activeBgPaint.color = themeColors.primaryContainer
-            val r = LayoutHelper.dp(6).toFloat()
             activeBgRectF.set(
-                paddingHPx / 2f, (height - cellHeightPx + LayoutHelper.dp(2)) / 2f,
-                width - paddingHPx / 2f, (height + cellHeightPx - LayoutHelper.dp(2)) / 2f
+                paddingHPx / 2f, (height - cellHeightPx) / 2f + ACTIVE_INSET,
+                width - paddingHPx / 2f, (height + cellHeightPx) / 2f - ACTIVE_INSET
             )
-            canvas.drawRoundRect(activeBgRectF, r, r, activeBgPaint)
+            canvas.drawRoundRect(activeBgRectF, ACTIVE_RADIUS, ACTIVE_RADIUS, activeBgPaint)
         }
 
         val cy = height / 2f
@@ -150,10 +158,14 @@ class ChannelItemCell(
 
         val icon = resolveIconDrawable(ch.type, ch.isPrivate)
         val isVoiceType = ch.type == CHANNEL_TYPE_VOICE || ch.type == CHANNEL_TYPE_STREAMING || ch.type == CHANNEL_TYPE_APP
-        if (isVoiceType && voiceActive) {
-            icon.colorFilter = PorterDuffColorFilter(VOICE_ACTIVE_GREEN, PorterDuff.Mode.SRC_IN)
+        icon.colorFilter = if (isVoiceType && voiceActive) {
+            voiceActiveColorFilter
         } else {
-            icon.colorFilter = PorterDuffColorFilter(textColor, PorterDuff.Mode.SRC_IN)
+            if (cachedIconColorFilter == null || cachedIconColor != textColor) {
+                cachedIconColor = textColor
+                cachedIconColorFilter = PorterDuffColorFilter(textColor, PorterDuff.Mode.SRC_IN)
+            }
+            cachedIconColorFilter
         }
         val iconLeft = paddingHPx
         val iconTop = ((height - iconSizePx) / 2f).toInt()
@@ -161,7 +173,7 @@ class ChannelItemCell(
         icon.draw(canvas)
 
         val textX = paddingHPx + iconSizePx + iconMarginPx
-        val badgeWidth = if (hasMentionBadge) badgeSizePx + LayoutHelper.dp(4) else 0
+        val badgeWidth = if (hasMentionBadge) badgeSizePx + BADGE_GAP else 0
         val availW = width - textX - paddingHPx - badgeWidth
 
         if (truncatedName.isEmpty()) {
@@ -173,11 +185,11 @@ class ChannelItemCell(
         if (hasMentionBadge) {
             val badgeText = if (ch.unreadCount > 99) "99+" else ch.unreadCount.toString()
             val textW = unreadBadgeTextPaint.measureText(badgeText)
-            val badgeW = (textW + LayoutHelper.dp(8)).coerceAtLeast(badgeSizePx.toFloat())
+            val badgeW = (textW + BADGE_TEXT_PAD).coerceAtLeast(badgeSizePx.toFloat())
             val badgeRight = width - paddingHPx.toFloat()
             val badgeLeft = badgeRight - badgeW
             unreadBadgePaint.color = themeColors.badgeRed
-            val badgeRectF = RectF(badgeLeft, cy - badgeSizePx / 2f, badgeRight, cy + badgeSizePx / 2f)
+            badgeRectF.set(badgeLeft, cy - badgeSizePx / 2f, badgeRight, cy + badgeSizePx / 2f)
             canvas.drawRoundRect(badgeRectF, badgeSizePx / 2f, badgeSizePx / 2f, unreadBadgePaint)
             val textY2 = cy - (unreadBadgeTextPaint.descent() + unreadBadgeTextPaint.ascent()) / 2
             canvas.drawText(badgeText, badgeLeft + badgeW / 2f, textY2, unreadBadgeTextPaint)

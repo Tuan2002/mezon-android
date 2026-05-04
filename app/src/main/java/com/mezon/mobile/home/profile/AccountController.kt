@@ -48,6 +48,7 @@ private const val ACCOUNT_LOG = "AccountController"
 
 @Singleton
 class AccountController @Inject constructor(
+    @dagger.hilt.android.qualifiers.ApplicationContext private val appContext: android.content.Context,
     private val api: MezonApi,
     private val mmnApi: MmnApi,
     private val sessionManager: SessionManager,
@@ -344,13 +345,15 @@ class AccountController @Inject constructor(
     ) {
         appScope.launch {
             try {
+                val mimeType = contentResolver.getType(uri) ?: "image/jpeg"
                 val fileBytes = withContext(ioDispatcher) {
-                    contentResolver.openInputStream(uri)?.use { it.readBytes() }
-                } ?: throw RuntimeException("Cannot read file")
+                    com.mezon.mobile.util.AttachmentUploader.readUriBytesSafely(
+                        contentResolver, uri, mimeType, appContext.cacheDir
+                    )
+                } ?: throw RuntimeException("Cannot read file or over size limit")
 
                 val timestamp = System.currentTimeMillis() / 1000
                 val filename = "${timestamp}_avatar.jpg"
-                val mimeType = contentResolver.getType(uri) ?: "image/jpeg"
 
                 val cdnUrl = sessionManager.withAutoRefresh { session ->
                     withContext(ioDispatcher) {
@@ -452,5 +455,10 @@ class AccountController @Inject constructor(
             } catch (e: Exception) {
             }
         }
+    }
+
+    fun cleanup() {
+        _accountInfo.value = AccountInfo()
+        _isLoading.value = false
     }
 }

@@ -43,23 +43,45 @@ class SessionManager @Inject constructor(
     private val dataStore: DataStore<Preferences>,
     private val api: MezonApi,
     private val networkMonitor: NetworkMonitor,
+    private val secretStorage: SecretStorage,
     @ApplicationScope private val appScope: CoroutineScope
 ) {
     companion object {
         private const val TAG = "SessionManager"
         private const val MAX_REFRESH_RETRIES = 5
         private const val TOKEN_EXPIRY_BUFFER_SEC = 60
+        private const val SESSION_SECRET_ALIAS = "mezon_session_v1"
+        private const val ENCRYPTED_PREFIX = "enc:v1:"
+    }
+
+    private fun encryptSecret(plain: String): String {
+        if (plain.isEmpty()) return ""
+        val encrypted = secretStorage.encryptToString(plain, SESSION_SECRET_ALIAS) ?: return plain
+        return ENCRYPTED_PREFIX + encrypted
+    }
+
+    private fun decryptSecret(blob: String): String {
+        if (blob.isEmpty()) return ""
+        if (blob.startsWith(ENCRYPTED_PREFIX)) {
+            val encryptedPart = blob.removePrefix(ENCRYPTED_PREFIX)
+            return secretStorage.decryptFromString(encryptedPart, SESSION_SECRET_ALIAS) ?: ""
+        }
+        if (isLikelyJwt(blob)) return blob
+        if (!isLikelyEncryptedBlob(blob)) return blob
+        val legacyDecrypted = secretStorage.decryptFromString(blob, SESSION_SECRET_ALIAS)
+        return legacyDecrypted ?: blob
     }
 
     val sessionFlow: Flow<StoredSession?> = dataStore.data.map { prefs ->
-        val token = prefs[SessionKeys.TOKEN] ?: return@map null
+        val rawToken = prefs[SessionKeys.TOKEN] ?: return@map null
+        val token = decryptSecret(rawToken)
         StoredSession(
             token = token,
-            refreshToken = prefs[SessionKeys.REFRESH_TOKEN] ?: "",
+            refreshToken = decryptSecret(prefs[SessionKeys.REFRESH_TOKEN] ?: ""),
             apiUrl = prefs[SessionKeys.API_URL] ?: "",
             wsUrl = prefs[SessionKeys.WS_URL] ?: "",
             userId = prefs[SessionKeys.USER_ID] ?: "",
-            idToken = prefs[SessionKeys.ID_TOKEN] ?: "",
+            idToken = decryptSecret(prefs[SessionKeys.ID_TOKEN] ?: ""),
             isRemember = prefs[SessionKeys.IS_REMEMBER] ?: false
         )
     }
@@ -87,9 +109,25 @@ class SessionManager @Inject constructor(
         }
     }
 
+    private fun isLikelyJwt(value: String): Boolean {
+        if (value.count { it == '.' } != 2) return false
+        val parts = value.split(".")
+        if (parts.size != 3) return false
+        return parts.all { it.isNotEmpty() }
+    }
+
+    private fun isLikelyEncryptedBlob(value: String): Boolean {
+        val decoded = runCatching { Base64.decode(value, Base64.NO_WRAP) }.getOrNull() ?: return false
+        return decoded.size > 12
+    }
+
     suspend fun requireValidSession(): StoredSession {
         val session = sessionFlow.first()
             ?: throw SessionExpiredException("No session")
+        if (!isLikelyJwt(session.token)) {
+            emitSessionExpired()
+            throw SessionExpiredException("Invalid session token")
+        }
         if (!isTokenExpired(session.token)) return session
         if (!networkMonitor.isOnline.value) {
             Log.w(TAG, "Token expired but offline — returning cached session")
@@ -179,13 +217,16 @@ class SessionManager @Inject constructor(
     suspend fun saveSession(session: StoredSession) {
         StartupCache.hasSession = true
         StartupCache.userId = session.userId
+        val encryptedToken = encryptSecret(session.token)
+        val encryptedRefresh = encryptSecret(session.refreshToken)
+        val encryptedIdToken = encryptSecret(session.idToken)
         dataStore.edit { prefs ->
-            prefs[SessionKeys.TOKEN] = session.token
-            prefs[SessionKeys.REFRESH_TOKEN] = session.refreshToken
+            prefs[SessionKeys.TOKEN] = encryptedToken
+            prefs[SessionKeys.REFRESH_TOKEN] = encryptedRefresh
             prefs[SessionKeys.API_URL] = session.apiUrl
             prefs[SessionKeys.WS_URL] = session.wsUrl
             prefs[SessionKeys.USER_ID] = session.userId
-            prefs[SessionKeys.ID_TOKEN] = session.idToken
+            prefs[SessionKeys.ID_TOKEN] = encryptedIdToken
             prefs[SessionKeys.IS_REMEMBER] = session.isRemember
         }
     }
@@ -216,15 +257,17 @@ class SessionManager @Inject constructor(
         PollVotePersistence.clearAll()
         lastRefreshToken = ""
         failCount = 0
-        dataStore.edit { prefs -> prefs.removeAllSessionDataExceptIdToken() }
+        dataStore.edit { prefs -> prefs.removeAllSessionData() }
+        secretStorage.deleteKey(SESSION_SECRET_ALIAS)
     }
 
-    private fun MutablePreferences.removeAllSessionDataExceptIdToken() {
+    private fun MutablePreferences.removeAllSessionData() {
         remove(SessionKeys.TOKEN)
         remove(SessionKeys.REFRESH_TOKEN)
         remove(SessionKeys.API_URL)
         remove(SessionKeys.WS_URL)
         remove(SessionKeys.USER_ID)
+        remove(SessionKeys.ID_TOKEN)
         remove(SessionKeys.IS_REMEMBER)
         remove(SessionKeys.LAST_CLAN_ID)
     }

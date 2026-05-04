@@ -15,6 +15,7 @@ import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
+import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.RecyclerView
 import com.mezon.mezon.api.Friend
 import com.mezon.mobile.R
@@ -52,10 +53,16 @@ class FriendRelationAdapter(
 
     private val items = ArrayList<Friend>()
 
+    init { setHasStableIds(true) }
+
+    override fun getItemId(position: Int): Long =
+        if (position in items.indices) items[position].user.id else RecyclerView.NO_ID
+
     fun submitItems(newItems: List<Friend>) {
+        val diff = DiffUtil.calculateDiff(FriendDiffCallback(items, newItems))
         items.clear()
         items.addAll(newItems)
-        notifyDataSetChanged()
+        diff.dispatchUpdatesTo(this)
     }
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): FriendHolder {
@@ -70,6 +77,25 @@ class FriendRelationAdapter(
     }
 
     class FriendHolder(val cell: FriendRowCell) : RecyclerView.ViewHolder(cell)
+
+    private class FriendDiffCallback(
+        private val old: List<Friend>,
+        private val new: List<Friend>
+    ) : DiffUtil.Callback() {
+        override fun getOldListSize() = old.size
+        override fun getNewListSize() = new.size
+        override fun areItemsTheSame(oldPos: Int, newPos: Int) =
+            old[oldPos].user.id == new[newPos].user.id
+        override fun areContentsTheSame(oldPos: Int, newPos: Int): Boolean {
+            val o = old[oldPos]
+            val n = new[newPos]
+            return o.state == n.state &&
+                o.user.online == n.user.online &&
+                o.user.displayName == n.user.displayName &&
+                o.user.username == n.user.username &&
+                o.user.avatarUrl == n.user.avatarUrl
+        }
+    }
 }
 
 class FriendRowCell(

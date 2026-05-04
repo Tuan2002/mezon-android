@@ -70,4 +70,9 @@ class MessagesController @Inject constructor(
         synchronized(this) { channels.clear() }
         appScope.launch(ioDispatcher) { database.clearAllTables() }
     }
+
+    fun clearCachedUsersAndChannels() {
+        users.clear()
+        synchronized(this) { channels.clear() }
+    }
 }
