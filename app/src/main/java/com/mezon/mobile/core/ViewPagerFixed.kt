@@ -827,10 +827,8 @@ class ViewPagerFixed(context: Context) : FrameLayout(context) {
         override fun onDraw(canvas: Canvas) {
             super.onDraw(canvas)
             if (indicatorWidth > 0) {
-                val indicatorHeight = LayoutHelper.dp(3).toFloat()
-                val y = height - indicatorHeight
-                val radius = LayoutHelper.dp(1.5f).toFloat()
-                canvas.drawRoundRect(indicatorX, y, indicatorX + indicatorWidth, height.toFloat(), radius, radius, indicatorPaint)
+                val y = height - INDICATOR_HEIGHT
+                canvas.drawRoundRect(indicatorX, y, indicatorX + indicatorWidth, height.toFloat(), INDICATOR_RADIUS, INDICATOR_RADIUS, indicatorPaint)
             }
         }
 
@@ -849,6 +847,11 @@ class ViewPagerFixed(context: Context) : FrameLayout(context) {
         fun getTabCount(): Int = currentTabCount
 
         fun getTab(index: Int): View? = tabViews.getOrNull(index)
+
+        companion object {
+            private val INDICATOR_HEIGHT = LayoutHelper.dp(3).toFloat()
+            private val INDICATOR_RADIUS = LayoutHelper.dp(1.5f).toFloat()
+        }
     }
 
     companion object {

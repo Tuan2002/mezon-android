@@ -37,6 +37,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -100,7 +101,7 @@ class MezonSocket @Inject constructor(
     private var currentToken: String? = null
 
     private val cidCounter = AtomicInteger(0)
-    private val pendingRequests = ConcurrentHashMap<String, CompletableDeferred<Envelope>>()
+    private val pendingRequests = ConcurrentHashMap<Int, CompletableDeferred<Envelope>>()
     private var reconnectDelayMs = RECONNECT_MIN_MS
     private var reconnectFailCount = 0
     @Volatile private var isReconnecting = false
@@ -169,27 +170,24 @@ class MezonSocket @Inject constructor(
         val ws = webSocket
             ?: throw IllegalStateException("WebSocket not connected")
 
-        val cidKey = cid.toString()
         val deferred = CompletableDeferred<Envelope>()
-        pendingRequests[cidKey] = deferred
+        pendingRequests[cid] = deferred
 
         val bytes = env.toByteArray().toByteString()
         val sent = ws.send(bytes)
         if (!sent) {
-            pendingRequests.remove(cidKey)
+            pendingRequests.remove(cid)
             throw IllegalStateException("Failed to enqueue WebSocket message")
         }
 
         Log.d(TAG, "Sent: cid=$cid, case=${env.messageCase}")
 
-        scope.launch {
-            delay(SEND_TIMEOUT_MS)
-            pendingRequests.remove(cidKey)?.completeExceptionally(
-                RuntimeException("Request timed out: cid=$cid")
-            )
+        return try {
+            withTimeout(SEND_TIMEOUT_MS) { deferred.await() }
+        } catch (e: TimeoutCancellationException) {
+            pendingRequests.remove(cid)
+            throw RuntimeException("Request timed out: cid=$cid", e)
         }
-
-        return deferred.await()
     }
 
     fun sendFireAndForget(env: Envelope) {
@@ -525,7 +523,10 @@ class MezonSocket @Inject constructor(
         val url = "$host/ws?token=$token&status=true&platform=1&lang=en&format=protobuf"
         Log.d(TAG, "Connecting to: $host/ws?token=***&status=true&platform=1&lang=en&format=protobuf")
 
-        val request = Request.Builder().url(url).build()
+        val request = Request.Builder()
+            .url(url)
+            .header("Authorization", "Bearer $token")
+            .build()
         webSocket = okHttpClient.newWebSocket(request, socketListener)
     }
 
@@ -580,7 +581,7 @@ class MezonSocket @Inject constructor(
         val cid = envelope.cid
 
         if (cid != 0) {
-            val deferred = pendingRequests.remove(cid.toString())
+            val deferred = pendingRequests.remove(cid)
             if (deferred != null) {
                 if (envelope.messageCase == Envelope.MessageCase.ERROR) {
                     deferred.completeExceptionally(
@@ -597,21 +598,25 @@ class MezonSocket @Inject constructor(
             return
         }
 
-        scope.launch {
-            _events.emit(envelope)
+        when (envelope.messageCase) {
+            Envelope.MessageCase.MESSAGE_TYPING_EVENT,
+            Envelope.MessageCase.STATUS_PRESENCE_EVENT -> Unit
+            else -> Log.d(TAG, "Event: ${envelope.messageCase}")
+        }
+        if (!_events.tryEmit(envelope)) {
+            scope.launch { _events.emit(envelope) }
         }
     }
 
     private fun startHeartbeat() {
         heartbeatJob?.cancel()
         heartbeatJob = scope.launch {
-            while (true) {
+            while (isActive && _connectionState.value == ConnectionState.CONNECTED) {
                 delay(HEARTBEAT_INTERVAL_MS)
                 if (_connectionState.value != ConnectionState.CONNECTED) break
                 try {
                     val pingEnvelope = envelope { ping = ping {} }
                     sendFireAndForget(pingEnvelope)
-                    // Log.v(TAG, "Ping sent")
                 } catch (e: Exception) {
                     Log.w(TAG, "Failed to send ping", e)
                 }

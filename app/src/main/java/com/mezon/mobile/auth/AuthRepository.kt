@@ -5,6 +5,7 @@ import com.mezon.mobile.BuildConfig
 import com.mezon.mobile.core.StartupCache
 import com.mezon.mobile.di.IoDispatcher
 import com.mezon.mobile.network.MezonApi
+import com.mezon.mobile.notification.FcmRepository
 import com.mezon.mobile.session.SessionManager
 import com.mezon.mobile.session.StoredSession
 import com.mezon.mobile.wallet.WalletCacheStore
@@ -18,6 +19,7 @@ import javax.inject.Singleton
 class AuthRepository @Inject constructor(
     private val api: MezonApi,
     private val sessionManager: SessionManager,
+    private val fcmRepository: FcmRepository,
     private val walletCacheStore: WalletCacheStore,
     @IoDispatcher private val ioDispatcher: CoroutineDispatcher
 ) {
@@ -128,7 +130,10 @@ class AuthRepository @Inject constructor(
         }
 
     suspend fun logout(): Result<Unit> = withContext(ioDispatcher) {
-        runCatching { sessionManager.clearSession() }
+        runCatching {
+            fcmRepository.deleteToken()
+            sessionManager.clearSession()
+        }
     }
 
     suspend fun confirmLoginByQr(loginId: Long): Result<Unit> =

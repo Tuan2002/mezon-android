@@ -295,4 +295,16 @@ class FriendController @Inject constructor(
             _friends.value
         ).size
     }
+
+    fun cleanup() {
+        _blockedUsers.value = emptyList()
+        _friends.value = emptyList()
+        _sentFriendRequests.value = emptyList()
+        _receivedFriendRequests.value = emptyList()
+        _allFriendRelations.value = emptyList()
+        _pendingReceivedCount.value = 0
+        synchronized(friendRelationsForegroundThrottleLock) {
+            lastFriendRelationsForegroundRefreshElapsedMs = 0L
+        }
+    }
 }

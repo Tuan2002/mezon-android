@@ -62,6 +62,7 @@ class DialogsController @Inject constructor(
     var dialogsLoaded = false
         private set
 
+    @Volatile
     private var currentChannelId: Long? = null
 
     private val buzzStates = HashMap<Long, Long>()
@@ -91,9 +92,11 @@ class DialogsController @Inject constructor(
             dialogs.clear()
             dialogsDict.clear()
             participantsByChannel.clear()
+            buzzStates.clear()
             dialogsLoaded = false
             currentChannelId = null
         }
+        buzzHandler.removeCallbacksAndMessages(null)
     }
 
     @Synchronized
@@ -225,11 +228,7 @@ class DialogsController @Inject constructor(
                         .sortedByDescending { it.lastSentMessageTs }
 
                     val withContent = merged.count { it.lastMessageContent.isNotBlank() }
-                    val sampleContent = merged.firstOrNull { it.lastMessageContent.isNotBlank() }
-                    Log.d(TAG, "loadDialogs: API returned ${merged.size} items, withContent=$withContent, sample='${sampleContent?.lastMessageContent?.take(60)}'")
-
-                    val sampleRaw = rawList.firstOrNull { it.hasLastSentMessage() && it.lastSentMessage.content.isNotEmpty() }
-                    Log.d(TAG, "loadDialogs: raw lastSentMessage sample: hasMsg=${sampleRaw != null}, content='${sampleRaw?.lastSentMessage?.content?.take(80)}'")
+                    Log.d(TAG, "loadDialogs: API returned ${merged.size} items, withContent=$withContent")
 
                     putDialogs(merged)
                     cacheTracker.markCalled(cacheKey)
@@ -350,14 +349,34 @@ class DialogsController @Inject constructor(
             )
             updatedDm = result
             dialogsDict.put(msg.channelId, result)
-            val idx = dialogs.indexOfFirst { it.channelId == msg.channelId }
-            if (idx >= 0) dialogs[idx] = result
-            if (!isContentMutation) dialogs.sortByDescending { it.lastSentMessageTs }
+            reorderDialogInPlace(msg.channelId, result, isContentMutation)
         }
         updatedDm?.let { dm ->
             appScope.launch { directMessageDao.upsert(dm) }
             notificationCenter.postNotificationOnMainThread(NotificationCenter.dialogsNeedReload)
         }
+    }
+
+    private fun reorderDialogInPlace(
+        channelId: Long,
+        result: DirectMessage,
+        isContentMutation: Boolean
+    ) {
+        val oldIdx = dialogs.indexOfFirst { it.channelId == channelId }
+        if (oldIdx < 0) return
+        if (isContentMutation) {
+            dialogs[oldIdx] = result
+            return
+        }
+        dialogs.removeAt(oldIdx)
+        var lo = 0
+        var hi = dialogs.size
+        val target = result.lastSentMessageTs
+        while (lo < hi) {
+            val mid = (lo + hi) ushr 1
+            if (dialogs[mid].lastSentMessageTs > target) lo = mid + 1 else hi = mid
+        }
+        dialogs.add(lo, result)
     }
 
     private fun mergeDmUnreadFromList(cachedUnread: Int, api: DirectMessage): Int {
@@ -371,6 +390,7 @@ class DialogsController @Inject constructor(
     }
 
     private fun putDialogs(list: List<DirectMessage>) {
+        val snapshot: ArrayList<DirectMessage>
         synchronized(this) {
             for (dm in list) {
                 val existing = dialogsDict[dm.channelId]
@@ -393,18 +413,17 @@ class DialogsController @Inject constructor(
                     dialogsDict.put(dm.channelId, merged)
                 }
             }
-            val apiIds = list.map { it.channelId }.toSet()
-            val toRemove = ArrayList<Long>()
-            for (i in 0 until dialogsDict.size()) {
-                if (dialogsDict.keyAt(i) !in apiIds) toRemove.add(dialogsDict.keyAt(i))
+            val apiIds = HashSet<Long>(list.size).apply { for (dm in list) add(dm.channelId) }
+            var i = 0
+            while (i < dialogsDict.size()) {
+                if (dialogsDict.keyAt(i) !in apiIds) dialogsDict.removeAt(i) else i++
             }
-            for (id in toRemove) dialogsDict.remove(id)
             dialogs.clear()
-            for (i in 0 until dialogsDict.size()) dialogs.add(dialogsDict.valueAt(i))
+            for (j in 0 until dialogsDict.size()) dialogs.add(dialogsDict.valueAt(j))
             dialogs.sortByDescending { it.lastSentMessageTs }
+            snapshot = ArrayList(dialogs)
         }
         appScope.launch(ioDispatcher) {
-            val snapshot = synchronized(this@DialogsController) { ArrayList(dialogs) }
             directMessageDao.upsertAll(snapshot)
         }
     }
@@ -478,6 +497,7 @@ class DialogsController @Inject constructor(
         if (badgeDescs.isEmpty()) return
         val byId = badgeDescs.associateBy { it.channelId }
         var changed = false
+        var snapshot: ArrayList<DirectMessage>? = null
         synchronized(this) {
             val newList = ArrayList<DirectMessage>(dialogs.size)
             for (row in dialogs) {
@@ -496,12 +516,12 @@ class DialogsController @Inject constructor(
             if (changed) {
                 dialogs.clear()
                 dialogs.addAll(newList.sortedByDescending { it.lastSentMessageTs })
+                snapshot = ArrayList(dialogs)
             }
         }
         if (!changed) return
-        appScope.launch(ioDispatcher) {
-            val snapshot = synchronized(this@DialogsController) { ArrayList(dialogs) }
-            directMessageDao.upsertAll(snapshot)
+        snapshot?.let { snap ->
+            appScope.launch(ioDispatcher) { directMessageDao.upsertAll(snap) }
         }
         notificationCenter.postNotificationOnMainThread(NotificationCenter.dialogsNeedReload)
         notificationCenter.postNotificationOnMainThread(
@@ -514,10 +534,6 @@ class DialogsController @Inject constructor(
             val badge = api.listChannelBadgeCount(session.apiUrl, session.token, 0L)
             val badgeWithContent = badge.channeldescList.count { it.hasLastSentMessage() && it.lastSentMessage.content.isNotEmpty() }
             Log.d(TAG, "syncDmBadgesWithApi: badge returned ${badge.channeldescList.size} channels, withContent=$badgeWithContent")
-            if (badge.channeldescList.isNotEmpty()) {
-                val badgeSample = badge.channeldescList.firstOrNull { it.hasLastSentMessage() && it.lastSentMessage.content.isNotEmpty() }
-                Log.d(TAG, "syncDmBadgesWithApi: badge sample content='${badgeSample?.lastSentMessage?.content?.take(80)}'")
-            }
             applyDmReadStatePatchFromSocket(badge.channeldescList)
         }
     }
