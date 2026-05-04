@@ -532,6 +532,29 @@ class MainActivity : BasePermissionsActivity(),
             applicationContext, FragmentEntryPoint::class.java
         )
         entryPoint.voiceController().cleanup()
+        entryPoint.dialogsController().cleanup()
+        entryPoint.chatController().cleanup()
+        entryPoint.clansController().cleanup()
+        entryPoint.channelController().cleanup()
+        entryPoint.channelAppController().cleanup()
+        entryPoint.userClanController().cleanup()
+        entryPoint.roleController().cleanup()
+        entryPoint.notificationStore().cleanup()
+        entryPoint.friendController().cleanup()
+        entryPoint.accountController().cleanup()
+        entryPoint.userController().cleanup()
+        entryPoint.badgeCoordinator().cleanup()
+        entryPoint.channelFilesController().cleanup()
+        entryPoint.channelGalleryController().cleanup()
+        entryPoint.pinMessageController().cleanup()
+        entryPoint.emojiController().cleanup()
+        entryPoint.audioPlayerController().stop()
+        entryPoint.messagesController().clearCachedUsersAndChannels()
+        entryPoint.apiCacheTracker().invalidateAll()
+        com.mezon.mobile.home.chat.MezonImageLoader.getInstance(this).also {
+            it.cancelAll()
+            it.clearMemoryCache()
+        }
         actionBarLayout.removeAllFragments()
         actionBarLayout.containerView.removeAllViews()
         actionBarLayout.containerViewBack.removeAllViews()
@@ -542,6 +565,28 @@ class MainActivity : BasePermissionsActivity(),
     fun switchToAccount(account: Int, removeAll: Boolean) {
         if (account == currentAccount) return
         currentAccount = account
+        val entryPoint = EntryPointAccessors.fromApplication(
+            applicationContext, FragmentEntryPoint::class.java
+        )
+        entryPoint.dialogsController().cleanup()
+        entryPoint.chatController().cleanup()
+        entryPoint.clansController().cleanup()
+        entryPoint.channelController().cleanup()
+        entryPoint.channelAppController().cleanup()
+        entryPoint.userClanController().cleanup()
+        entryPoint.roleController().cleanup()
+        entryPoint.notificationStore().cleanup()
+        entryPoint.friendController().cleanup()
+        entryPoint.accountController().cleanup()
+        entryPoint.userController().cleanup()
+        entryPoint.badgeCoordinator().cleanup()
+        entryPoint.channelFilesController().cleanup()
+        entryPoint.channelGalleryController().cleanup()
+        entryPoint.pinMessageController().cleanup()
+        entryPoint.emojiController().cleanup()
+        entryPoint.audioPlayerController().stop()
+        entryPoint.messagesController().clearCachedUsersAndChannels()
+        entryPoint.apiCacheTracker().invalidateAll()
         if (removeAll) {
             actionBarLayout.removeAllFragments()
         }
@@ -847,7 +892,7 @@ class MainActivity : BasePermissionsActivity(),
                     @Suppress("DEPRECATION")
                     intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM)
                 }
-                stream?.let { uris.add(it) }
+                stream?.takeIf { isAllowedShareUri(it) }?.let { uris.add(it) }
             }
             Intent.ACTION_SEND_MULTIPLE -> {
                 val streams = if (Build.VERSION.SDK_INT >= 33) {
@@ -856,7 +901,7 @@ class MainActivity : BasePermissionsActivity(),
                     @Suppress("DEPRECATION")
                     intent.getParcelableArrayListExtra<Uri>(Intent.EXTRA_STREAM)
                 }
-                if (streams != null) uris.addAll(streams)
+                streams?.filter { isAllowedShareUri(it) }?.let { uris.addAll(it) }
             }
         }
 
@@ -874,6 +919,19 @@ class MainActivity : BasePermissionsActivity(),
         val params = INavigationLayout.NavigationParams(fragment)
         actionBarLayout.presentFragment(params)
         return true
+    }
+
+    private fun isAllowedShareUri(uri: Uri): Boolean {
+        val scheme = uri.scheme?.lowercase() ?: return false
+        return when (scheme) {
+            "content" -> true
+            "android.resource" -> true
+            "https" -> true
+            else -> {
+                Log.w(TAG, "Rejected share URI with scheme=$scheme")
+                false
+            }
+        }
     }
 
     private fun handleNotificationIntent(intent: Intent?) {

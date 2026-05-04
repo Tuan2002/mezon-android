@@ -36,6 +36,14 @@ class UnreadDmCell(
     private var currentAvatarUrl: String? = null
     private var avatarCancellable: MezonImageLoader.Cancellable? = null
 
+    companion object {
+        private val BADGE_HEIGHT = LayoutHelper.dp(16f).toFloat()
+        private val BADGE_PAD_H = LayoutHelper.dp(4f).toFloat()
+        private val BADGE_OFFSET_RIGHT = LayoutHelper.dp(2f).toFloat()
+        private val BADGE_OFFSET_TOP = LayoutHelper.dp(2f).toFloat()
+        private val EXTRA_HEIGHT = LayoutHelper.dp(12)
+    }
+
     fun setData(dm: DirectMessage) {
         directMessage = dm
         avatar.setInfo(dm.channelId, dm.displayName.ifEmpty { dm.label })
@@ -74,7 +82,7 @@ class UnreadDmCell(
             imgUrl, avatarSizePx, avatarSizePx,
             onSuccess = { bmp ->
                 avatar.setPhoto(bmp)
-                post { invalidate() }
+                invalidate()
             }
         )
     }
@@ -87,7 +95,7 @@ class UnreadDmCell(
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
         val w = MeasureSpec.getSize(widthMeasureSpec)
-        setMeasuredDimension(w, avatarSizePx + LayoutHelper.dp(12))
+        setMeasuredDimension(w, avatarSizePx + EXTRA_HEIGHT)
     }
 
     override fun onDraw(canvas: Canvas) {
@@ -106,16 +114,14 @@ class UnreadDmCell(
 
         if (dm.unreadCount > 0) {
             badgeBgPaint.color = themeColors.badgeRed
-            val badgeH = LayoutHelper.dp(16f).toFloat()
             val textW = badgeTextPaint.measureText(badgeText)
-            val padH = LayoutHelper.dp(4f).toFloat()
-            val badgeW = (textW + padH * 2).coerceAtLeast(badgeH)
-            val badgeRadius = badgeH / 2f
+            val badgeW = (textW + BADGE_PAD_H * 2).coerceAtLeast(BADGE_HEIGHT)
+            val badgeRadius = BADGE_HEIGHT / 2f
 
-            val badgeRight = right.toFloat() + LayoutHelper.dp(2f)
+            val badgeRight = right.toFloat() + BADGE_OFFSET_RIGHT
             val badgeLeft = badgeRight - badgeW
-            val badgeTop = top.toFloat() - LayoutHelper.dp(2f)
-            badgeRect.set(badgeLeft, badgeTop, badgeRight, badgeTop + badgeH)
+            val badgeTop = top.toFloat() - BADGE_OFFSET_TOP
+            badgeRect.set(badgeLeft, badgeTop, badgeRight, badgeTop + BADGE_HEIGHT)
 
             canvas.drawRoundRect(badgeRect, badgeRadius, badgeRadius, badgeBgPaint)
             val textY = badgeRect.centerY() - (badgeTextPaint.descent() + badgeTextPaint.ascent()) / 2

@@ -102,29 +102,24 @@ class UserClanController @Inject constructor(
         }
     }
 
-    // --- Per-clan members (RN: clan.members.ts / fetchUsersClan) ---
-    private val membersByClan = LongSparseArray<ArrayList<ClanMember>>()
+    private val membersByClan = LongSparseArray<List<ClanMember>>()
 
-    @Synchronized
     fun getClanMembers(clanId: Long): List<ClanMember> {
-        return membersByClan[clanId]?.let { ArrayList(it) } ?: emptyList()
+        synchronized(this) { return membersByClan[clanId] ?: emptyList() }
     }
 
-    @Synchronized
     fun getClanMemberCount(clanId: Long): Int {
-        return membersByClan[clanId]?.size ?: 0
+        synchronized(this) { return membersByClan[clanId]?.size ?: 0 }
     }
 
-    @Synchronized
     fun hasClanMembersCache(clanId: Long): Boolean {
-        return membersByClan.indexOfKey(clanId) >= 0
+        synchronized(this) { return membersByClan.indexOfKey(clanId) >= 0 }
     }
 
-    @Synchronized
     fun clearClanMembersCache(clanId: Long) {
-        val ix = membersByClan.indexOfKey(clanId)
-        if (ix >= 0) {
-            membersByClan.removeAt(ix)
+        synchronized(this) {
+            val ix = membersByClan.indexOfKey(clanId)
+            if (ix >= 0) membersByClan.removeAt(ix)
         }
     }
 
@@ -174,11 +169,10 @@ class UserClanController @Inject constructor(
         }
     }
 
-    private val membersByChannel = LongSparseArray<ArrayList<ClanMember>>()
+    private val membersByChannel = LongSparseArray<List<ClanMember>>()
 
-    @Synchronized
     fun getChannelMembers(channelId: Long): List<ClanMember> {
-        return membersByChannel[channelId]?.let { ArrayList(it) } ?: emptyList()
+        synchronized(this) { return membersByChannel[channelId] ?: emptyList() }
     }
 
     fun loadChannelMembers(clanId: Long, channelId: Long, channelType: Int, noCache: Boolean = false) {

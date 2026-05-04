@@ -266,4 +266,18 @@ class EmojiController @Inject constructor(
             loadStickers()
         }
     }
+
+    fun cleanup() {
+        synchronized(this) {
+            emojis.clear()
+            emojisDict.clear()
+            stickers.clear()
+            stickersDict.clear()
+            gifCategories.clear()
+            featuredGifs.clear()
+            searchGifResults.clear()
+        }
+        emojisLoaded = false
+        stickersLoaded = false
+    }
 }

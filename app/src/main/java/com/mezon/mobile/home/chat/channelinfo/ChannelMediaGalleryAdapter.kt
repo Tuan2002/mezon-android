@@ -170,6 +170,10 @@ internal class ChannelMediaGalleryAdapter(
                     cornerRadius = LayoutHelper.dp(10f).toFloat()
                     setStroke(border, 0x664E4E4E)
                 }
+            setOnClickListener { v ->
+                val item = v.tag as? ChannelGalleryMediaItem ?: return@setOnClickListener
+                onMediaCellClicked(item)
+            }
         }
         val lp = LinearLayout.LayoutParams(0, cellSizePx(), 1f)
         val margin = LayoutHelper.dp(4f)
@@ -260,6 +264,7 @@ internal class ChannelMediaGalleryAdapter(
     }
 
     private fun bindSlot(slot: MediaSlot, item: ChannelGalleryMediaItem?) {
+        slot.root.tag = item
         if (item == null) {
             slot.root.visibility = View.INVISIBLE
             slot.thumb.cancelLoad()
@@ -267,7 +272,6 @@ internal class ChannelMediaGalleryAdapter(
             slot.av.visibility = View.GONE
             slot.videoDimmer.visibility = View.GONE
             slot.play.visibility = View.GONE
-            slot.root.setOnClickListener(null)
             return
         }
         slot.root.visibility = View.VISIBLE
@@ -304,10 +308,6 @@ internal class ChannelMediaGalleryAdapter(
 
         val displayUrl = galleryThumbLoadUrl(item, cs)
         slot.thumb.setImage(displayUrl)
-
-        slot.root.setOnClickListener {
-            onMediaCellClicked(item)
-        }
     }
 
     private fun onMediaCellClicked(tapped: ChannelGalleryMediaItem) {

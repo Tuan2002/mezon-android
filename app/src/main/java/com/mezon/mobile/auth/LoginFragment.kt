@@ -411,7 +411,7 @@ class LoginFragment : BaseFragment() {
                     navigateToOTP(reqId, fullPhone, true)
                 }
                 .onFailure { err ->
-                    Log.e(TAG, "SMS OTP failed: ${err.message}", err)
+                    Log.e(TAG, "SMS OTP failed: ${err.javaClass.simpleName}")
                     showError(err.message ?: getString(R.string.otp_send_failed))
                 }
         }
@@ -443,7 +443,7 @@ class LoginFragment : BaseFragment() {
                     navigateToOTP(reqId, email, false)
                 }
                 .onFailure { err ->
-                    Log.e(TAG, "Email OTP failed: ${err.message}", err)
+                    Log.e(TAG, "Email OTP failed: ${err.javaClass.simpleName}")
                     showError(err.message ?: getString(R.string.otp_send_failed))
                 }
         }
@@ -514,19 +514,19 @@ class LoginFragment : BaseFragment() {
     }
 
     private fun isValidEmail(email: String): Boolean =
-        email.matches(Regex("^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$"))
+        email.matches(EMAIL_REGEX)
 
     private fun isValidPhone(phone: String): Boolean {
-        val digits = phone.replace(Regex("[^0-9]"), "")
+        val digits = phone.replace(NON_DIGITS_REGEX, "")
         if (selectedCountry == Country.VIETNAM) {
             val normalized = if (digits.startsWith("0")) digits.substring(1) else digits
-            return normalized.matches(Regex("^(3|5|7|8|9)[0-9]{8}$"))
+            return normalized.matches(VN_MOBILE_REGEX)
         }
         return digits.length >= 7
     }
 
     private fun normalizePhone(phone: String): String {
-        val digits = phone.replace(Regex("[^0-9]"), "")
+        val digits = phone.replace(NON_DIGITS_REGEX, "")
         if (selectedCountry == Country.VIETNAM && digits.startsWith("0")) {
             return digits.substring(1)
         }
@@ -556,5 +556,8 @@ class LoginFragment : BaseFragment() {
 
     companion object {
         private const val TAG = "LoginFragment"
+        private val EMAIL_REGEX = Regex("^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$")
+        private val NON_DIGITS_REGEX = Regex("[^0-9]")
+        private val VN_MOBILE_REGEX = Regex("^(3|5|7|8|9)[0-9]{8}$")
     }
 }

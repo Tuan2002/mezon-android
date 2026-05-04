@@ -13,13 +13,14 @@ data class ChannelDocumentItem(
     val messageId: Long
 )
 
+private val GROUPING_CAL_TL = ThreadLocal.withInitial { Calendar.getInstance() }
+private val WHITESPACE_REGEX = Regex("\\s+")
+
 object ChannelDocumentItemUtil {
     fun parseItemDate(item: ChannelDocumentItem): Calendar {
-        val c = Calendar.getInstance()
+        val c = GROUPING_CAL_TL.get()
         val sec = item.createTimeSeconds
-        if (sec > 0) {
-            c.timeInMillis = sec.toLong() * 1000L
-        }
+        c.timeInMillis = if (sec > 0) sec.toLong() * 1000L else System.currentTimeMillis()
         return c
     }
 }
@@ -37,7 +38,7 @@ fun <T> groupByYearDay(items: List<T>, getDate: (T) -> Calendar): List<YearDayGr
     val map = LinkedHashMap<String, LinkedHashMap<Long, ArrayList<T>>>()
     for (it in sorted) {
         val cal = getDate(it)
-        val year = "${cal.get(Calendar.YEAR)}"
+        val year = cal.get(Calendar.YEAR).toString()
         val dayKey = startOfDayMillis(cal)
         map.getOrPut(year) { LinkedHashMap() }.getOrPut(dayKey) { ArrayList() }.add(it)
     }
@@ -62,12 +63,20 @@ fun <T> groupByYearDay(items: List<T>, getDate: (T) -> Calendar): List<YearDayGr
 }
 
 fun startOfDayMillis(cal: Calendar): Long {
-    val c = cal.clone() as Calendar
-    c.set(Calendar.HOUR_OF_DAY, 0)
-    c.set(Calendar.MINUTE, 0)
-    c.set(Calendar.SECOND, 0)
-    c.set(Calendar.MILLISECOND, 0)
-    return c.timeInMillis
+    val savedHour = cal.get(Calendar.HOUR_OF_DAY)
+    val savedMin = cal.get(Calendar.MINUTE)
+    val savedSec = cal.get(Calendar.SECOND)
+    val savedMs = cal.get(Calendar.MILLISECOND)
+    cal.set(Calendar.HOUR_OF_DAY, 0)
+    cal.set(Calendar.MINUTE, 0)
+    cal.set(Calendar.SECOND, 0)
+    cal.set(Calendar.MILLISECOND, 0)
+    val ms = cal.timeInMillis
+    cal.set(Calendar.HOUR_OF_DAY, savedHour)
+    cal.set(Calendar.MINUTE, savedMin)
+    cal.set(Calendar.SECOND, savedSec)
+    cal.set(Calendar.MILLISECOND, savedMs)
+    return ms
 }
 
 fun formatDateHeader(dayCal: Calendar, isVietnamese: Boolean): String {
@@ -81,4 +90,4 @@ fun formatDateHeader(dayCal: Calendar, isVietnamese: Boolean): String {
     return "$monthName $day, $year"
 }
 
-fun normalizeSearchQuery(s: String): String = s.replace(Regex("\\s+"), "").lowercase(Locale.getDefault())
+fun normalizeSearchQuery(s: String): String = s.replace(WHITESPACE_REGEX, "").lowercase(Locale.getDefault())

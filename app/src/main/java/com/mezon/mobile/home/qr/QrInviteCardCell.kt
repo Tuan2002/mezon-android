@@ -93,6 +93,7 @@ class QrInviteCardCell(
 
     private val cardRect = RectF()
     private val avatarBgRect = RectF()
+    private val qrBitmapRect = RectF()
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
         val w = MeasureSpec.getSize(widthMeasureSpec)
@@ -153,12 +154,11 @@ class QrInviteCardCell(
         val textY = cirCy - (logoTextPaint.descent() + logoTextPaint.ascent()) / 2f
         canvas.drawText("Mezon", textX, textY, logoTextPaint)
 
-        canvas.drawBitmap(
-            m.qrBitmap, null,
-            RectF(qrLeft.toFloat(), qrTop.toFloat(),
-                (qrLeft + qrSize).toFloat(), (qrTop + qrSize).toFloat()),
-            null
+        qrBitmapRect.set(
+            qrLeft.toFloat(), qrTop.toFloat(),
+            (qrLeft + qrSize).toFloat(), (qrTop + qrSize).toFloat()
         )
+        canvas.drawBitmap(m.qrBitmap, null, qrBitmapRect, null)
 
         val avPad = LayoutHelper.dp(3f).toFloat()
         avatarBgRect.set(

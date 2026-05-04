@@ -7,6 +7,7 @@ import com.mezon.mmn.IEphemeralKeyPair
 import com.mezon.mmn.IZkProof
 import com.mezon.mmn.WalletDetail
 import com.mezon.mobile.di.IoDispatcher
+import com.mezon.mobile.session.SecretStorage
 import com.mezon.mobile.session.SessionKeys
 import com.mezon.mobile.session.StoredSession
 import kotlinx.coroutines.CoroutineDispatcher
@@ -28,6 +29,7 @@ data class WalletPersistedV1(
 @Singleton
 class WalletCacheStore @Inject constructor(
     private val dataStore: DataStore<Preferences>,
+    private val secretStorage: SecretStorage,
     @IoDispatcher private val ioDispatcher: CoroutineDispatcher
 ) {
     private val json = Json {
@@ -40,11 +42,28 @@ class WalletCacheStore @Inject constructor(
         withContext(ioDispatcher) {
             if (session.userId.isEmpty() || session.token.isEmpty()) return@withContext null
             val raw = dataStore.data.first()[SessionKeys.WALLET_CACHE_V1] ?: return@withContext null
-            val parsed = runCatching { json.decodeFromString<WalletPersistedV1>(raw) }.getOrNull()
+
+            val plaintext = secretStorage.decryptFromString(raw)
+                ?: tryParseLegacyAndReencrypt(raw)
+                ?: run {
+                    dataStore.edit { it.remove(SessionKeys.WALLET_CACHE_V1) }
+                    return@withContext null
+                }
+
+            val parsed = runCatching { json.decodeFromString<WalletPersistedV1>(plaintext) }.getOrNull()
                 ?: return@withContext null
             if (parsed.userId != session.userId) return@withContext null
             parsed
         }
+
+    private suspend fun tryParseLegacyAndReencrypt(raw: String): String? {
+        val parsed = runCatching { json.decodeFromString<WalletPersistedV1>(raw) }.getOrNull()
+            ?: return null
+        val plaintext = json.encodeToString(WalletPersistedV1.serializer(), parsed)
+        val enc = secretStorage.encryptToString(plaintext) ?: return plaintext
+        dataStore.edit { it[SessionKeys.WALLET_CACHE_V1] = enc }
+        return plaintext
+    }
 
     suspend fun save(
         session: StoredSession,
@@ -58,12 +77,15 @@ class WalletCacheStore @Inject constructor(
             ephemeral = ephemeral,
             walletDetail = walletDetail
         )
+        val plaintext = json.encodeToString(WalletPersistedV1.serializer(), payload)
+        val enc = secretStorage.encryptToString(plaintext) ?: return@withContext
         dataStore.edit { prefs ->
-            prefs[SessionKeys.WALLET_CACHE_V1] = json.encodeToString(WalletPersistedV1.serializer(), payload)
+            prefs[SessionKeys.WALLET_CACHE_V1] = enc
         }
     }
 
     suspend fun clear() = withContext(ioDispatcher) {
         dataStore.edit { it.remove(SessionKeys.WALLET_CACHE_V1) }
+        secretStorage.deleteKey()
     }
 }

@@ -7,6 +7,18 @@ import org.json.JSONObject
 
 private val CONTENT_REGEX = Regex("\"t\"\\s*:\\s*\"((?:[^\"\\\\]|\\\\.)*)\"")
 
+private val THREAD_INFO_REGEX = Regex("\\(([^,]+),\\s*([^)]+)\\)")
+
+data class ParsedThreadInfo(val label: String, val channelId: Long)
+
+fun parseThreadInfoFromPlainText(text: String): ParsedThreadInfo? {
+    val match = THREAD_INFO_REGEX.find(text) ?: return null
+    val label = match.groupValues[1].trim()
+    val id = match.groupValues[2].trim().toLongOrNull() ?: return null
+    if (label.isEmpty()) return null
+    return ParsedThreadInfo(label, id)
+}
+
 fun parseContentText(content: String): String {
     if (content.isBlank()) return ""
     return try {
@@ -107,30 +119,54 @@ fun buildTextContentWithMentions(text: String, mentions: List<MentionData>): Str
     return "{\"t\":\"$escaped\",\"mentions\":$mentionsJson}"
 }
 
+private val MSG_CAL_TL = object : ThreadLocal<java.util.Calendar>() {
+    override fun initialValue(): java.util.Calendar = java.util.Calendar.getInstance()
+}
+private val NOW_CAL_TL = object : ThreadLocal<java.util.Calendar>() {
+    override fun initialValue(): java.util.Calendar = java.util.Calendar.getInstance()
+}
+
+private fun StringBuilder.append2Digits(v: Int) {
+    if (v < 10) append('0')
+    append(v)
+}
+
 fun formatRelativeTime(epochSeconds: Long): String {
     if (epochSeconds <= 0L) return ""
-    val msgCal = java.util.Calendar.getInstance().apply {
-        timeInMillis = epochSeconds * 1000L
+    val msgCal = MSG_CAL_TL.get()!!.apply { timeInMillis = epochSeconds * 1000L }
+    val nowCal = NOW_CAL_TL.get()!!.apply { timeInMillis = System.currentTimeMillis() }
+
+    val msgYear = msgCal.get(java.util.Calendar.YEAR)
+    val msgDayOfYear = msgCal.get(java.util.Calendar.DAY_OF_YEAR)
+    val nowYear = nowCal.get(java.util.Calendar.YEAR)
+    val nowDayOfYear = nowCal.get(java.util.Calendar.DAY_OF_YEAR)
+    val hour = msgCal.get(java.util.Calendar.HOUR_OF_DAY)
+    val minute = msgCal.get(java.util.Calendar.MINUTE)
+
+    val isToday = msgYear == nowYear && msgDayOfYear == nowDayOfYear
+    if (isToday) {
+        val sb = StringBuilder(15).append("Today at ")
+        sb.append2Digits(hour); sb.append(':'); sb.append2Digits(minute)
+        return sb.toString()
     }
-    val nowCal = java.util.Calendar.getInstance()
 
-    val hhmm = "%02d:%02d".format(msgCal.get(java.util.Calendar.HOUR_OF_DAY), msgCal.get(java.util.Calendar.MINUTE))
+    val isYesterday = msgYear == nowYear && msgDayOfYear == nowDayOfYear - 1 ||
+        (nowDayOfYear == 1 && msgYear == nowYear - 1 &&
+            msgDayOfYear == msgCal.getActualMaximum(java.util.Calendar.DAY_OF_YEAR))
+    if (isYesterday) {
+        val sb = StringBuilder(19).append("Yesterday at ")
+        sb.append2Digits(hour); sb.append(':'); sb.append2Digits(minute)
+        return sb.toString()
+    }
 
-    val isToday = msgCal.get(java.util.Calendar.YEAR) == nowCal.get(java.util.Calendar.YEAR) &&
-        msgCal.get(java.util.Calendar.DAY_OF_YEAR) == nowCal.get(java.util.Calendar.DAY_OF_YEAR)
-
-    if (isToday) return "Today at $hhmm"
-
-    val yesterdayCal = java.util.Calendar.getInstance().apply { add(java.util.Calendar.DAY_OF_YEAR, -1) }
-    val isYesterday = msgCal.get(java.util.Calendar.YEAR) == yesterdayCal.get(java.util.Calendar.YEAR) &&
-        msgCal.get(java.util.Calendar.DAY_OF_YEAR) == yesterdayCal.get(java.util.Calendar.DAY_OF_YEAR)
-
-    if (isYesterday) return "Yesterday at $hhmm"
-
-    val dd = "%02d".format(msgCal.get(java.util.Calendar.DAY_OF_MONTH))
-    val mm = "%02d".format(msgCal.get(java.util.Calendar.MONTH) + 1)
-    val yyyy = msgCal.get(java.util.Calendar.YEAR)
-    return "$dd/$mm/$yyyy, $hhmm"
+    val dd = msgCal.get(java.util.Calendar.DAY_OF_MONTH)
+    val mm = msgCal.get(java.util.Calendar.MONTH) + 1
+    val sb = StringBuilder(18)
+    sb.append2Digits(dd); sb.append('/')
+    sb.append2Digits(mm); sb.append('/')
+    sb.append(msgYear); sb.append(", ")
+    sb.append2Digits(hour); sb.append(':'); sb.append2Digits(minute)
+    return sb.toString()
 }
 
 fun convertTimestampToTimeAgo(context: Context, timestampSeconds: Long): String {

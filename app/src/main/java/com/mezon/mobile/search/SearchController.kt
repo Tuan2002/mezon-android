@@ -318,14 +318,33 @@ class SearchController @Inject constructor(
             channels
         } else {
             val searchNorm = normalizeSearchString(query)
-            val filtered = channels
-                .filter { normalizeSearchString(it.channelLabel).contains(searchNorm) }
-                .sortedWith(Comparator { a, b -> compareByLabel(a, b, searchNorm) })
-            ArrayList(filtered)
+            val pairs = ArrayList<Pair<ClanChannelEntity, String>>(channels.size)
+            for (ch in channels) {
+                val norm = normalizeSearchString(ch.channelLabel)
+                if (norm.contains(searchNorm)) pairs.add(ch to norm)
+            }
+            pairs.sortWith(Comparator { a, b -> compareNormalized(a.second, b.second, searchNorm) })
+            ArrayList<ClanChannelEntity>(pairs.size).also { out ->
+                for (p in pairs) out.add(p.first)
+            }
         }
         cachedChannelsQuery = query
         cachedChannelsResult = result
         return result
+    }
+
+    private fun compareNormalized(aNorm: String, bNorm: String, search: String): Int {
+        val aExact = aNorm == search
+        val bExact = bNorm == search
+        if (aExact && !bExact) return -1
+        if (!aExact && bExact) return 1
+        val aIndex = aNorm.indexOf(search)
+        val bIndex = bNorm.indexOf(search)
+        if (aIndex == -1 && bIndex == -1) return 0
+        if (aIndex == -1) return 1
+        if (bIndex == -1) return -1
+        if (aIndex != bIndex) return aIndex - bIndex
+        return aNorm.compareTo(bNorm)
     }
 
     fun invalidateFilterCache() {

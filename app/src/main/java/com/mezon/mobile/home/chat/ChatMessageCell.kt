@@ -178,12 +178,13 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
     private var reactionGroups: List<ReactionGroup> = emptyList()
     private var reactionCountLayouts: Array<StaticLayout?> = emptyArray()
     private var reactionChipBounds: ArrayList<RectF> = ArrayList()
+    private var reactionChipBoundsCount: Int = 0
     private var reactionIsMyFlags: BooleanArray = BooleanArray(0)
     private var reactionRowHeight = 0
     private val reactionChipRect = RectF()
     private var reactionEmojiBitmaps: Array<android.graphics.Bitmap?> = emptyArray()
     private var reactionEmojiCancellables: Array<MezonImageLoader.Cancellable?> = emptyArray()
-    private var reactionAddBounds = RectF()
+    private val reactionAddBounds = RectF()
     private var reactionAddIcon: android.graphics.drawable.Drawable? = null
     var currentUserId: Long = 0L
 
@@ -476,7 +477,6 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
         photoHeight = h.coerceAtLeast(LayoutHelper.dp(100))
     }
 
-    private val videoThumbScope = CoroutineScope(Dispatchers.IO + kotlinx.coroutines.SupervisorJob())
     private var videoThumbJob: Job? = null
 
     private fun loadPhotoImage(msg: MessageEntity) {
@@ -485,7 +485,6 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
 
         if (mediaGridCount == 0) return
 
-        val allReceivers = arrayOf(photoImage, *extraPhotoImages)
         for (i in 0 until 4) {
             if (i < mediaGridCount) {
                 val att = allMedia[i]
@@ -565,38 +564,52 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
     @Suppress("deprecation")
     private fun loadVideoThumbnail(videoUrl: String) {
         videoThumbJob?.cancel()
-        videoThumbJob = videoThumbScope.launch {
+        videoThumbJob = VIDEO_THUMB_SCOPE.launch {
+            val retriever = android.media.MediaMetadataRetriever()
             try {
-                val retriever = android.media.MediaMetadataRetriever()
-                retriever.setDataSource(videoUrl, HashMap<String, String>())
-                val frame = retriever.getFrameAtTime(100_000L, android.media.MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
-                retriever.release()
+                kotlinx.coroutines.withTimeout(VIDEO_THUMB_TIMEOUT_MS) {
+                    retriever.setDataSource(videoUrl, HashMap<String, String>())
+                }
+                val frame = retriever.getFrameAtTime(
+                    100_000L,
+                    android.media.MediaMetadataRetriever.OPTION_CLOSEST_SYNC
+                )
                 if (frame != null) {
                     withContext(Dispatchers.Main) {
                         photoImage.setBitmapDirectly(frame)
                         invalidate()
                     }
                 }
-            } catch (_: Exception) {}
+            } catch (_: Exception) {
+            } finally {
+                runCatching { retriever.release() }
+            }
         }
     }
 
     private fun loadLocalVideoThumbnail(localUrl: String) {
         videoThumbJob?.cancel()
-        videoThumbJob = videoThumbScope.launch {
+        videoThumbJob = VIDEO_THUMB_SCOPE.launch {
+            val retriever = android.media.MediaMetadataRetriever()
             try {
                 val uri = android.net.Uri.parse(localUrl)
-                val retriever = android.media.MediaMetadataRetriever()
-                retriever.setDataSource(context, uri)
-                val frame = retriever.getFrameAtTime(100_000L, android.media.MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
-                retriever.release()
+                kotlinx.coroutines.withTimeout(VIDEO_THUMB_TIMEOUT_MS) {
+                    retriever.setDataSource(context, uri)
+                }
+                val frame = retriever.getFrameAtTime(
+                    100_000L,
+                    android.media.MediaMetadataRetriever.OPTION_CLOSEST_SYNC
+                )
                 if (frame != null) {
                     withContext(Dispatchers.Main) {
                         photoImage.setBitmapDirectly(frame)
                         invalidate()
                     }
                 }
-            } catch (_: Exception) {}
+            } catch (_: Exception) {
+            } finally {
+                runCatching { retriever.release() }
+            }
         }
     }
 
@@ -616,7 +629,7 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
 
     private fun maxBubbleWidth(width: Int): Int {
         if (isInPinMode) return width - PIN_PAD_H * 2
-        return width - PAD_H - AVATAR_SIZE - GAP_AVATAR - LayoutHelper.dp(28)
+        return width - PAD_H - AVATAR_SIZE - GAP_AVATAR - BUBBLE_RIGHT_INSET
     }
 
     private fun buildLayouts(msg: MessageEntity) {
@@ -901,7 +914,10 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
         val totalSeconds = (remainingMs / 1000).toInt()
         val minutes = totalSeconds / 60
         val seconds = totalSeconds % 60
-        return "%d:%02d".format(minutes, seconds)
+        val sb = StringBuilder(6).append(minutes).append(':')
+        if (seconds < 10) sb.append('0')
+        sb.append(seconds)
+        return sb.toString()
     }
 
     fun applyAudioPlayback(
@@ -1001,7 +1017,9 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
 
         val titlePaint = if (data.url.isNotEmpty()) EMBED_TITLE_LINK_PAINT else EMBED_TITLE_PAINT
         embedTitleLayout = if (data.title.isNotEmpty()) {
-            val cleanTitle = data.title.replace(Regex("[\\n\\r\\t]+"), " ").replace(Regex("\\s+"), " ").trim()
+            val cleanTitle = data.title.replace(EMBED_NEWLINE_TAB_REGEX, " ")
+                .replace(EMBED_WHITESPACE_REGEX, " ")
+                .trim()
             StaticLayout.Builder.obtain(cleanTitle, 0, cleanTitle.length, titlePaint, innerTextW)
                 .setMaxLines(3)
                 .setEllipsize(TextUtils.TruncateAt.END)
@@ -1224,11 +1242,11 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
                 avatarDrawable.setPhoto(bmp)
                 avatarDrawable.setDrawableByInfo(true)
                 avatarFallbackVisible = true
-                post { invalidate() }
+                invalidate()
             }, onError = {
                 avatarDrawable.setDrawableByInfo(true)
                 avatarFallbackVisible = true
-                post { invalidate() }
+                invalidate()
             })
         } else {
             avatarDrawable.setPhoto(null)
@@ -1510,7 +1528,7 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
                             return true
                         }
                     }
-                    for (i in reactionChipBounds.indices) {
+                    for (i in 0 until reactionChipBoundsCount) {
                         val b = reactionChipBounds[i]
                         val bx = contentLeft + b.left
                         val by = reacBaseY + b.top
@@ -1809,8 +1827,8 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
                 canvas.restore()
 
                 timeLayout?.let { time ->
-                    val timeX = (contentLeft + cachedSenderW + LayoutHelper.dp(6)).toFloat()
-                        .coerceAtMost((width - LayoutHelper.dp(4)).toFloat())
+                    val timeX = (contentLeft + cachedSenderW + TIME_GAP_LEFT).toFloat()
+                        .coerceAtMost((width - TIME_GAP_RIGHT).toFloat())
                     val timeY = yOff + sender.height - time.height
                     canvas.save()
                     canvas.translate(timeX, timeY)
@@ -1859,8 +1877,8 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
             canvas.restore()
 
             timeLayout?.let { time ->
-                val timeX = (contentLeft + cachedSenderW + LayoutHelper.dp(6)).toFloat()
-                        .coerceAtMost((width - LayoutHelper.dp(4)).toFloat())
+                val timeX = (contentLeft + cachedSenderW + TIME_GAP_LEFT).toFloat()
+                        .coerceAtMost((width - TIME_GAP_RIGHT).toFloat())
                 val timeY = yOff + sender.height - time.height 
                 canvas.save()
                 canvas.translate(timeX, timeY)
@@ -2217,7 +2235,7 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
                 canvas.translate(textLeft, y)
                 it.draw(canvas)
                 canvas.restore()
-                y += it.height + LayoutHelper.dp(2)
+                y += it.height + SECTION_GAP
             }
             valLay?.let {
                 canvas.save()
@@ -2476,7 +2494,7 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
         if (isInPinMode) {
             reactionGroups = emptyList()
             reactionCountLayouts = emptyArray()
-            reactionChipBounds.clear()
+            reactionChipBoundsCount = 0
             reactionIsMyFlags = BooleanArray(0)
             reactionEmojiBitmaps = emptyArray()
             reactionEmojiCancellables = emptyArray()
@@ -2488,7 +2506,7 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
         reactionGroups = groups
         if (groups.isEmpty()) {
             reactionCountLayouts = emptyArray()
-            reactionChipBounds.clear()
+            reactionChipBoundsCount = 0
             reactionIsMyFlags = BooleanArray(0)
             reactionEmojiBitmaps = emptyArray()
             reactionEmojiCancellables = emptyArray()
@@ -2534,10 +2552,10 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
         reactionEmojiBitmaps = bitmaps
         reactionEmojiCancellables = cancellables
 
-        reactionChipBounds.clear()
         var x = 0f
         var y = 0f
         val availW = maxWidth.toFloat()
+        var boundsIdx = 0
         for (i in groups.indices) {
             val countW = countLayouts[i]?.let { it.getLineWidth(0) } ?: 0f
             val chipW = REACTION_CHIP_PAD * 2 + REACTION_EMOJI_SIZE + REACTION_EMOJI_MR + countW
@@ -2545,16 +2563,25 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
                 x = 0f
                 y += REACTION_CHIP_H + REACTION_GAP
             }
-            reactionChipBounds.add(RectF(x, y, x + chipW, y + REACTION_CHIP_H))
+            val rect = if (boundsIdx < reactionChipBounds.size) {
+                reactionChipBounds[boundsIdx]
+            } else {
+                val r = RectF()
+                reactionChipBounds.add(r)
+                r
+            }
+            rect.set(x, y, x + chipW, y + REACTION_CHIP_H)
+            boundsIdx++
             x += chipW + REACTION_GAP
         }
+        reactionChipBoundsCount = boundsIdx
 
         val addChipW = REACTION_ADD_SIZE.toFloat()
         if (x > 0 && x + addChipW > availW) {
             x = 0f
             y += REACTION_CHIP_H + REACTION_GAP
         }
-        reactionAddBounds = RectF(x, y, x + addChipW, y + REACTION_CHIP_H)
+        reactionAddBounds.set(x, y, x + addChipW, y + REACTION_CHIP_H)
 
         reactionRowHeight = (y + REACTION_CHIP_H).toInt()
     }
@@ -2566,7 +2593,8 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
         val myBorder = theme.reactionBorderColor
 
         for (i in groups.indices) {
-            val bounds = reactionChipBounds.getOrNull(i) ?: continue
+            if (i >= reactionChipBoundsCount) continue
+            val bounds = reactionChipBounds[i]
             val chipX = startX + bounds.left
             val chipY = startY + bounds.top
 
@@ -2627,6 +2655,15 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
         private const val TAG = "ChatMessageCell"
         private val ANONYMOUS_USER_ID = BuildConfig.MEZON_ANONYMOUS_USER_ID.toLongOrNull() ?: 0L
         private val anonymousAvatarBitmaps = HashMap<Int, Bitmap>(2)
+
+        private const val VIDEO_THUMB_TIMEOUT_MS = 8_000L
+        private val VIDEO_THUMB_SCOPE = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        private val EMBED_NEWLINE_TAB_REGEX = Regex("[\\n\\r\\t]+")
+        private val EMBED_WHITESPACE_REGEX = Regex("\\s+")
+        private val BUBBLE_RIGHT_INSET = LayoutHelper.dp(28)
+        private val TIME_GAP_LEFT = LayoutHelper.dp(6)
+        private val TIME_GAP_RIGHT = LayoutHelper.dp(4)
+        private val SECTION_GAP = LayoutHelper.dp(2)
 
         private val AVATAR_SIZE = LayoutHelper.dp(40)  
         private val PAD_H = LayoutHelper.dp(6)          
@@ -2929,7 +2966,10 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
         private fun formatDuration(seconds: Int): String {
             val m = seconds / 60
             val s = seconds % 60
-            return "%d:%02d".format(m, s)
+            val sb = StringBuilder(6).append(m).append(':')
+            if (s < 10) sb.append('0')
+            sb.append(s)
+            return sb.toString()
         }
 
     }

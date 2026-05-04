@@ -235,6 +235,7 @@
     <string name="report_message_toast_failed">Failed to report message</string>
 
     <!-- message action aliases (used by MessageActionBottomSheet) -->
+    
     <string name="action_reply">Reply</string>
     <string name="action_forward">Forward</string>
     <string name="forward_screen_title">Forward to</string>
@@ -254,6 +255,7 @@
     <string name="forward_thumb_more">+%1$d</string>
     <string name="action_edit">Edit Message</string>
     <string name="action_create_thread">Create Thread</string>
+    <string name="action_give_coffee">Give Coffee</string>
     <string name="create_thread_name_label">Thread Name</string>
     <string name="create_thread_name_placeholder">New Thread</string>
     <string name="create_thread_new_title">New Thread</string>
@@ -264,6 +266,14 @@
     <string name="create_thread_failed_message">Thread not found or you\'re not allowed to update</string>
     <string name="create_thread_empty_cta">Create Thread</string>
     <string name="action_copy_text">Copy Text</string>
+    <string name="tokens_sent_title">Funds Transferred: %1$s₫</string>
+    <string name="give_coffee_action">Give coffee action</string>
+    <string name="give_coffee_error_self">Cannot give coffee to yourself</string>
+    <string name="give_coffee_error_wallet_not_ready">Wallet is not ready. Please try again in a moment.</string>
+    <string name="give_coffee_error_send">Failed to send coffee</string>
+    <string name="give_coffee_error_dm_channel">Failed to create DM channel</string>
+    <string name="give_coffee_error_dm_notification">Coffee sent, but failed to send DM notification</string>
+    <string name="token_transaction_transfer_button">Mezon transfer</string>
     <string name="action_pin">Pin Message</string>
     <string name="action_unpin">Unpin Message</string>
     <string name="pin_message_confirm_title">Pin Message</string>
@@ -344,7 +354,16 @@
     <string name="clan_settings_enable_community">Enable Community</string>
     <string name="clan_settings_members">Members</string>
     <string name="clan_settings_roles">Roles</string>
-    <string name="clan_settings_invites">Invites</string>
+    <string name="clan_settings_invites">Invites</string>   
+    <string name="clan_settings_change_logo">Change clan logo</string>
+    <string name="image_crop_choose">Choose</string>
+    <string name="image_crop_rotate_left_cd">Rotate left</string>
+    <string name="image_crop_rotate_right_cd">Rotate right</string>
+    <string name="image_crop_reset_cd">Reset</string>
+    <string name="clan_settings_remove_logo">Remove clan logo</string>
+    <string name="clan_settings_logo_permission_denied">You don\'t have permission to change the clan logo.</string>
+    <string name="clan_settings_logo_too_large">Clan logo image must be 1 MB or smaller.</string>
+    <string name="clan_settings_logo_update_failed">Couldn\'t update clan logo. Try again.</string>
     <string name="clan_menu_action_invite">Invite</string>
     <string name="clan_menu_action_notifications">Notifications</string>
     <string name="clan_menu_action_settings">Settings</string>
@@ -673,6 +692,9 @@
     <string name="advanced_location">Location</string>
     <string name="advanced_files">Files</string>
     <string name="advanced_threads">Threads</string>
+    <string name="system_msg_started_thread_lead">started a thread:</string>
+    <string name="system_msg_thread_sentence_see">See</string>
+    <string name="system_msg_all_threads">all threads</string>
     <string name="advanced_anonymous">Anonymous</string>
     <string name="advanced_anonymous_off">Turn off anonymous</string>
     <string name="advanced_buzz">Buzz</string>

@@ -35,6 +35,14 @@ class ChannelThreadCell(
         }
         private val activeBgRectF = RectF()
         private val arcRectF = RectF()
+        private val badgeRectF = RectF()
+
+        private val ACTIVE_RADIUS = LayoutHelper.dp(6).toFloat()
+        private val ACTIVE_PAD_H = LayoutHelper.dp(6).toFloat()
+        private val ACTIVE_PAD_V = LayoutHelper.dp(2).toFloat()
+        private val ACTIVE_PAD_RIGHT = LayoutHelper.dp(8).toFloat()
+        private val BADGE_GAP = LayoutHelper.dp(4)
+        private val BADGE_TEXT_PAD = LayoutHelper.dp(8).toFloat()
     }
 
     var thread: ClanChannelEntity? = null
@@ -119,12 +127,11 @@ class ChannelThreadCell(
 
         if (isActive) {
             activeBgPaint.color = themeColors.primaryContainer
-            val r = LayoutHelper.dp(6).toFloat()
             activeBgRectF.set(
-                textStartX - LayoutHelper.dp(6).toFloat(), LayoutHelper.dp(2).toFloat(),
-                width - LayoutHelper.dp(8).toFloat(), height - LayoutHelper.dp(2).toFloat()
+                textStartX - ACTIVE_PAD_H, ACTIVE_PAD_V,
+                width - ACTIVE_PAD_RIGHT, height - ACTIVE_PAD_V
             )
-            canvas.drawRoundRect(activeBgRectF, r, r, activeBgPaint)
+            canvas.drawRoundRect(activeBgRectF, ACTIVE_RADIUS, ACTIVE_RADIUS, activeBgPaint)
         }
 
         val hasUnread = th.hasUnread
@@ -136,7 +143,7 @@ class ChannelThreadCell(
         namePaint.color = textColor
         namePaint.typeface = if (hasUnread) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
 
-        val badgeWidth = if (hasMentionBadge) badgeSizePx + LayoutHelper.dp(4) else 0
+        val badgeWidth = if (hasMentionBadge) badgeSizePx + BADGE_GAP else 0
         val availW = width - textStartX - paddingRightPx - badgeWidth
 
         if (truncatedName.isEmpty()) {
@@ -148,12 +155,12 @@ class ChannelThreadCell(
         if (hasMentionBadge) {
             val badgeText = if (th.unreadCount > 99) "99+" else th.unreadCount.toString()
             val textW = unreadBadgeTextPaint.measureText(badgeText)
-            val badgeW = (textW + LayoutHelper.dp(8)).coerceAtLeast(badgeSizePx.toFloat())
+            val badgeW = (textW + BADGE_TEXT_PAD).coerceAtLeast(badgeSizePx.toFloat())
             val badgeRight = width - paddingRightPx.toFloat()
             val badgeLeft = badgeRight - badgeW
             unreadBadgePaint.color = themeColors.badgeRed
-            val rf = RectF(badgeLeft, cy - badgeSizePx / 2f, badgeRight, cy + badgeSizePx / 2f)
-            canvas.drawRoundRect(rf, badgeSizePx / 2f, badgeSizePx / 2f, unreadBadgePaint)
+            badgeRectF.set(badgeLeft, cy - badgeSizePx / 2f, badgeRight, cy + badgeSizePx / 2f)
+            canvas.drawRoundRect(badgeRectF, badgeSizePx / 2f, badgeSizePx / 2f, unreadBadgePaint)
             val textY2 = cy - (unreadBadgeTextPaint.descent() + unreadBadgeTextPaint.ascent()) / 2
             canvas.drawText(badgeText, badgeLeft + badgeW / 2f, textY2, unreadBadgeTextPaint)
         }
