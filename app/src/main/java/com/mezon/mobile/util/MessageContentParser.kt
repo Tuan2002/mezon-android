@@ -20,6 +20,8 @@ import com.mezon.mobile.home.chat.EmojiSpan
 import com.mezon.mobile.home.chat.HashtagSpan
 import com.mezon.mobile.home.chat.LinkSpan
 import com.mezon.mobile.home.chat.MentionSpan
+import com.mezon.mobile.home.chat.SystemMessageMentionSpan
+import com.mezon.mobile.home.chat.SystemMessagePlainTextView
 import com.mezon.mobile.home.clans.ChannelItemCell
 import com.mezon.mobile.home.clans.ClanChannelEntity
 import com.mezon.mobile.network.CHANNEL_TYPE_THREAD
@@ -37,6 +39,9 @@ private val VALID_LINK_INVITE_REGEX =
     Regex("""https?://(?:www\.)?(?:mezon\.ai|gw\.mezon\.ai)/invite/[0-9]+""", RegexOption.IGNORE_CASE)
 private val INVITE_ID_FROM_TEXT =
     Regex("""https?://(?:www\.)?(?:mezon\.ai|gw\.mezon\.ai)/invite/([0-9]+)""", RegexOption.IGNORE_CASE)
+
+private val AT_HERE_SYSTEM_REGEX =
+    Regex("(?<!\\w)@here(?!\\w)", RegexOption.IGNORE_CASE)
 
 fun contentHasNonEmptyLinkArray(content: String): Boolean {
     return try {
@@ -162,7 +167,9 @@ fun parseContentToSpannable(
     linkColor: Int,
     view: View? = null,
     mentionColors: MentionColors? = null,
-    theme: ThemeColors
+    theme: ThemeColors,
+    systemPlainHost: SystemMessagePlainTextView? = null,
+    systemMentionGate: ((userId: String?, roleId: String?, segmentText: String) -> Boolean)? = null
 ): SpannableStringBuilder {
     val sb = SpannableStringBuilder()
     val text = parseContentText(content)
@@ -199,6 +206,10 @@ fun parseContentToSpannable(
     } catch (_: Exception) {
     }
 
+    if (systemPlainHost != null) {
+        mergeSyntheticAtHereForSystemPlain(text, elements)
+    }
+
     elements.sortBy { it.s }
     var last = 0
     val viewRef = view?.let { java.lang.ref.WeakReference(it) }
@@ -223,8 +234,21 @@ fun parseContentToSpannable(
                     else ->
                         linkColor to android.graphics.Color.TRANSPARENT
                 }
-                sb.setExclusiveSpan(MentionSpan(el.user_id, el.role_id, textColor, bgColor), spanStart, sb.length)
-                sb.setExclusiveSpan(StyleSpan(Typeface.BOLD), spanStart, sb.length)
+                val useSystemMentions = systemPlainHost != null
+                val interactive = systemMentionGate?.invoke(el.user_id, el.role_id, segText) == true
+                if (useSystemMentions && interactive) {
+                    sb.setExclusiveSpan(
+                        SystemMessageMentionSpan(el.user_id, el.role_id, textColor, bgColor),
+                        spanStart,
+                        sb.length
+                    )
+                    sb.setExclusiveSpan(StyleSpan(Typeface.BOLD), spanStart, sb.length)
+                } else if (useSystemMentions) {
+                    sb.setExclusiveSpan(ForegroundColorSpan(linkColor), spanStart, sb.length)
+                } else {
+                    sb.setExclusiveSpan(MentionSpan(el.user_id, el.role_id, textColor, bgColor), spanStart, sb.length)
+                    sb.setExclusiveSpan(StyleSpan(Typeface.BOLD), spanStart, sb.length)
+                }
             }
             "h" -> {
                 appendHashtagPill(
@@ -329,6 +353,26 @@ fun parseContentToSpannable(
         applyPlainTextWithHeadings(sb, text.substring(last), theme)
     }
     return sb
+}
+
+private fun mergeSyntheticAtHereForSystemPlain(text: String, elements: MutableList<ContentElement>) {
+    val occupied = elements.map { it.s to it.e }.toMutableList()
+    for (match in AT_HERE_SYSTEM_REGEX.findAll(text)) {
+        val s = match.range.first
+        val eExclusive = match.range.last + 1
+        val overlaps = occupied.any { (os, oe) -> s < oe && os < eExclusive }
+        if (overlaps) continue
+        elements.add(
+            ContentElement(
+                "m",
+                s,
+                eExclusive,
+                user_id = MENTION_HERE_USER_ID,
+                role_id = null
+            )
+        )
+        occupied.add(s to eExclusive)
+    }
 }
 
 @Volatile

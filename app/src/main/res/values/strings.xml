@@ -692,6 +692,9 @@
     <string name="advanced_location">Location</string>
     <string name="advanced_files">Files</string>
     <string name="advanced_threads">Threads</string>
+    <string name="system_msg_started_thread_lead">started a thread:</string>
+    <string name="system_msg_thread_sentence_see">See</string>
+    <string name="system_msg_all_threads">all threads</string>
     <string name="advanced_anonymous">Anonymous</string>
     <string name="advanced_anonymous_off">Turn off anonymous</string>
     <string name="advanced_buzz">Buzz</string>
