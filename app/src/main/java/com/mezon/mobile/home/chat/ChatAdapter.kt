@@ -227,6 +227,8 @@ class ChatAdapter(
             }
             is SystemViewHolder -> {
                 holder.cell.channelName = channelName
+                holder.cell.delegate = systemMessageDelegate
+                holder.cell.mentionInteractiveGate = systemMessageMentionGate
                 holder.cell.update(0, messages[idx])
             }
             is SendTokenViewHolder -> {
@@ -258,6 +260,8 @@ class ChatAdapter(
     var isChannelPrivate = false
     var loadLinkInvitePreview: (suspend (Long) -> LinkInvitePreview?)? = null
     var sendTokenDelegate: SendTokenMessageCell.Delegate? = null
+    var systemMessageDelegate: SystemMessageCell.Delegate? = null
+    var systemMessageMentionGate: ((userId: String?, roleId: String?, segmentText: String) -> Boolean)? = null
 
     class MessageViewHolder(val cell: ChatMessageCell) : RecyclerView.ViewHolder(cell)
     class WelcomeViewHolder(val cell: WelcomeMessageCell) : RecyclerView.ViewHolder(cell)
