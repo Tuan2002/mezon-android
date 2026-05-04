@@ -68,21 +68,14 @@ class ChannelMediaGallerySkeletonView(
             }
         bgPaint.color = (baseArgb and 0x00FFFFFF) or (0xE4000000.toInt())
 
-        val padH = LayoutHelper.dp(8f)
-        val margin = LayoutHelper.dp(4f)
-        val gap = LayoutHelper.dp(8f)
-        val radius = LayoutHelper.dp(8f).toFloat()
-        val padTop = LayoutHelper.dp(8f)
-        val reservedX = padH * 2 + margin * 2 + gap * 2
+        val reservedX = PAD_H * 2 + MARGIN * 2 + GAP * 2
         val cellFit = ((w - reservedX) / COLS).coerceAtLeast(1)
-        val rnStyleCell =
-            ((w.toFloat() / COLS) - LayoutHelper.dp(16f)).toInt()
-                .coerceAtLeast(LayoutHelper.dp(48f))
-        val cell =
-            min(
-                cellSizePx().coerceAtLeast(LayoutHelper.dp(48f)),
-                min(cellFit, rnStyleCell)
-            )
+        val rnStyleCell = ((w.toFloat() / COLS) - RN_STYLE_PAD).toInt()
+            .coerceAtLeast(MIN_CELL)
+        val cell = min(
+            cellSizePx().coerceAtLeast(MIN_CELL),
+            min(cellFit, rnStyleCell)
+        )
 
         val time = System.currentTimeMillis() % 2000L
         val fraction = time / 2000f
@@ -96,21 +89,28 @@ class ChannelMediaGallerySkeletonView(
                 0x00000000 or (pulseAlpha shl 24)
             }
 
-        var y = padTop.toFloat()
+        var y = PAD_TOP.toFloat()
         repeat(ROWS) {
-            var x = (padH + margin).toFloat()
+            var x = (PAD_H + MARGIN).toFloat()
             repeat(COLS) {
                 rectF.set(x, y, x + cell, y + cell)
-                canvas.drawRoundRect(rectF, radius, radius, bgPaint)
-                canvas.drawRoundRect(rectF, radius, radius, pulsePaint)
-                x += cell + gap
+                canvas.drawRoundRect(rectF, RADIUS, RADIUS, bgPaint)
+                canvas.drawRoundRect(rectF, RADIUS, RADIUS, pulsePaint)
+                x += cell + GAP
             }
-            y += cell + gap
+            y += cell + GAP
         }
     }
 
     companion object {
         private const val COLS = 3
         private const val ROWS = 4
+        private val PAD_H = LayoutHelper.dp(8f)
+        private val MARGIN = LayoutHelper.dp(4f)
+        private val GAP = LayoutHelper.dp(8f)
+        private val RADIUS = LayoutHelper.dp(8f).toFloat()
+        private val PAD_TOP = LayoutHelper.dp(8f)
+        private val RN_STYLE_PAD = LayoutHelper.dp(16f)
+        private val MIN_CELL = LayoutHelper.dp(48f)
     }
 }

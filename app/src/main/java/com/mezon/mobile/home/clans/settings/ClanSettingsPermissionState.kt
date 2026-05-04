@@ -1,6 +1,7 @@
-package com.mezon.mobile.home.clans
+package com.mezon.mobile.home.clans.settings
 
 import com.mezon.mobile.home.ClanMember
+import com.mezon.mobile.home.clans.ClanRole
 import com.mezon.mobile.home.profile.UserController
 
 data class ClanSettingsPermissionState(
@@ -23,13 +24,22 @@ data class ClanSettingsPermissionState(
             userController: UserController,
             clanId: Long,
             members: List<ClanMember>,
-            roles: List<ClanRole>
+            roles: List<ClanRole>,
+            clanCreatorId: Long = 0L,
         ): ClanSettingsPermissionState {
             if (clanId <= 0L) {
                 return ClanSettingsPermissionState(false, false, false)
             }
             val userId = userController.userId
-            val self = members.firstOrNull { it.userId == userId } ?: return ClanSettingsPermissionState(false, false, false)
+            if (userId != 0L && clanCreatorId != 0L && userId == clanCreatorId) {
+                return ClanSettingsPermissionState(
+                    hasAdminPermission = true,
+                    hasManageClanPermission = true,
+                    isClanOwner = true,
+                )
+            }
+            val self = members.firstOrNull { it.userId == userId }
+                ?: return ClanSettingsPermissionState(false, false, false)
             val rolesById = roles.associateBy { it.roleId }
             val slugsFromPermissions = HashSet<String>()
             val roleSlugs = HashSet<String>()

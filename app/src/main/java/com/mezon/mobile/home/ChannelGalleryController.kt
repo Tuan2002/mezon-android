@@ -223,6 +223,15 @@ class ChannelGalleryController @Inject constructor(
             }
         }
     }
+
+    fun cleanup() {
+        synchronized(stateByChannel) {
+            stateByChannel.clear()
+        }
+        synchronized(mutexByChannel) {
+            mutexByChannel.clear()
+        }
+    }
 }
 
 private fun ChannelAttachment.toFilteredMediaOrNull(): ChannelGalleryMediaItem? {

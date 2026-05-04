@@ -39,17 +39,13 @@ class BadgeDrawable(private val theme: ThemeColors) : Drawable() {
         bgPaint.color = theme.badgeRed
 
         val textWidth = textPaint.measureText(text)
-        val h = LayoutHelper.dp(18).toFloat()
-        val minW = h
-        val padH = LayoutHelper.dp(6).toFloat()
-        val w = (textWidth + padH * 2).coerceAtLeast(minW)
-        val radius = h / 2f
+        val w = (textWidth + BADGE_PAD_H * 2).coerceAtLeast(BADGE_HEIGHT)
 
         val left = b.right - w
         val top = b.top.toFloat()
-        rect.set(left, top, b.right.toFloat(), top + h)
+        rect.set(left, top, b.right.toFloat(), top + BADGE_HEIGHT)
 
-        canvas.drawRoundRect(rect, radius, radius, bgPaint)
+        canvas.drawRoundRect(rect, BADGE_RADIUS, BADGE_RADIUS, bgPaint)
         val textY = rect.centerY() - (textPaint.descent() + textPaint.ascent()) / 2
         canvas.drawText(text, rect.centerX(), textY, textPaint)
     }
@@ -57,12 +53,10 @@ class BadgeDrawable(private val theme: ThemeColors) : Drawable() {
     override fun getIntrinsicWidth(): Int {
         if (count <= 0) return 0
         val textWidth = textPaint.measureText(text)
-        val h = LayoutHelper.dp(18).toFloat()
-        val padH = LayoutHelper.dp(6).toFloat()
-        return (textWidth + padH * 2).coerceAtLeast(h).toInt()
+        return (textWidth + BADGE_PAD_H * 2).coerceAtLeast(BADGE_HEIGHT).toInt()
     }
 
-    override fun getIntrinsicHeight(): Int = if (count <= 0) 0 else LayoutHelper.dp(18)
+    override fun getIntrinsicHeight(): Int = if (count <= 0) 0 else BADGE_HEIGHT_INT
 
     override fun setAlpha(alpha: Int) {
         bgPaint.alpha = alpha
@@ -75,4 +69,11 @@ class BadgeDrawable(private val theme: ThemeColors) : Drawable() {
 
     @Suppress("OVERRIDE_DEPRECATION")
     override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
+
+    companion object {
+        private val BADGE_HEIGHT_INT = LayoutHelper.dp(18)
+        private val BADGE_HEIGHT = BADGE_HEIGHT_INT.toFloat()
+        private val BADGE_PAD_H = LayoutHelper.dp(6).toFloat()
+        private val BADGE_RADIUS = BADGE_HEIGHT / 2f
+    }
 }

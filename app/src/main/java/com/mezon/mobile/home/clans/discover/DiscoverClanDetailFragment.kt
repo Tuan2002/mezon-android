@@ -465,7 +465,6 @@ class DiscoverClanDetailFragment : BaseFragment() {
         if (pendingJoinClanId != 0L) return
         pendingJoinClanId = clanId
 
-        val handler = Handler(Looper.getMainLooper())
         val observer = object : NotificationCenter.NotificationCenterDelegate {
             override fun didReceivedNotification(id: Int, account: Int, vararg args: Any?) {
                 finalizeJoin(clanId)
@@ -474,8 +473,9 @@ class DiscoverClanDetailFragment : BaseFragment() {
         clansLoadedObserver = observer
         notificationCenter.addObserver(observer, NotificationCenter.clansDidLoad)
 
-        pendingJoinTimeout = Runnable { finalizeJoin(clanId) }
-        handler.postDelayed(pendingJoinTimeout!!, 2500L)
+        val timeout = Runnable { finalizeJoin(clanId) }
+        pendingJoinTimeout = timeout
+        com.mezon.mobile.core.AndroidUtilities.runOnUIThread(timeout, 2500L)
 
         clansController.loadClans(force = true)
     }
@@ -488,7 +488,7 @@ class DiscoverClanDetailFragment : BaseFragment() {
             notificationCenter.removeObserver(it, NotificationCenter.clansDidLoad)
         }
         clansLoadedObserver = null
-        pendingJoinTimeout?.let { Handler(Looper.getMainLooper()).removeCallbacks(it) }
+        pendingJoinTimeout?.let { com.mezon.mobile.core.AndroidUtilities.cancelRunOnUIThread(it) }
         pendingJoinTimeout = null
 
         clansController.selectClan(clanId, force = true)
@@ -525,7 +525,7 @@ class DiscoverClanDetailFragment : BaseFragment() {
             notificationCenter.removeObserver(it, NotificationCenter.clansDidLoad)
         }
         clansLoadedObserver = null
-        pendingJoinTimeout?.let { Handler(Looper.getMainLooper()).removeCallbacks(it) }
+        pendingJoinTimeout?.let { com.mezon.mobile.core.AndroidUtilities.cancelRunOnUIThread(it) }
         pendingJoinTimeout = null
         super.onFragmentDestroy()
     }

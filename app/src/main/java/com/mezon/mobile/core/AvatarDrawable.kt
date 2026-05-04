@@ -28,7 +28,10 @@ class AvatarDrawable : Drawable() {
             return avatarColors[getColorIndex(id)]
         }
 
-        fun getColorIndex(id: Long): Int = (java.lang.Math.abs(id) % avatarColors.size).toInt()
+        fun getColorIndex(id: Long): Int {
+            val safe = if (id == Long.MIN_VALUE) 0L else java.lang.Math.abs(id)
+            return (safe % avatarColors.size).toInt()
+        }
 
         fun getNameColorNameForId(id: Long): Int = getColorIndex(id)
     }

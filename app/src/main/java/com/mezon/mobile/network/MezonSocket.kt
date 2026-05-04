@@ -3,7 +3,6 @@ package com.mezon.mobile.network
 import com.mezon.mobile.di.ApplicationScope
 import com.mezon.mobile.session.SessionManager
 import android.util.Log
-import com.google.protobuf.CodedInputStream
 import com.google.protobuf.StringValue
 import com.mezon.mezon.api.ListClanBadgeCountResponse
 import com.mezon.mezon.api.MessageAttachment
@@ -38,6 +37,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -81,43 +81,9 @@ class MezonSocket @Inject constructor(
         const val TYPE_CHECK_THREAD = 3
         const val TYPE_CHECK_NICKNAME = 4
 
-        private const val WIRETYPE_VARINT = 0
-        private const val WIRETYPE_LENGTH_DELIMITED = 2
     }
 
 
-    private fun readCorrelationIdField1(raw: ByteArray): String? {
-        if (raw.isEmpty()) return null
-        return try {
-            val input = CodedInputStream.newInstance(raw)
-            while (true) {
-                val tag = input.readTag()
-                if (tag == 0) break
-                val fieldNumber = tag ushr 3
-                val wireType = tag and 0x7
-                if (fieldNumber == 1) {
-                    return when (wireType) {
-                        WIRETYPE_VARINT -> input.readInt64().toString()
-                        WIRETYPE_LENGTH_DELIMITED -> input.readStringRequireUtf8().trim().takeIf { it.isNotEmpty() }
-                        else -> {
-                            input.skipField(tag)
-                            null
-                        }
-                    }
-                }
-                input.skipField(tag)
-            }
-            null
-        } catch (_: Exception) {
-            null
-        }
-    }
-
-    private fun correlationKeyForPending(envelope: Envelope, raw: ByteArray): String? {
-        val fromParsed = envelope.cid
-        if (fromParsed.isNotEmpty()) return fromParsed
-        return readCorrelationIdField1(raw)
-    }
 
     private val _connectionState = MutableStateFlow(ConnectionState.DISCONNECTED)
     val connectionState: StateFlow<ConnectionState> = _connectionState.asStateFlow()
@@ -135,7 +101,7 @@ class MezonSocket @Inject constructor(
     private var currentToken: String? = null
 
     private val cidCounter = AtomicInteger(0)
-    private val pendingRequests = ConcurrentHashMap<String, CompletableDeferred<Envelope>>()
+    private val pendingRequests = ConcurrentHashMap<Int, CompletableDeferred<Envelope>>()
     private var reconnectDelayMs = RECONNECT_MIN_MS
     private var reconnectFailCount = 0
     @Volatile private var isReconnecting = false
@@ -197,34 +163,31 @@ class MezonSocket @Inject constructor(
     suspend fun send(block: EnvelopeKt.Dsl.() -> Unit): Envelope {
         val cid = cidCounter.incrementAndGet()
         val env = envelope {
-            this.cid = cid.toString()
+            this.cid = cid
             block()
         }
 
         val ws = webSocket
             ?: throw IllegalStateException("WebSocket not connected")
 
-        val cidKey = cid.toString()
         val deferred = CompletableDeferred<Envelope>()
-        pendingRequests[cidKey] = deferred
+        pendingRequests[cid] = deferred
 
         val bytes = env.toByteArray().toByteString()
         val sent = ws.send(bytes)
         if (!sent) {
-            pendingRequests.remove(cidKey)
+            pendingRequests.remove(cid)
             throw IllegalStateException("Failed to enqueue WebSocket message")
         }
 
         Log.d(TAG, "Sent: cid=$cid, case=${env.messageCase}")
 
-        scope.launch {
-            delay(SEND_TIMEOUT_MS)
-            pendingRequests.remove(cidKey)?.completeExceptionally(
-                RuntimeException("Request timed out: cid=$cid")
-            )
+        return try {
+            withTimeout(SEND_TIMEOUT_MS) { deferred.await() }
+        } catch (e: TimeoutCancellationException) {
+            pendingRequests.remove(cid)
+            throw RuntimeException("Request timed out: cid=$cid", e)
         }
-
-        return deferred.await()
     }
 
     fun sendFireAndForget(env: Envelope) {
@@ -560,7 +523,10 @@ class MezonSocket @Inject constructor(
         val url = "$host/ws?token=$token&status=true&platform=1&lang=en&format=protobuf"
         Log.d(TAG, "Connecting to: $host/ws?token=***&status=true&platform=1&lang=en&format=protobuf")
 
-        val request = Request.Builder().url(url).build()
+        val request = Request.Builder()
+            .url(url)
+            .header("Authorization", "Bearer $token")
+            .build()
         webSocket = okHttpClient.newWebSocket(request, socketListener)
     }
 
@@ -581,10 +547,9 @@ class MezonSocket @Inject constructor(
         }
 
         override fun onMessage(webSocket: WebSocket, bytes: ByteString) {
-            val raw = bytes.toByteArray()
             try {
-                val envelope = Envelope.parseFrom(raw)
-                handleEnvelope(envelope, raw)
+                val envelope = Envelope.parseFrom(bytes.toByteArray())
+                handleEnvelope(envelope)
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to parse Envelope", e)
             }
@@ -612,10 +577,10 @@ class MezonSocket @Inject constructor(
         }
     }
 
-    private fun handleEnvelope(envelope: Envelope, raw: ByteArray) {
-        val cid = correlationKeyForPending(envelope, raw)
+    private fun handleEnvelope(envelope: Envelope) {
+        val cid = envelope.cid
 
-        if (!cid.isNullOrEmpty()) {
+        if (cid != 0) {
             val deferred = pendingRequests.remove(cid)
             if (deferred != null) {
                 if (envelope.messageCase == Envelope.MessageCase.ERROR) {
@@ -633,24 +598,25 @@ class MezonSocket @Inject constructor(
             return
         }
 
-        if (envelope.messageCase != Envelope.MessageCase.MESSAGE_TYPING_EVENT) {
-            Log.d(TAG, "Event: ${envelope.messageCase}")
+        when (envelope.messageCase) {
+            Envelope.MessageCase.MESSAGE_TYPING_EVENT,
+            Envelope.MessageCase.STATUS_PRESENCE_EVENT -> Unit
+            else -> Log.d(TAG, "Event: ${envelope.messageCase}")
         }
-        scope.launch {
-            _events.emit(envelope)
+        if (!_events.tryEmit(envelope)) {
+            scope.launch { _events.emit(envelope) }
         }
     }
 
     private fun startHeartbeat() {
         heartbeatJob?.cancel()
         heartbeatJob = scope.launch {
-            while (true) {
+            while (isActive && _connectionState.value == ConnectionState.CONNECTED) {
                 delay(HEARTBEAT_INTERVAL_MS)
                 if (_connectionState.value != ConnectionState.CONNECTED) break
                 try {
                     val pingEnvelope = envelope { ping = ping {} }
                     sendFireAndForget(pingEnvelope)
-                    // Log.v(TAG, "Ping sent")
                 } catch (e: Exception) {
                     Log.w(TAG, "Failed to send ping", e)
                 }

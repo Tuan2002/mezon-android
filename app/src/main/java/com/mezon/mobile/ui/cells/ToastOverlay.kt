@@ -254,6 +254,12 @@ class ToastOverlay(context: Context, private val theme: ThemeColors) : FrameLayo
         private val iconSize = LayoutHelper.dp(20)
         private val iconTextGap = LayoutHelper.dp(12)
         private val rowPadV = LayoutHelper.dp(12)
+        private val descGapPx = LayoutHelper.dp(4)
+        private val descGapPxF = descGapPx.toFloat()
+        private val bubbleR1 = LayoutHelper.dpf(30f)
+        private val bubbleR2 = LayoutHelper.dpf(15f)
+        private val bubbleR3 = LayoutHelper.dpf(5f)
+        private val bubbleR3OffsetX = LayoutHelper.dpf(40f)
 
         private val leadingDrawable: Drawable = when (type) {
             ToastType.ERROR -> MezonIcon.circleExlaimionIcon.getDrawable(
@@ -336,7 +342,7 @@ class ToastOverlay(context: Context, private val theme: ThemeColors) : FrameLayo
             }
             var textH = 0
             titleLayout?.let { textH += it.height }
-            descLayout?.let { textH += it.height + LayoutHelper.dp(4) }
+            descLayout?.let { textH += it.height + descGapPx }
             var h = if (type == ToastType.TOOLTIP) {
                 rowPadV * 2 + textH
             } else {
@@ -354,12 +360,9 @@ class ToastOverlay(context: Context, private val theme: ThemeColors) : FrameLayo
             canvas.drawRoundRect(rect, cornerRadius, cornerRadius, bgPaint)
             if (type != ToastType.TOOLTIP) {
                 bubblePaint.color = bubbleTints
-                val r1 = LayoutHelper.dpf(30f)
-                canvas.drawCircle(r1, r1, r1, bubblePaint)
-                val r2 = LayoutHelper.dpf(15f)
-                canvas.drawCircle(padLeading + r2, h - r2, r2, bubblePaint)
-                val r3 = LayoutHelper.dpf(5f)
-                canvas.drawCircle(w - LayoutHelper.dpf(40f), h - r3, r3, bubblePaint)
+                canvas.drawCircle(bubbleR1, bubbleR1, bubbleR1, bubblePaint)
+                canvas.drawCircle(padLeading + bubbleR2, h - bubbleR2, bubbleR2, bubblePaint)
+                canvas.drawCircle(w - bubbleR3OffsetX, h - bubbleR3, bubbleR3, bubblePaint)
             }
 
             if (type == ToastType.TOOLTIP) {
@@ -398,7 +401,7 @@ class ToastOverlay(context: Context, private val theme: ThemeColors) : FrameLayo
                 textY += layout.height
             }
             descLayout?.let { layout ->
-                textY += LayoutHelper.dp(4)
+                textY += descGapPxF
                 canvas.save()
                 canvas.translate(
                     (padLeading + iconColumn + iconTextGap).toFloat(),
@@ -412,7 +415,7 @@ class ToastOverlay(context: Context, private val theme: ThemeColors) : FrameLayo
         private fun textContentHeight(): Float {
             var t = 0f
             titleLayout?.let { t += it.height }
-            descLayout?.let { t += it.height + LayoutHelper.dp(4) }
+            descLayout?.let { t += it.height + descGapPx }
             return t
         }
     }

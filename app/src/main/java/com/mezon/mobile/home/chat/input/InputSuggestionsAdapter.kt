@@ -28,7 +28,12 @@ class InputSuggestionsAdapter(
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ViewHolder {
         val cell = InputSuggestionCell(parent.context, theme)
-        return ViewHolder(cell)
+        val holder = ViewHolder(cell)
+        cell.setOnClickListener {
+            val pos = holder.bindingAdapterPosition
+            if (pos in items.indices) onSelect(items[pos])
+        }
+        return holder
     }
 
     override fun onBindViewHolder(holder: ViewHolder, position: Int) {
@@ -36,7 +41,6 @@ class InputSuggestionsAdapter(
         val item = items[position]
         cell.bind(item)
         cell.setDivider(position < items.size - 1)
-        cell.setOnClickListener { onSelect(item) }
     }
 
     class ViewHolder(cell: InputSuggestionCell) : RecyclerView.ViewHolder(cell)

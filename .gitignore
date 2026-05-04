@@ -15,7 +15,7 @@ out/
 gradle-app.setting
 
 # Local configuration (contains machine-specific paths)
-# local.properties
+local.properties
 # gradle.properties
 
 # Android Studio
@@ -57,7 +57,6 @@ signing.properties
 # Protobuf generated (regenerated from proto source)
 core-proto/build/
 core-proto/src/main/java/
-core-proto/*
 
 # Crash / profiling
 *.hprof
@@ -81,3 +80,10 @@ mmn-client-kotlin/build
 .idea/
 
 build/
+
+# AI agents
+.claude/skills/
+.claude/rules/
+
+.cursor/skills/
+.cursor/rules/

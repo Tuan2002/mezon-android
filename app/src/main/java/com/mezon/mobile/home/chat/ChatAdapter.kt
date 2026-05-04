@@ -24,6 +24,7 @@ class ChatAdapter(
         private const val TYPE_LOADING_DOWN = 3
         private const val TYPE_SYSTEM = 4
         private const val TYPE_WELCOME = 5
+        private const val TYPE_SEND_TOKEN = 6
     }
 
     var loadingUpRow = -1
@@ -83,6 +84,41 @@ class ChatAdapter(
         notifyDataSetChanged()
     }
 
+    fun notifyMessageInsertedAt(modelIndex: Int) {
+        val prevMessagesStartRow = messagesStartRow
+        val prevRowCount = rowCount
+        updateRowsInternal()
+        val structuralChange = prevRowCount == 0 ||
+            messagesStartRow != prevMessagesStartRow ||
+            modelIndex !in 0..messages.size
+        if (structuralChange) {
+            notifyDataSetChanged()
+        } else {
+            notifyItemInserted(messagesStartRow + modelIndex)
+        }
+    }
+
+    fun notifyMessageRemovedAt(modelIndex: Int) {
+        if (modelIndex < 0) return
+        val prevMessagesStartRow = messagesStartRow
+        val prevRowCount = rowCount
+        val adapterPos = prevMessagesStartRow + modelIndex
+        updateRowsInternal()
+        val structuralChange = rowCount == 0 ||
+            prevRowCount == 0 ||
+            messagesStartRow != prevMessagesStartRow
+        if (structuralChange) {
+            notifyDataSetChanged()
+        } else {
+            notifyItemRemoved(adapterPos)
+        }
+    }
+
+    fun notifyMessageChangedAt(modelIndex: Int) {
+        if (modelIndex !in messages.indices) return
+        notifyItemChanged(messagesStartRow + modelIndex)
+    }
+
     fun getMessage(position: Int): MessageEntity? {
         val idx = position - messagesStartRow
         return if (idx in messages.indices) messages[idx] else null
@@ -110,6 +146,7 @@ class ChatAdapter(
                 when {
                     msg.isWelcomeMessage -> TYPE_WELCOME
                     msg.isSystemMessage -> TYPE_SYSTEM
+                    msg.code == MessageEntity.CODE_SEND_TOKEN -> TYPE_SEND_TOKEN
                     msg.isMe -> TYPE_SENT
                     else -> TYPE_RECEIVED
                 }
@@ -146,6 +183,15 @@ class ChatAdapter(
                 }
                 SystemViewHolder(cell)
             }
+            TYPE_SEND_TOKEN -> {
+                val cell = SendTokenMessageCell(parent.context, themeColors).apply {
+                    layoutParams = RecyclerView.LayoutParams(
+                        RecyclerView.LayoutParams.MATCH_PARENT,
+                        RecyclerView.LayoutParams.WRAP_CONTENT
+                    )
+                }
+                SendTokenViewHolder(cell)
+            }
             else -> {
                 val cell = ChatMessageCell(parent.context, themeColors).apply {
                     layoutParams = RecyclerView.LayoutParams(
@@ -181,7 +227,13 @@ class ChatAdapter(
             }
             is SystemViewHolder -> {
                 holder.cell.channelName = channelName
+                holder.cell.delegate = systemMessageDelegate
+                holder.cell.mentionInteractiveGate = systemMessageMentionGate
                 holder.cell.update(0, messages[idx])
+            }
+            is SendTokenViewHolder -> {
+                holder.cell.delegate = sendTokenDelegate
+                holder.cell.update(messages[idx])
             }
         }
     }
@@ -207,9 +259,13 @@ class ChatAdapter(
     var clanId = 0L
     var isChannelPrivate = false
     var loadLinkInvitePreview: (suspend (Long) -> LinkInvitePreview?)? = null
+    var sendTokenDelegate: SendTokenMessageCell.Delegate? = null
+    var systemMessageDelegate: SystemMessageCell.Delegate? = null
+    var systemMessageMentionGate: ((userId: String?, roleId: String?, segmentText: String) -> Boolean)? = null
 
     class MessageViewHolder(val cell: ChatMessageCell) : RecyclerView.ViewHolder(cell)
     class WelcomeViewHolder(val cell: WelcomeMessageCell) : RecyclerView.ViewHolder(cell)
     class SystemViewHolder(val cell: SystemMessageCell) : RecyclerView.ViewHolder(cell)
+    class SendTokenViewHolder(val cell: SendTokenMessageCell) : RecyclerView.ViewHolder(cell)
     class LoadingViewHolder(view: android.view.View) : RecyclerView.ViewHolder(view)
 }

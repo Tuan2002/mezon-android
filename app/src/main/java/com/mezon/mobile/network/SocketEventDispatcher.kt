@@ -251,7 +251,6 @@ class SocketEventDispatcher @Inject constructor(
         when (envelope.messageCase) {
             Envelope.MessageCase.CHANNEL_MESSAGE -> {
                 val msg = envelope.channelMessage
-                Log.d(TAG, "ChannelMessage: channelId=${msg.channelId}, senderId=${msg.senderId}, content=${msg.content.take(100)}")
                 _channelMessages.emit(msg)
             }
             Envelope.MessageCase.MESSAGE_TYPING_EVENT ->
@@ -365,8 +364,8 @@ class SocketEventDispatcher @Inject constructor(
                 _aiagentEnabledEvents.emit(envelope.aiagentEnabledEvent)
             Envelope.MessageCase.EVENT_EMOJI ->
                 _emojiEvents.emit(envelope.eventEmoji)
-            else ->
-                Log.d(TAG, "Unhandled event: ${envelope.messageCase}")
+            else -> {}
+            
         }
     }
 }
