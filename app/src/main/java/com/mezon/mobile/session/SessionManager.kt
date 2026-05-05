@@ -1,6 +1,7 @@
 package com.mezon.mobile.session
 
 import com.mezon.mobile.core.StartupCache
+import com.mezon.mobile.home.chat.poll.PollVotePersistence
 import com.mezon.mobile.di.ApplicationScope
 import com.mezon.mobile.network.MezonApi
 import com.mezon.mobile.network.NetworkMonitor
@@ -253,6 +254,7 @@ class SessionManager @Inject constructor(
         StartupCache.hasSession = false
         StartupCache.needsUsernameSetup = false
         StartupCache.userId = ""
+        PollVotePersistence.clearAll()
         lastRefreshToken = ""
         failCount = 0
         dataStore.edit { prefs -> prefs.removeAllSessionData() }

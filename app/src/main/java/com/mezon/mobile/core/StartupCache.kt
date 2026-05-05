@@ -2,6 +2,7 @@ package com.mezon.mobile.core
 
 import android.content.Context
 import android.content.SharedPreferences
+import com.mezon.mobile.home.chat.poll.PollVotePersistence
 import com.mezon.mobile.ui.theme.ThemeMode
 
 object StartupCache {
@@ -50,6 +51,7 @@ object StartupCache {
 
     fun init(context: Context) {
         prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        PollVotePersistence.attach(context)
     }
 
     fun seed(hasSession: Boolean, themeMode: String, locale: String) {

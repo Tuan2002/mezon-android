@@ -688,4 +688,38 @@
     <string name="channel_files_search_placeholder">Tìm kiếm tệp</string>
     <string name="channel_files_media_empty_description">Chúng tôi đã tìm kiếm rất xa. Thật không may, không có kết quả được tìm thấy</string>
     <string name="channel_files_shared_by">Được chia sẻ bởi %1$s</string>
+
+    <!-- Poll messages -->
+    <string name="poll_select_one">Chọn một đáp án</string>
+    <string name="poll_select_multiple">Chọn một hoặc nhiều đáp án</string>
+    <string name="poll_show_results">Xem kết quả</string>
+    <string name="poll_back_to_vote">Quay lại bình chọn</string>
+    <string name="poll_vote">Bình chọn</string>
+    <string name="poll_remove_vote">Bỏ bình chọn</string>
+    <string name="poll_load_more">Xem thêm đáp án</string>
+    <string name="poll_show_less">Thu gọn</string>
+    <string name="poll_closed">Đã đóng</string>
+    <string name="poll_ended">Đã kết thúc</string>
+    <string name="poll_less_than_hour">Còn dưới 1 giờ</string>
+    <string name="poll_detail_title">Bình chọn</string>
+    <string name="poll_detail_loading">Đang tải…</string>
+    <string name="poll_detail_no_voters">Chưa có danh sách người bình chọn</string>
+    <string name="poll_vote_failed">Không thể cập nhật bình chọn</string>
+    <string name="poll_load_failed">Không tải được chi tiết bình chọn</string>
+    <string name="poll_detail_open_failed">Không mở được cửa sổ chi tiết bình chọn</string>
+    <string name="poll_detail_refresh_failed">Không làm mới từ máy chủ · hiển thị dữ liệu trong tin nhắn</string>
+    <string name="poll_view_details">Xem chi tiết</string>
+
+    <plurals name="poll_total_votes">
+        <item quantity="other">%d bình chọn</item>
+    </plurals>
+    <plurals name="poll_option_votes">
+        <item quantity="other">%d bình chọn</item>
+    </plurals>
+    <plurals name="poll_hours_remaining">
+        <item quantity="other">%d giờ còn lại</item>
+    </plurals>
+    <plurals name="poll_days_remaining">
+        <item quantity="other">%d ngày còn lại</item>
+    </plurals>
 </resources>
