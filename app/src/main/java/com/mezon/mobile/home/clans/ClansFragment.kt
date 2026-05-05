@@ -108,6 +108,7 @@ class ClansFragment : BaseFragment() {
     private var renderedIsCommunity: Boolean? = null
     private var renderedBannerUrl: String? = null
     private var renderedSubtitleKey: String? = null
+    private var clanHeaderBannerLoadSeq = 0
 
     override fun onInject(entryPoint: FragmentEntryPoint) {
         clansController = entryPoint.clansController()
@@ -647,9 +648,14 @@ class ClansFragment : BaseFragment() {
 
         val clans = clansController.clans.value
         val selectedId = clansController.selectedClanId.value
+        
+        if ((mask and NotificationCenter.UPDATE_MASK_CLAN_BANNER) != 0) {
+            clans.find { it.clanId == selectedId }?.let { updateClanHeader(it) }
+        }
+        
         val clanMap = HashMap<Long, ClanEntity>(clans.size)
         for (c in clans) clanMap[c.clanId] = c
-
+        
         val count = serverRail.childCount
         for (i in 0 until count) {
             val child = serverRail.getChildAt(i)
@@ -708,12 +714,17 @@ class ClansFragment : BaseFragment() {
                 bannerImage?.visibility = View.VISIBLE
                 val context = bannerImage?.context
                 if (context != null) {
+                    val loadSeq = ++clanHeaderBannerLoadSeq
+                    val url = clan.banner
                     val loader = MezonImageLoader.getInstance(context)
-                    bannerCancellable = loader.load(clan.banner, 800, LayoutHelper.dp(140), onSuccess = { bitmap ->
+                    bannerCancellable = loader.load(url, 800, LayoutHelper.dp(140), onSuccess = { bitmap ->
+                        if (loadSeq != clanHeaderBannerLoadSeq) return@load
+                        if (renderedBannerUrl != url) return@load
                         bannerImage?.setImageBitmap(bitmap)
                     })
                 }
             } else {
+                clanHeaderBannerLoadSeq++
                 bannerImage?.setImageBitmap(null)
                 bannerImage?.visibility = View.GONE
             }

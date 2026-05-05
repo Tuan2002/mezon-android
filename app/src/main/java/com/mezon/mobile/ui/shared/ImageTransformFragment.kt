@@ -67,6 +67,9 @@ class TransformCanvasView(
 
     private val cropRect = RectF()
 
+    private var cropAspectW = 1f
+    private var cropAspectH = 1f
+
     private val initialMatrix = Matrix()
 
     private val scaleDetector = ScaleGestureDetector(context, ScaleListener())
@@ -100,14 +103,36 @@ class TransformCanvasView(
         invalidate()
     }
 
+    fun setCropAspectRatio(width: Float, height: Float) {
+        cropAspectW = width.coerceAtLeast(1e-3f)
+        cropAspectH = height.coerceAtLeast(1e-3f)
+        if (width > 0f && height > 0f && measuredWidth > 0 && measuredHeight > 0) {
+            layoutCropRect(measuredWidth, measuredHeight)
+            bitmap?.let { resetTransform() }
+            invalidate()
+        }
+    }
+
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         super.onSizeChanged(w, h, oldw, oldh)
-        val pad = LayoutHelper.dp(24f)
-        val side = (minOf(w, h) - pad * 2).coerceAtLeast(LayoutHelper.dp(120f))
-        val left = (w - side) / 2f
-        val top = (h - side) / 2f
-        cropRect.set(left, top, left + side, top + side)
+        layoutCropRect(w, h)
         bitmap?.let { resetTransform() }
+    }
+
+    private fun layoutCropRect(w: Int, h: Int) {
+        val pad = LayoutHelper.dp(24f)
+        val maxW = (w - pad * 2).toFloat().coerceAtLeast(LayoutHelper.dp(120f).toFloat())
+        val maxH = (h - pad * 2).toFloat().coerceAtLeast(LayoutHelper.dp(120f).toFloat())
+        val aspect = cropAspectW / cropAspectH
+        var cropW = maxW
+        var cropH = cropW / aspect
+        if (cropH > maxH) {
+            cropH = maxH
+            cropW = cropH * aspect
+        }
+        val left = (w - cropW) / 2f
+        val top = (h - cropH) / 2f
+        cropRect.set(left, top, left + cropW, top + cropH)
     }
 
     private fun resetTransform() {
@@ -271,25 +296,27 @@ class TransformCanvasView(
         return true
     }
 
-    fun renderCroppedSquare(outSize: Int): Bitmap? {
+    fun renderCropped(outWidth: Int, outHeight: Int): Bitmap? {
         val bmp = bitmap ?: return null
-        if (outSize <= 0 || cropRect.width() <= 0f) return null
+        if (outWidth <= 0 || outHeight <= 0 || cropRect.width() <= 0f) return null
 
         val viewToOutput = Matrix()
         viewToOutput.setRectToRect(
             cropRect,
-            RectF(0f, 0f, outSize.toFloat(), outSize.toFloat()),
+            RectF(0f, 0f, outWidth.toFloat(), outHeight.toFloat()),
             Matrix.ScaleToFit.FILL
         )
 
         val bmpToOutput = Matrix()
         bmpToOutput.setConcat(viewToOutput, imageMatrix)
 
-        val out = Bitmap.createBitmap(outSize, outSize, Bitmap.Config.ARGB_8888)
+        val out = Bitmap.createBitmap(outWidth, outHeight, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(out)
         canvas.drawBitmap(bmp, bmpToOutput, bitmapPaint)
         return out
     }
+
+    fun renderCroppedSquare(outSize: Int): Bitmap? = renderCropped(outSize, outSize)
 
     private inner class ScaleListener : ScaleGestureDetector.SimpleOnScaleGestureListener() {
         override fun onScale(detector: ScaleGestureDetector): Boolean {
@@ -352,6 +379,15 @@ open class ImageTransformFragment : BaseFragment() {
     // Max encoded JPEG size for export (bytes)
     protected open fun maxExportBytes(): Int = 1 shl 20
 
+    /** Crop frame aspect. Default 1×1. */
+    protected open fun cropAspectWidth(): Float = 1f
+
+    protected open fun cropAspectHeight(): Float = 1f
+
+    protected open fun exportWidthPx(): Int = EXPORT_PX
+
+    protected open fun exportHeightPx(): Int = EXPORT_PX
+
     protected open fun cacheFilePrefix(): String = "image_transform"
 
     /**
@@ -375,6 +411,7 @@ open class ImageTransformFragment : BaseFragment() {
         }
 
         transformCanvas = TransformCanvasView(context).apply {
+            setCropAspectRatio(cropAspectWidth(), cropAspectHeight())
             visibility = View.GONE
         }
         root.addView(
@@ -579,7 +616,7 @@ open class ImageTransformFragment : BaseFragment() {
 
     protected open fun onSaveClicked() {
         if (isWorking || !::transformCanvas.isInitialized || transformCanvas.visibility != View.VISIBLE) return
-        val cropped = transformCanvas.renderCroppedSquare(EXPORT_PX) ?: return
+        val cropped = transformCanvas.renderCropped(exportWidthPx(), exportHeightPx()) ?: return
         isWorking = true
         setUploadBlocking(true)
         val ep = entryPoint()
