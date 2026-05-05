@@ -149,11 +149,23 @@ class ReactionDetailBottomSheet(
                 scaleType = ImageView.ScaleType.FIT_CENTER
             }
             val url = com.mezon.mobile.util.getEmojiUrl(group.emojiId.toString())
+            val emojiSize = LayoutHelper.dp(24)
             if (url != null) {
-                loader.load(url, LayoutHelper.dp(24), LayoutHelper.dp(24),
-                    onSuccess = { bmp ->
-                        emojiIv.setImageBitmap(bmp)
-                    })
+                fun loadTabEmoji(loadUrl: String, isRetry: Boolean) {
+                    loader.load(loadUrl, emojiSize, emojiSize,
+                        onSuccess = { bmp ->
+                            emojiIv.setImageBitmap(bmp)
+                        },
+                        onError = {
+                            if (!isRetry) {
+                                val direct = com.mezon.mobile.util.getEmojiDirectUrl(group.emojiId.toString())
+                                if (direct != null && direct != loadUrl) {
+                                    loadTabEmoji(direct, true)
+                                }
+                            }
+                        })
+                }
+                loadTabEmoji(url, false)
             }
             tab.addView(emojiIv, LinearLayout.LayoutParams(LayoutHelper.dp(24), LayoutHelper.dp(24)))
 

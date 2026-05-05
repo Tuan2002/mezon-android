@@ -214,9 +214,19 @@ class MessageActionBottomSheet(
 
             val url = com.mezon.mobile.util.getEmojiUrl(qe.id.toString())
             if (url != null) {
-                loader.load(url, emojiSize, emojiSize, onSuccess = { bmp ->
-                    iv.setImageBitmap(bmp)
-                })
+                fun loadIntoIv(loadUrl: String, isRetry: Boolean) {
+                    loader.load(loadUrl, emojiSize, emojiSize, onSuccess = { bmp ->
+                        iv.setImageBitmap(bmp)
+                    }, onError = {
+                        if (!isRetry) {
+                            val direct = com.mezon.mobile.util.getEmojiDirectUrl(qe.id.toString())
+                            if (direct != null && direct != loadUrl) {
+                                loadIntoIv(direct, true)
+                            }
+                        }
+                    })
+                }
+                loadIntoIv(url, false)
             }
 
             btn.setOnClickListener {
