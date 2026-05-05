@@ -94,7 +94,7 @@ class ClanBannerTransformFragment : ImageTransformFragment() {
                 runCatching { jpegFile.delete() }
                 val url = clansController.uploadClanBannerJpeg(bytes)
                 onWorkFinished()
-                notificationCenter.postNotificationOnMainThread(
+                notificationCenter.postNotificationNameOnUIThread(
                     NotificationCenter.clanBannerCropped,
                     clanId,
                     url,

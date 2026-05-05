@@ -371,6 +371,7 @@
     <string name="clan_overview_delete_confirm">Xóa</string>
     <string name="clan_overview_delete_failed">Không xóa được clan.</string>
     <string name="clan_overview_load_failed">Không tải được cài đặt</string>
+    <string name="clan_overview_notif_update_success">Đã cập nhật thông báo mặc định</string>
     <string name="clan_overview_notif_update_failed">Không cập nhật được thông báo mặc định</string>
 
     <!-- profile -->

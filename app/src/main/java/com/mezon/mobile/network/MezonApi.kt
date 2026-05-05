@@ -589,7 +589,7 @@ class MezonApi @Inject constructor(
             this.clanId = clanId
             this.notificationType = notificationType
         }
-        rpc(apiUrl, token, "SetNotificationClan", request.toByteArray())
+        rpc(apiUrl, token, "SetNotificationClanSetting", request.toByteArray())
     }
 
     suspend fun deleteClanDesc(

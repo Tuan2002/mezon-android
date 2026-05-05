@@ -141,6 +141,7 @@ class ClanOverviewSettingFragment : BaseFragment() {
             if (id == clanId) refreshLocalClanSnapshot()
         }
         observe(NotificationCenter.clanBannerCropped) { _, _, args ->
+            if (isPaused) return@observe
             val id = args.firstOrNull() as? Long ?: return@observe
             if (id != clanId) return@observe
             val url = args.getOrNull(1) as? String ?: return@observe
@@ -257,12 +258,15 @@ class ClanOverviewSettingFragment : BaseFragment() {
             clan.creatorId,
         )
         val preserveNameDraft = draftName.trim() != sourceName.trim()
-        val preserveBannerDraft = draftBanner.trim() != sourceBanner.trim()
+        val hadUnsavedBanner = draftBanner.trim() != sourceBanner.trim()
         val preservePreventDraft = draftPrevent != sourcePrevent
         sourceName = clan.clanName
         if (!preserveNameDraft) draftName = clan.clanName
         sourceBanner = clan.banner
-        if (!preserveBannerDraft) draftBanner = clan.banner
+        when {
+            !hadUnsavedBanner -> draftBanner = clan.banner
+            clan.banner.trim() == draftBanner.trim() -> draftBanner = clan.banner
+        }
         sourcePrevent = clan.preventAnonymous
         if (!preservePreventDraft) draftPrevent = clan.preventAnonymous
         if (::nameInput.isInitialized) {
@@ -712,8 +716,13 @@ class ClanOverviewSettingFragment : BaseFragment() {
                             }
                         }
                         sourceNotif = next
-                        // MezonToast.show(this@ClanOverviewSettingFragment, ToastOverlay.ToastType.SUCCESS, getString(R.string.clan_overview_notif_updated))
                         updateSaveUi()
+                    }.onSuccess {
+                        MezonToast.show(
+                            this@ClanOverviewSettingFragment,
+                            ToastOverlay.ToastType.SUCCESS,
+                            getString(R.string.clan_overview_notif_update_success),
+                        )
                     }.onFailure {
                         draftNotif = prev
                         notifValue.text = notificationTitle(ctx, draftNotif)
