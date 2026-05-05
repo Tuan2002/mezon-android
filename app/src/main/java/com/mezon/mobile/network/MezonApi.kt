@@ -60,7 +60,11 @@ import com.mezon.mezon.api.AddFavoriteChannelResponse
 import com.mezon.mezon.api.addFavoriteChannelRequest
 import com.mezon.mezon.api.listFavoriteChannelRequest
 import com.mezon.mezon.api.removeFavoriteChannelRequest
+import com.mezon.mezon.api.GetPollResponse
+import com.mezon.mezon.api.VotePollResponse
+import com.mezon.mezon.api.getPollRequest
 import com.mezon.mezon.api.listChannelMessagesRequest
+import com.mezon.mezon.api.votePollRequest
 import com.mezon.mezon.api.listFriendsRequest
 import com.mezon.mezon.api.listNotificationsRequest
 import com.mezon.mezon.api.searchMessageRequest
@@ -962,6 +966,40 @@ class MezonApi @Inject constructor(
             .build()
             .toByteArray()
         rpc(apiUrl, token, "ActiveArchivedThread", body)
+    }
+
+    suspend fun votePoll(
+        apiUrl: String,
+        token: String,
+        channelId: Long,
+        messageId: Long,
+        pollId: Long = 0L,
+        indices: List<Int>
+    ): VotePollResponse {
+        val request = votePollRequest {
+            this.messageId = messageId
+            this.channelId = channelId
+            if (pollId != 0L) this.pollId = pollId
+            answerIndices.addAll(indices)
+        }
+        val bytes = rpc(apiUrl, token, "VotePoll", request.toByteArray())
+        return VotePollResponse.parseFrom(bytes)
+    }
+
+    suspend fun getPoll(
+        apiUrl: String,
+        token: String,
+        channelId: Long,
+        messageId: Long,
+        pollId: Long = 0L
+    ): GetPollResponse {
+        val request = getPollRequest {
+            this.messageId = messageId
+            this.channelId = channelId
+            if (pollId != 0L) this.pollId = pollId
+        }
+        val bytes = rpc(apiUrl, token, "GetPoll", request.toByteArray())
+        return GetPollResponse.parseFrom(bytes)
     }
 
     suspend fun listChannelMessages(

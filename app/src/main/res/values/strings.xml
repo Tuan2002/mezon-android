@@ -821,4 +821,42 @@
     <string name="channel_creator_private_title">Private Channel</string>
     <string name="channel_creator_private_description">By making a private channel, only select members and roles will be able to view this channel</string>
     <string name="category_menu_create_channel">Create channel</string>
+
+    <!-- Poll messages -->
+    <string name="poll_select_one">Select one answer</string>
+    <string name="poll_select_multiple">Select one or more answers</string>
+    <string name="poll_show_results">View results</string>
+    <string name="poll_back_to_vote">Back to voting</string>
+    <string name="poll_vote">Vote</string>
+    <string name="poll_remove_vote">Remove vote</string>
+    <string name="poll_load_more">Show more options</string>
+    <string name="poll_show_less">Show fewer options</string>
+    <string name="poll_closed">Closed</string>
+    <string name="poll_ended">Ended</string>
+    <string name="poll_less_than_hour">Less than 1 hour left</string>
+    <string name="poll_detail_title">Poll</string>
+    <string name="poll_detail_loading">Loading…</string>
+    <string name="poll_detail_no_voters">No voter details yet</string>
+    <string name="poll_vote_failed">Could not update vote</string>
+    <string name="poll_load_failed">Could not load poll details</string>
+    <string name="poll_detail_open_failed">Could not open poll viewer</string>
+    <string name="poll_detail_refresh_failed">Could not refresh from server · showing data from the message</string>
+    <string name="poll_view_details">View details</string>
+
+    <plurals name="poll_total_votes">
+        <item quantity="one">%d vote</item>
+        <item quantity="other">%d votes</item>
+    </plurals>
+    <plurals name="poll_option_votes">
+        <item quantity="one">%d vote</item>
+        <item quantity="other">%d votes</item>
+    </plurals>
+    <plurals name="poll_hours_remaining">
+        <item quantity="one">%d hour left</item>
+        <item quantity="other">%d hours left</item>
+    </plurals>
+    <plurals name="poll_days_remaining">
+        <item quantity="one">%d day left</item>
+        <item quantity="other">%d days left</item>
+    </plurals>
 </resources>
