@@ -385,6 +385,16 @@ class MezonImageLoader private constructor(context: Context) {
         smallCache.remove(key)
         largeCache.remove(key)
     }
+    
+    fun invalidateCachedLoad(url: String, reqWidth: Int, reqHeight: Int) {
+        if (url.isEmpty()) return
+        inflightUrlCalls.remove(url)?.cancel()
+        removeFromCache(url, reqWidth, reqHeight)
+        try {
+            diskFileForUrl(url).takeIf { it.exists() }?.delete()
+        } catch (_: Throwable) {
+        }
+    }
 
     private fun cacheKey(url: String, w: Int, h: Int): String {
         val md = MD5_THREAD_LOCAL.get()!!
