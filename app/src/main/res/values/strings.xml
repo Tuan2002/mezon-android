@@ -419,6 +419,7 @@
     <string name="clan_overview_delete_confirm">Delete</string>
     <string name="clan_overview_delete_failed">Could not delete clan.</string>
     <string name="clan_overview_load_failed">Could not load settings</string>
+    <string name="clan_overview_notif_update_success">Default clan notifications updated</string>
     <string name="clan_overview_notif_update_failed">Could not update default notifications</string>
 
     <!-- profile -->

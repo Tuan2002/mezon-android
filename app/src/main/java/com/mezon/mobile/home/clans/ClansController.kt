@@ -629,9 +629,7 @@ class ClansController @Inject constructor(
                 val updated = existing.copy(
                     clanName = event.clanName.ifEmpty { existing.clanName },
                     logo = event.logo.ifEmpty { existing.logo },
-                    // Do not use ifEmpty { existing.banner }: clearing the banner is represented as "" over the wire;
-                    // treating empty as "unchanged" would keep a removed banner in Room/UI until restart.
-                    banner = event.banner,
+                    banner = event.banner.ifEmpty { existing.banner },
                     isCommunity = event.isCommunity,
                     preventAnonymous = event.preventAnonymous,
                     welcomeChannelId = event.welcomeChannelId.takeIf { it != 0L } ?: existing.welcomeChannelId,
@@ -648,7 +646,7 @@ class ClansController @Inject constructor(
                     mask = mask or NotificationCenter.UPDATE_MASK_CHAT_AVATAR
                 }
                 if (event.banner != existing.banner) {
-                    mask = mask or NotificationCenter.UPDATE_MASK_CHAT_NAME
+                    mask = mask or NotificationCenter.UPDATE_MASK_CLAN_BANNER
                 }
                 if (mask != 0) {
                     notificationCenter.postNotificationOnMainThread(NotificationCenter.updateInterfaces, mask)
