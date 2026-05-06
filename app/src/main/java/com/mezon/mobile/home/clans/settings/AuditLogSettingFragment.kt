@@ -1,5 +1,4 @@
 package com.mezon.mobile.home.clans.settings
-
 import android.app.DatePickerDialog
 import android.content.Context
 import android.graphics.PorterDuff
@@ -249,7 +248,7 @@ class AuditLogSettingFragment : BaseFragment() {
 
         adapter = AuditLogAdapter(context, themeColors, ::resolveMember, ::resolveChannelLabel) { timeSeconds ->
             if (timeSeconds <= 0) return@AuditLogAdapter ""
-            return@AuditLogAdapter DateTimeUtil.formatEpochSeconds(timeSeconds, DateTimeUtil.Patterns.DAY_MONTH_YEAR_COMMA_TIME)
+            else DateTimeUtil.formatEpochSeconds(timeSeconds, DateTimeUtil.Patterns.DAY_MONTH_YEAR_COMMA_TIME)
         }
         recyclerView = RecyclerListView(context).apply {
             layoutManager = LinearLayoutManager(context)
@@ -509,7 +508,7 @@ class AuditLogSettingFragment : BaseFragment() {
     }
 
     private fun displayNameForMember(m: ClanMember): String =
-        m.displayName.ifBlank { m.clanNick.ifBlank { m.username } }
+        m.clanNick.ifBlank { m.displayName.ifBlank { m.username } }
 
     private fun refreshClanMembersSnapshot() {
         if (clanId == 0L) {
@@ -549,10 +548,15 @@ class AuditLogSettingFragment : BaseFragment() {
                 }.onSuccess { resp ->
                     logItems.clear()
                     logItems.addAll(resp.logsList)
-                    adapter.submit(logItems)
-                    val empty = logItems.isEmpty()
-                    emptyBlock.visibility = if (empty) View.VISIBLE else View.GONE
-                    recyclerView.visibility = if (empty) View.GONE else View.VISIBLE
+                    if (logItems.isEmpty()) {
+                        adapter.submit(emptyList())
+                        emptyBlock.visibility = View.VISIBLE
+                        recyclerView.visibility = View.GONE
+                    } else {
+                        adapter.submit(logItems)
+                        emptyBlock.visibility = View.GONE
+                        recyclerView.visibility = View.VISIBLE
+                    }
                 }.onFailure {
                     MezonToast.show(this@AuditLogSettingFragment, ToastOverlay.ToastType.ERROR, getString(R.string.clan_audit_log_load_failed))
                 }
@@ -737,7 +741,7 @@ private class AuditLogRowCell(
     fun bind(log: AuditLog) {
         val actor = member(log.userId)
         val actorName = actor?.let { m ->
-            m.displayName.ifBlank { m.clanNick.ifBlank { m.username } }
+            m.clanNick.ifBlank { m.displayName.ifBlank { m.username } }
         } ?: "…"
         val avatarUrl = when {
             actor == null -> ""
