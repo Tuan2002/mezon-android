@@ -202,7 +202,7 @@ class MezonImageLoader private constructor(context: Context) {
         synchronized(list) { list.add(task) }
     }
 
-    private fun ensureNetworkFetch(url: String) {
+    private fun ensureNetworkFetch(url: String, attempt: Int = 0) {
         if (inflightUrlCalls.containsKey(url)) return
         val request = Request.Builder().url(url).build()
         val call = client.newCall(request)
@@ -211,15 +211,25 @@ class MezonImageLoader private constructor(context: Context) {
 
         call.enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) {
-                inflightUrlCalls.remove(url)
-                if (!call.isCanceled()) dispatchAllDecodeError(url, e)
+                inflightUrlCalls.remove(url, call)
+                if (call.isCanceled()) return
+                if (attempt < 2) {
+                    mainHandler.postDelayed({ ensureNetworkFetch(url, attempt + 1) }, 350L shl attempt)
+                } else {
+                    dispatchAllDecodeError(url, e)
+                }
             }
 
             override fun onResponse(call: Call, response: Response) {
-                inflightUrlCalls.remove(url)
+                inflightUrlCalls.remove(url, call)
                 if (!response.isSuccessful) {
-                    dispatchAllDecodeError(url, IOException("HTTP ${response.code}"))
+                    val code = response.code
                     response.close()
+                    if (attempt < 2 && (code == 408 || code == 429 || code >= 500)) {
+                        mainHandler.postDelayed({ ensureNetworkFetch(url, attempt + 1) }, 350L shl attempt)
+                    } else {
+                        dispatchAllDecodeError(url, IOException("HTTP $code"))
+                    }
                     return
                 }
                 try {
@@ -231,7 +241,13 @@ class MezonImageLoader private constructor(context: Context) {
                     trimDiskCache()
                     dispatchAllDecodeSuccess(url, urlFile)
                 } catch (e: Exception) {
-                    dispatchAllDecodeError(url, e as? Exception ?: Exception(e))
+                    val ex = e as? Exception ?: Exception(e)
+                    if (attempt < 2 && e is IOException) {
+                        try { diskFileForUrl(url).delete() } catch (_: Throwable) {}
+                        mainHandler.postDelayed({ ensureNetworkFetch(url, attempt + 1) }, 350L shl attempt)
+                    } else {
+                        dispatchAllDecodeError(url, ex)
+                    }
                 }
             }
         })
@@ -525,7 +541,6 @@ class MezonImageLoader private constructor(context: Context) {
         private var instance: MezonImageLoader? = null
 
         private const val SMALL_IMAGE_THRESHOLD = 100
-        private const val MAX_DECODE_QUEUE = 64
 
         private val AVATAR_BUCKET_MARKERS = arrayOf(
             "/rs:fill:64:64:1/",
@@ -556,8 +571,8 @@ class MezonImageLoader private constructor(context: Context) {
             ThreadPoolExecutor(
                 cores, cores,
                 60L, TimeUnit.SECONDS,
-                LinkedBlockingQueue(MAX_DECODE_QUEUE),
-                ThreadPoolExecutor.DiscardOldestPolicy()
+                LinkedBlockingQueue(),
+                ThreadPoolExecutor.CallerRunsPolicy()
             )
         }
 
