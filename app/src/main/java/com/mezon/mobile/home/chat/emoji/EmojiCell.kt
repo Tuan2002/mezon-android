@@ -18,6 +18,7 @@ import com.mezon.mobile.core.ThemeColors
 import com.mezon.mobile.home.chat.EmojiItem
 import com.mezon.mobile.home.chat.MezonImageLoader
 import com.mezon.mobile.ui.cells.MezonIcon
+import com.mezon.mobile.util.getEmojiDirectUrl
 import com.mezon.mobile.util.getEmojiUrl
 
 private val CELL_SIZE = LayoutHelper.dp(50f)
@@ -78,6 +79,16 @@ class EmojiCell(context: Context, private val themeColors: ThemeColors) : BaseCe
                         onSuccess = { bmp ->
                             bitmap = bmp
                             invalidate()
+                        },
+                        onError = errLow@{
+                            val direct = getEmojiDirectUrl(item.id) ?: return@errLow
+                            if (direct == url) return@errLow
+                            cancellable = loader.load(direct, IMAGE_SIZE, IMAGE_SIZE,
+                                onSuccess = { bmp ->
+                                    bitmap = bmp
+                                    invalidate()
+                                },
+                                onError = { invalidate() })
                         })
                 } else {
                     cancellable = loader.loadDrawable(url, IMAGE_SIZE, IMAGE_SIZE,
@@ -88,6 +99,33 @@ class EmojiCell(context: Context, private val themeColors: ThemeColors) : BaseCe
                                 d.start()
                             }
                             invalidate()
+                        },
+                        onError = errDrawable@{
+                            val direct = getEmojiDirectUrl(item.id) ?: run {
+                                invalidate()
+                                return@errDrawable
+                            }
+                            if (direct == url) {
+                                invalidate()
+                                return@errDrawable
+                            }
+                            cancellable = loader.loadDrawable(direct, IMAGE_SIZE, IMAGE_SIZE,
+                                onSuccess = { d ->
+                                    animDrawable = d
+                                    d.callback = drawableCallback
+                                    if (d is android.graphics.drawable.AnimatedImageDrawable) {
+                                        d.start()
+                                    }
+                                    invalidate()
+                                },
+                                onError = {
+                                    cancellable = loader.load(direct, IMAGE_SIZE, IMAGE_SIZE,
+                                        onSuccess = { bmp ->
+                                            bitmap = bmp
+                                            invalidate()
+                                        },
+                                        onError = { invalidate() })
+                                })
                         })
                 }
             }
