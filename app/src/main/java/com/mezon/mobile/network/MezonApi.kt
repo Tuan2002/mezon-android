@@ -86,10 +86,12 @@ import com.mezon.mezon.api.messageReaction
 import com.mezon.mezon.api.updateAIAgentRequest
 import com.mezon.mezon.api.LogedDeviceList
 import com.mezon.mezon.api.ListClanDiscover
+import com.mezon.mezon.api.ListAuditLog
 import com.mezon.mezon.api.InviteUserRes
 import com.mezon.mezon.api.inviteUserRequest
 import com.mezon.mezon.api.clanDiscover as clanDiscoverProto
 import com.mezon.mezon.api.listClanDiscover
+import com.mezon.mezon.api.listAuditLogRequest
 import com.mezon.mezon.rtapi.ActiveArchivedThread
 import com.mezon.mezon.rtapi.ChannelMessageSend
 import com.mezon.mezon.rtapi.ListActivity
@@ -661,6 +663,24 @@ class MezonApi @Inject constructor(
         val bytes = rpc(apiUrl, token, "ListClanDescs", request.toByteArray())
         val result = ClanDescList.parseFrom(bytes)
         return result
+    }
+
+    suspend fun listAuditLog(
+        apiUrl: String,
+        token: String,
+        clanId: Long,
+        userId: Long,
+        actionLog: String,
+        dateLog: String,
+    ): ListAuditLog {
+        val request = listAuditLogRequest {
+            this.clanId = clanId
+            this.userId = userId
+            this.actionLog = actionLog
+            this.dateLog = dateLog
+        }
+        val bytes = rpc(apiUrl, token, "ListAuditLog", request.toByteArray())
+        return ListAuditLog.parseFrom(bytes)
     }
 
     suspend fun listChannelsByClan(
