@@ -82,6 +82,8 @@ mmn-client-kotlin/build
 build/
 
 # AI agents
+AGENTS.md
+CLAUDE.md
 .claude/skills/
 .claude/rules/
 
