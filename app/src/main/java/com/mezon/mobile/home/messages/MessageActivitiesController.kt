@@ -1,0 +1,125 @@
+package com.mezon.mobile.home.messages
+
+import android.os.Handler
+import android.os.Looper
+import android.util.Log
+import com.mezon.mezon.api.UserActivity
+import com.mezon.mobile.core.NotificationCenter
+import com.mezon.mobile.core.StartupCache
+import com.mezon.mobile.di.ApplicationScope
+import com.mezon.mobile.di.IoDispatcher
+import com.mezon.mobile.home.DialogsController
+import com.mezon.mobile.home.friends.FRIEND_STATE_FRIEND
+import com.mezon.mobile.home.friends.FriendController
+import com.mezon.mobile.network.CHANNEL_TYPE_DM
+import com.mezon.mobile.network.MezonApi
+import com.mezon.mobile.session.SessionManager
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
+import javax.inject.Inject
+import javax.inject.Singleton
+
+private const val TAG = "MessageActivitiesController"
+
+@Singleton
+class MessageActivitiesController @Inject constructor(
+    private val api: MezonApi,
+    private val sessionManager: SessionManager,
+    private val friendController: FriendController,
+    private val dialogsController: DialogsController,
+    private val notificationCenter: NotificationCenter,
+    @ApplicationScope private val appScope: CoroutineScope,
+    @IoDispatcher private val ioDispatcher: CoroutineDispatcher
+) {
+
+    private val activitiesByUserId = HashMap<Long, UserActivity>()
+    private val _rows = MutableStateFlow<List<MessageActivityRow>>(emptyList())
+    val rows: StateFlow<List<MessageActivityRow>> = _rows.asStateFlow()
+
+    private val notificationDelegate = object : NotificationCenter.NotificationCenterDelegate {
+        override fun didReceivedNotification(id: Int, account: Int, vararg args: Any?) {
+            rebuildRows()
+        }
+    }
+
+    init {
+        Handler(Looper.getMainLooper()).post {
+            notificationCenter.addObserver(notificationDelegate, NotificationCenter.dialogsNeedReload)
+            notificationCenter.addObserver(notificationDelegate, NotificationCenter.friendsLoaded)
+        }
+    }
+
+    fun loadListActivities() {
+        appScope.launch(ioDispatcher) {
+            try {
+                sessionManager.withAutoRefresh { session ->
+                    val res = api.listActivities(session.apiUrl, session.token)
+                    synchronized(activitiesByUserId) {
+                        activitiesByUserId.clear()
+                        for (a in res.actsList) {
+                            if (a.userId != 0L) activitiesByUserId[a.userId] = a
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "loadListActivities failed", e)
+            }
+            rebuildRows()
+        }
+    }
+
+    private fun rebuildRows() {
+        val me = StartupCache.userId.toLongOrNull() ?: 0L
+        val activityMap = synchronized(activitiesByUserId) {
+            HashMap(activitiesByUserId)
+        }
+        if (activityMap.isEmpty()) {
+            _rows.value = emptyList()
+            notificationCenter.postNotificationOnMainThread(NotificationCenter.messageActivitiesRowsUpdated)
+            return
+        }
+        val merged = LinkedHashMap<Long, Triple<String, String, String>>()
+        for (f in friendController.friends.value) {
+            if (f.state != FRIEND_STATE_FRIEND) continue
+            val u = f.user
+            if (u.id == 0L) continue
+            merged[u.id] = Triple(
+                u.displayName.ifBlank { u.username },
+                u.username,
+                u.avatarUrl
+            )
+        }
+        for (dm in dialogsController.getDialogs()) {
+            if (dm.type != CHANNEL_TYPE_DM || dm.otherUserId == 0L) continue
+            val name = dm.displayName.ifBlank { dm.label }
+            merged[dm.otherUserId] = Triple(name, dm.label.ifBlank { name }, dm.avatarUrl)
+        }
+        val out = ArrayList<MessageActivityRow>()
+        for ((uid, t) in merged) {
+            if (uid == me) continue
+            val act = activityMap[uid] ?: continue
+            val label = if (act.activityDescription.isNotBlank()) {
+                "${act.activityName} - ${act.activityDescription}"
+            } else {
+                act.activityName
+            }
+            val display = t.first
+            if (display.isBlank()) continue
+            out.add(
+                MessageActivityRow(
+                    userId = uid,
+                    displayName = display,
+                    username = t.second,
+                    avatarUrl = t.third,
+                    activityText = label
+                )
+            )
+        }
+        _rows.value = out
+        notificationCenter.postNotificationOnMainThread(NotificationCenter.messageActivitiesRowsUpdated)
+    }
+}

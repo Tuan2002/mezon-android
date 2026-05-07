@@ -1,9 +1,9 @@
 package com.mezon.mobile.util
 
-import android.util.Log
 import com.mezon.mobile.BuildConfig
+import java.net.URLDecoder
+import java.nio.charset.StandardCharsets
 
-private const val TAG = "ImageProxy"
 private const val IMGPROXY_BASE_URL = BuildConfig.MEZON_IMGPROXY_BASE_URL
 private const val IMGPROXY_KEY = BuildConfig.MEZON_IMGPROXY_KEY
 private const val MAX_BYTES = 2_097_152
@@ -23,6 +23,22 @@ fun createImgproxyUrl(
     val h = heightPx.coerceAtMost(MAX_PROXY_DIM)
     val options = "rs:$resizeType:$w:$h:1/mb:$MAX_BYTES"
     return "$IMGPROXY_BASE_URL/$IMGPROXY_KEY/$options/plain/$sourceUrl@webp"
+}
+
+fun plainSourceUrlFromImgproxy(processedUrl: String): String? {
+    val marker = "/plain/"
+    val idx = processedUrl.indexOf(marker)
+    if (idx < 0) return null
+    var tail = processedUrl.substring(idx + marker.length)
+    if (tail.endsWith("@webp")) {
+        tail = tail.removeSuffix("@webp")
+    }
+    val decoded = try {
+        URLDecoder.decode(tail, StandardCharsets.UTF_8.name())
+    } catch (_: Exception) {
+        tail
+    }
+    return decoded.takeIf { it.startsWith("http://") || it.startsWith("https://") }
 }
 
 private val AVATAR_BUCKETS_PX = intArrayOf(64, 96, 144, 192, 256)

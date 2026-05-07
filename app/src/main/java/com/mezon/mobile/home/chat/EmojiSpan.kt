@@ -7,6 +7,7 @@ import android.graphics.RectF
 import android.text.style.ReplacementSpan
 import android.view.View
 import com.mezon.mobile.core.LayoutHelper
+import com.mezon.mobile.util.getEmojiDirectUrl
 import com.mezon.mobile.util.getEmojiUrl
 import java.lang.ref.WeakReference
 
@@ -72,9 +73,27 @@ class EmojiSpan(
         loadStarted = true
         cancellable = loader.load(
             url, EMOJI_SIZE, EMOJI_SIZE,
-            onSuccess = { bmp ->
-                bitmap = bmp
+            onSuccess = { loaded ->
+                bitmap = loaded
                 viewRef.get()?.invalidate()
+            },
+            onError = outerErr@{
+                val direct = getEmojiDirectUrl(emojiId) ?: run {
+                    viewRef.get()?.invalidate()
+                    return@outerErr
+                }
+                if (direct == url) {
+                    viewRef.get()?.invalidate()
+                    return@outerErr
+                }
+                cancellable = loader.load(
+                    direct, EMOJI_SIZE, EMOJI_SIZE,
+                    onSuccess = { bmp2 ->
+                        bitmap = bmp2
+                        viewRef.get()?.invalidate()
+                    },
+                    onError = { viewRef.get()?.invalidate() }
+                )
             }
         )
     }
@@ -88,6 +107,7 @@ class EmojiSpan(
     fun cancelLoad() {
         cancellable?.cancel()
         cancellable = null
+        loadStarted = false
     }
 
     companion object {

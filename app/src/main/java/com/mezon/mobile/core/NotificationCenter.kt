@@ -80,6 +80,7 @@ class NotificationCenter(val currentAccount: Int) {
         val channelsDidLoad = nextId()
         val channelAppsDidLoad = nextId()
         val clanInfoUpdated = nextId()
+        val clanBannerCropped = nextId()
         val accountInfoLoaded = nextId()
         val blockedUsersLoaded = nextId()
         val friendsLoaded = nextId()
@@ -131,6 +132,7 @@ class NotificationCenter(val currentAccount: Int) {
         val voiceReactionReceived = nextId()
         val voiceAiAgentStateChanged = nextId()
         val audioPlaybackStateChanged = nextId()
+        val messageActivitiesRowsUpdated = nextId()
 
         val incomingCall = nextId()
         val outgoingCallStarted = nextId()
@@ -145,6 +147,7 @@ class NotificationCenter(val currentAccount: Int) {
         const val UPDATE_MASK_CHAT_NAME = 16
         const val UPDATE_MASK_CHAT_MEMBERS = 32
         const val UPDATE_MASK_USER_PRINT = 64
+        const val UPDATE_MASK_CLAN_BANNER = 128
         const val UPDATE_MASK_READ_DIALOG_MESSAGE = 256
         const val UPDATE_MASK_SELECT_DIALOG = 512
         const val UPDATE_MASK_NEW_MESSAGE = 2048
@@ -157,7 +160,7 @@ class NotificationCenter(val currentAccount: Int) {
         const val UPDATE_MASK_REACTIONS = 524288
         const val UPDATE_MASK_ALL = UPDATE_MASK_AVATAR or UPDATE_MASK_STATUS or
             UPDATE_MASK_NAME or UPDATE_MASK_CHAT_AVATAR or UPDATE_MASK_CHAT_NAME or
-            UPDATE_MASK_CHAT_MEMBERS or UPDATE_MASK_USER_PRINT or
+            UPDATE_MASK_CLAN_BANNER or UPDATE_MASK_CHAT_MEMBERS or UPDATE_MASK_USER_PRINT or
             UPDATE_MASK_READ_DIALOG_MESSAGE or UPDATE_MASK_BADGE or UPDATE_MASK_REACTIONS
 
         private const val EXPIRE_NOTIFICATIONS_TIME = 5017L

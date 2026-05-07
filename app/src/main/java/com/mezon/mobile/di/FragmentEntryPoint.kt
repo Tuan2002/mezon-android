@@ -16,6 +16,7 @@ import com.mezon.mobile.home.call.WebRtcInfra
 import com.mezon.mobile.home.chat.EmojiController
 import com.mezon.mobile.home.chat.ImageClipboardCoordinator
 import com.mezon.mobile.home.DialogsController
+import com.mezon.mobile.home.messages.MessageActivitiesController
 import com.mezon.mobile.home.voice.VoiceController
 import com.mezon.mobile.home.UserClanController
 import com.mezon.mobile.home.chat.MediaController
@@ -54,6 +55,7 @@ interface FragmentEntryPoint {
     fun channelCategoryExpandStore(): ChannelCategoryExpandStore
     fun connectionController(): ConnectionController
     fun dialogsController(): DialogsController
+    fun messageActivitiesController(): MessageActivitiesController
     fun messagesController(): MessagesController
     fun notificationStore(): NotificationStore
     fun accountController(): AccountController
