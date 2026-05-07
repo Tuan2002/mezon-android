@@ -2829,11 +2829,6 @@ class ChatFragment : BaseFragment() {
         }
     }
 
-<<<<<<< Updated upstream
-=======
-<<<<<<< Updated upstream
-=======
->>>>>>> Stashed changes
     private fun resolveDmCallPeerForCallback(msg: MessageEntity): Triple<Long, String, String?>? {
         val myId = chatController.getCurrentUserId()
         val parts = dialogsController.getParticipants(channelId)
@@ -2848,8 +2843,6 @@ class ChatFragment : BaseFragment() {
         return null
     }
 
-<<<<<<< Updated upstream
-=======
     private fun isDmSelfOnlyChat(): Boolean {
         if (channelType != CHANNEL_TYPE_DM || clanId != 0L) return false
         val myId = chatController.getCurrentUserId()
@@ -2932,8 +2925,6 @@ class ChatFragment : BaseFragment() {
         chatActionBar.setItemsColor(themeColors.onSurface)
     }
 
->>>>>>> Stashed changes
->>>>>>> Stashed changes
     private fun resolveChannelPrivate(): Boolean {
         if (channelType == CHANNEL_TYPE_DM || channelType == CHANNEL_TYPE_GROUP) {
             return true
