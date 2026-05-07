@@ -7,6 +7,9 @@ import com.mezon.mobile.ui.theme.ThemeMode
 
 object StartupCache {
 
+    @Volatile
+    var suppressHomeListApiForIncomingCallWake: Boolean = false
+
     private const val PREFS_NAME = "mezon_startup_cache"
     private const val KEY_HAS_SESSION = "has_session"
     private const val KEY_THEME = "theme"
