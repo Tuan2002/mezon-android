@@ -60,6 +60,7 @@ import com.mezon.mobile.home.LOAD_TYPE_INITIAL
 import com.mezon.mobile.home.DialogsController
 import com.mezon.mobile.home.MemberResolver
 import com.mezon.mobile.home.UserClanController
+import com.mezon.mobile.home.friends.FriendController
 import com.mezon.mobile.home.clans.CLAN_CREATE_LIMIT
 import com.mezon.mobile.home.clans.ChannelController
 import com.mezon.mobile.home.clans.ClansController
@@ -163,6 +164,7 @@ class ChatFragment : BaseFragment() {
         private const val GIVE_COFFEE_EMOJI = ":coffee:"
         private const val LOADING_INDICATOR_DELAY_MS = 300L
         private val ANONYMOUS_USER_ID = BuildConfig.MEZON_ANONYMOUS_USER_ID.toLongOrNull() ?: 0L
+        private const val REQUEST_CALL_PERMISSIONS = 9002
 
         fun newInstance(
             channelId: Long,
@@ -194,6 +196,8 @@ class ChatFragment : BaseFragment() {
     private lateinit var audioPlayerController: AudioPlayerController
     private lateinit var pinMessageController: com.mezon.mobile.home.PinMessageController
     private lateinit var walletController: WalletController
+    private lateinit var callController: com.mezon.mobile.home.call.CallController
+    private lateinit var friendController: FriendController
 
     private lateinit var recyclerView: RecyclerListView
     private lateinit var loadingView: ProgressBar
@@ -1031,6 +1035,8 @@ class ChatFragment : BaseFragment() {
         memberResolver = entryPoint.memberResolver()
         roleController = entryPoint.roleController()
         searchController = entryPoint.searchController()
+        callController = entryPoint.callController()
+        friendController = entryPoint.friendController()
         emojiController = entryPoint.emojiController()
         anonymousController = entryPoint.anonymousController()
         pinMessageController = entryPoint.pinMessageController()
@@ -1506,6 +1512,29 @@ class ChatFragment : BaseFragment() {
             }
             override fun didClickInviteJoin(cell: ChatMessageCell, msg: MessageEntity, inviteId: Long) {
                 onLinkInviteJoinClicked(inviteId)
+            }
+            override fun isDmPeerBlockedForCallLog(): Boolean {
+                if (clanId != 0L || channelType != CHANNEL_TYPE_DM) return false
+                val myId = chatController.getCurrentUserId()
+                val other = dialogsController.getParticipants(channelId).firstOrNull { it.userId != myId }
+                    ?: return false
+                return friendController.isUserBlocked(other.userId)
+            }
+            override fun didTapCallLogCallBack(cell: ChatMessageCell, msg: MessageEntity) {
+                val triple = resolveDmCallPeerForCallback(msg) ?: return
+                requestCallPermissions(needsCamera = false) {
+                    callController.startCall(
+                        triple.first,
+                        triple.second,
+                        triple.third,
+                        channelId,
+                        clanId,
+                        channelType,
+                        resolveChannelPrivate(),
+                        isVideo = false
+                    )
+                    presentFragment(com.mezon.mobile.home.call.CallFragment())
+                }
             }
         })
 
@@ -2793,6 +2822,20 @@ class ChatFragment : BaseFragment() {
         }
     }
 
+    private fun resolveDmCallPeerForCallback(msg: MessageEntity): Triple<Long, String, String?>? {
+        val myId = chatController.getCurrentUserId()
+        val parts = dialogsController.getParticipants(channelId)
+        val o = parts.firstOrNull { it.userId != myId }
+        if (o != null) {
+            val name = o.displayName.ifBlank { o.username.ifBlank { "User" } }
+            return Triple(o.userId, name, o.avatarUrl.ifBlank { null })
+        }
+        if (msg.senderId != myId) {
+            return Triple(msg.senderId, msg.senderName.ifBlank { "User" }, msg.senderAvatar.ifBlank { null })
+        }
+        return null
+    }
+
     private fun resolveChannelPrivate(): Boolean {
         if (channelType == CHANNEL_TYPE_DM || channelType == CHANNEL_TYPE_GROUP) {
             return true
@@ -3761,6 +3804,16 @@ class ChatFragment : BaseFragment() {
                 }
             }
         }
+        if (requestCode == REQUEST_CALL_PERMISSIONS) {
+            val audioGranted = permissions.indices.any { i ->
+                permissions[i] == Manifest.permission.RECORD_AUDIO &&
+                    grantResults[i] == PackageManager.PERMISSION_GRANTED
+            }
+            if (audioGranted) {
+                pendingCallPermissionCallback?.invoke()
+            }
+            pendingCallPermissionCallback = null
+        }
     }
 
     private fun showOpenMediaSettingsDialog() {
@@ -4011,7 +4064,21 @@ class ChatFragment : BaseFragment() {
                     MezonToast.show(this@ChatFragment, ToastOverlay.ToastType.INFO, getString(R.string.feature_coming_soon))
                 }
                 override fun onVoiceCall(userId: Long) {
-                    MezonToast.show(this@ChatFragment, ToastOverlay.ToastType.INFO, getString(R.string.feature_coming_soon))
+                    val senderName = msg.senderName ?: "Unknown"
+                    val senderAvatar = msg.senderAvatar
+                    requestCallPermissions(needsCamera = false) {
+                        callController.startCall(
+                            userId,
+                            senderName,
+                            senderAvatar.ifBlank { null },
+                            channelId,
+                            clanId,
+                            channelType,
+                            resolveChannelPrivate(),
+                            isVideo = false
+                        )
+                        presentFragment(com.mezon.mobile.home.call.CallFragment())
+                    }
                 }
                 override fun onAddFriend(userId: Long) {
                     showAddFriendBottomSheet()
@@ -4904,4 +4971,27 @@ class ChatFragment : BaseFragment() {
         }
         sheet.show()
     }
+
+    private var pendingCallPermissionCallback: (() -> Unit)? = null
+
+    private fun requestCallPermissions(needsCamera: Boolean = true, onGranted: () -> Unit) {
+        val activity = getParentActivity() ?: run { onGranted(); return }
+        val needed = mutableListOf<String>()
+        if (androidx.core.content.ContextCompat.checkSelfPermission(activity, android.Manifest.permission.RECORD_AUDIO)
+            != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            needed.add(android.Manifest.permission.RECORD_AUDIO)
+        }
+        if (needsCamera &&
+            androidx.core.content.ContextCompat.checkSelfPermission(activity, android.Manifest.permission.CAMERA)
+            != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            needed.add(android.Manifest.permission.CAMERA)
+        }
+        if (needed.isEmpty()) {
+            onGranted()
+        } else {
+            pendingCallPermissionCallback = onGranted
+            androidx.core.app.ActivityCompat.requestPermissions(activity, needed.toTypedArray(), REQUEST_CALL_PERMISSIONS)
+        }
+    }
+
 }
