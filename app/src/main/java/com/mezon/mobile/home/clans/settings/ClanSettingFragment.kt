@@ -189,8 +189,8 @@ class ClanSettingFragment : BaseFragment() {
 
     private fun refreshMenu() {
         if (!::scrollInner.isInitialized) return
-        scrollInner.removeAllViews()
         val clan = clansController.clans.value.firstOrNull { it.clanId == clanId } ?: return
+        scrollInner.removeAllViews()
 
         val members = userClanController.getClanMembers(clanId)
         val roles = roleController.getRoles(clanId)
@@ -401,7 +401,20 @@ class ClanSettingFragment : BaseFragment() {
     private fun menuRowToView(ctx: Context, row: ClanSetting.MenuRow): View {
         return when (row) {
             is ClanSetting.MenuRow.Navigate ->
-                navigationRow(ctx, row.icon, row.labelRes, row.subScreenTitleRes)
+                when (row.labelRes) {
+                    R.string.clan_settings_overview ->
+                        navigationRow(ctx, row.icon, row.labelRes, Runnable {
+                            presentFragment(ClanOverviewSettingFragment.newInstance(clanId))
+                        })
+                    R.string.clan_settings_audit_log ->
+                        navigationRow(ctx, row.icon, row.labelRes, Runnable {
+                            presentFragment(AuditLogSettingFragment.newInstance(clanId))
+                        })
+                    else ->
+                        navigationRow(ctx, row.icon, row.labelRes, Runnable {
+                            presentFragment(ClanSubSettingPlaceholderFragment.newInstance(row.subScreenTitleRes, clanId))
+                        })
+                }
             ClanSetting.MenuRow.InvitePeople ->
                 ClanSettingsUiHelpers.buildMezonChevronRow(
                     ctx,
@@ -414,14 +427,14 @@ class ClanSettingFragment : BaseFragment() {
         }
     }
 
-    private fun navigationRow(ctx: Context, icon: MezonIcon, labelRes: Int, placeholderTitleRes: Int): View {
+    private fun navigationRow(ctx: Context, icon: MezonIcon, labelRes: Int, onNavigate: Runnable): View {
         return ClanSettingsUiHelpers.buildMezonChevronRow(
             ctx,
             themeColors,
             icon,
             getString(labelRes),
             null,
-            Runnable { presentFragment(ClanSubSettingPlaceholderFragment.newInstance(placeholderTitleRes, clanId)) }
+            onNavigate,
         )
     }
 

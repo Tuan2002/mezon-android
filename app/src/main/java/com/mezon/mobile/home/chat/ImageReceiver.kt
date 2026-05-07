@@ -12,6 +12,8 @@ import android.graphics.Shader
 import android.graphics.drawable.Animatable
 import android.graphics.drawable.Drawable
 import android.view.View
+import com.mezon.mobile.util.plainSourceUrlFromImgproxy
+import java.util.LinkedHashSet
 
 class ImageReceiver(private val parentView: View) {
 
@@ -25,6 +27,7 @@ class ImageReceiver(private val parentView: View) {
     private var mainCancellable: MezonImageLoader.Cancellable? = null
     private var thumbCancellable: MezonImageLoader.Cancellable? = null
     private var isAnimatedRequest = false
+    private var loadExhausted = false
 
     private var imageX = 0f
     private var imageY = 0f
@@ -143,8 +146,9 @@ class ImageReceiver(private val parentView: View) {
         }
 
         if (urlChanged && url != null) {
-            currentUrl = url
+            loadExhausted = false
             mainCancellable?.cancel()
+            currentUrl = url
             val rw = if (requestW > 0) requestW else 800
             val rh = if (requestH > 0) requestH else 800
 
@@ -231,21 +235,65 @@ class ImageReceiver(private val parentView: View) {
         }
     }
 
-    private fun onLoadError(url: String, rw: Int, rh: Int, loader: MezonImageLoader) {
-        if (url.endsWith("@webp")) {
-            val fallbackUrl = url.removeSuffix("@webp")
-            currentUrl = fallbackUrl
-            mainCancellable = loader.load(fallbackUrl, rw, rh,
-                onSuccess = { bmp ->
-                    imageBitmap = bmp
-                    cachedShader = null
-                    cachedShaderBitmap = null
-                    currentAlpha = 1f
-                    thumbBitmap = null
-                    parentView.invalidate()
-                }
-            )
+    private fun onLoadError(failedUrl: String, rw: Int, rh: Int, loader: MezonImageLoader) {
+        val chain = buildMainImageFallbackUrls(failedUrl)
+        if (chain.isEmpty()) {
+            loadExhausted = true
+            mainCancellable = null
+            parentView.invalidate()
+            return
         }
+        loadFallbackUrlFromChain(chain, 0, rw, rh, loader)
+    }
+
+    private fun buildMainImageFallbackUrls(failedUrl: String): List<String> {
+        val ordered = LinkedHashSet<String>()
+        if (failedUrl.endsWith("@webp")) {
+            ordered.add(failedUrl.removeSuffix("@webp"))
+        }
+        plainSourceUrlFromImgproxy(failedUrl)?.let { ordered.add(it) }
+        val alt = if (failedUrl.endsWith("@webp")) failedUrl.removeSuffix("@webp") else failedUrl
+        plainSourceUrlFromImgproxy(alt)?.let { ordered.add(it) }
+        return ordered.filter { it.isNotEmpty() && it != failedUrl }
+    }
+
+    private fun loadFallbackUrlFromChain(
+        chain: List<String>,
+        index: Int,
+        rw: Int,
+        rh: Int,
+        loader: MezonImageLoader
+    ) {
+        if (index >= chain.size) {
+            loadExhausted = true
+            mainCancellable = null
+            parentView.invalidate()
+            return
+        }
+        val nextUrl = chain[index]
+        val expected = nextUrl
+        if (isAnimatedRequest) {
+            stopAnimation()
+            animatedDrawable = null
+        }
+        currentUrl = nextUrl
+        mainCancellable = loader.load(nextUrl, rw, rh,
+            onSuccess = { bmp ->
+                if (currentUrl != expected) return@load
+                imageBitmap = bmp
+                animatedDrawable = null
+                cachedShader = null
+                cachedShaderBitmap = null
+                currentAlpha = 1f
+                thumbBitmap = null
+                loadExhausted = false
+                parentView.invalidate()
+            },
+            onError = {
+                if (currentUrl != expected) return@load
+                loadFallbackUrlFromChain(chain, index + 1, rw, rh, loader)
+            }
+        )
     }
 
     private val animationCallback = object : Drawable.Callback {
@@ -466,6 +514,12 @@ class ImageReceiver(private val parentView: View) {
     fun hasImage(): Boolean = imageBitmap != null || thumbBitmap != null || animatedDrawable != null
     fun hasMainImage(): Boolean = imageBitmap != null || animatedDrawable != null
 
+    fun shouldAnimateLoadingPlaceholder(): Boolean {
+        if (loadExhausted) return false
+        if (hasImage()) return false
+        return currentUrl != null || currentThumbUrl != null || pendingLoad != null || pendingLocalUri != null
+    }
+
     fun recycle() {
         mainCancellable?.cancel()
         mainCancellable = null
@@ -481,6 +535,7 @@ class ImageReceiver(private val parentView: View) {
         currentThumbUrl = null
         pendingLoad = null
         pendingLocalUri = null
+        loadExhausted = false
     }
 
     fun setLocalUri(uri: android.net.Uri, context: Context) {

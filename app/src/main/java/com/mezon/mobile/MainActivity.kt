@@ -40,6 +40,7 @@ import com.mezon.mobile.core.ThemeColors
 import com.mezon.mobile.di.FragmentEntryPoint
 import com.mezon.mobile.home.ConnectionController
 import com.mezon.mobile.home.DialogsController
+import com.mezon.mobile.home.messages.MessageActivitiesController
 import com.mezon.mobile.home.MainTabsActivity
 import com.mezon.mobile.home.chat.ChatFragment
 import com.mezon.mobile.home.call.CallController
@@ -111,6 +112,7 @@ class MainActivity : BasePermissionsActivity(),
     @Inject lateinit var themeColors: ThemeColors
     @Inject lateinit var notificationCenter: NotificationCenter
     @Inject lateinit var dialogsController: DialogsController
+    @Inject lateinit var messageActivitiesController: MessageActivitiesController
     @Inject lateinit var connectionController: ConnectionController
     @Inject lateinit var notificationHelper: NotificationHelper
     @Inject lateinit var appUpdateGateManager: AppUpdateGateManager
@@ -633,6 +635,8 @@ class MainActivity : BasePermissionsActivity(),
         actionBarLayout.showLastFragment()
         if (!StartupCache.suppressHomeListApiForIncomingCallWake) {
             dialogsController.loadDialogs()
+            messageActivitiesController.loadListActivities()
+            
         }
     }
 

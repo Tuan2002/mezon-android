@@ -531,6 +531,11 @@ fun getEmojiUrl(emojiId: String): String? {
     return createImgproxyUrl(sourceUrl, EMOJI_SIZE_DP * 4, EMOJI_SIZE_DP * 4, "fit")
 }
 
+fun getEmojiDirectUrl(emojiId: String): String? {
+    if (emojiId.isBlank()) return null
+    return "$BASE_IMG/emojis/$emojiId.webp"
+}
+
 fun resolveStickerSourceUrl(stickerId: String, src: String): String {
     return if (src.isNotBlank()) src
     else if (stickerId.isNotBlank()) "$BASE_IMG/stickers/$stickerId.webp"

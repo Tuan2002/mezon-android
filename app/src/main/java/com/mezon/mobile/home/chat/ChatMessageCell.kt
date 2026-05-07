@@ -26,6 +26,7 @@ import com.mezon.mobile.ui.cells.MezonIcon
 import com.mezon.mobile.util.FileUtils
 import com.mezon.mobile.util.avatarImgproxyUrl
 import com.mezon.mobile.util.createImgproxyUrl
+import com.mezon.mobile.util.getEmojiDirectUrl
 import com.mezon.mobile.util.getEmojiUrl
 import com.mezon.mobile.util.MentionColors
 import com.mezon.mobile.util.EmbedData
@@ -222,6 +223,7 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
     private val reactionChipRect = RectF()
     private var reactionEmojiBitmaps: Array<android.graphics.Bitmap?> = emptyArray()
     private var reactionEmojiCancellables: Array<MezonImageLoader.Cancellable?> = emptyArray()
+    private var reactionBitmapLoadToken = 0
     private val reactionAddBounds = RectF()
     private var reactionAddIcon: android.graphics.drawable.Drawable? = null
     var currentUserId: Long = 0L
@@ -2192,7 +2194,7 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
         photoImage.draw(canvas)
         if (drawSending) {
             drawAttachmentUploadSpinner(canvas, imgX, yOff, photoWidth.toFloat(), photoHeight.toFloat(), 0f)
-        } else if (!photoImage.hasMainImage()) {
+        } else if (!photoImage.hasMainImage() && photoImage.shouldAnimateLoadingPlaceholder()) {
             shimmerEffect.draw(canvas, imgX, yOff, imgX + photoWidth, yOff + photoHeight, 0f,
                 theme.resolvedMode != com.mezon.mobile.ui.theme.ThemeMode.LIGHT)
             postInvalidateDelayed(32)
@@ -2651,7 +2653,7 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
                     allReceivers[i].draw(canvas)
                     if (drawSending) {
                         drawAttachmentUploadSpinner(canvas, x, startY, cellW, cellH, MEDIA_RADIUS)
-                    } else if (!allReceivers[i].hasMainImage()) {
+                    } else if (!allReceivers[i].hasMainImage() && allReceivers[i].shouldAnimateLoadingPlaceholder()) {
                         shimmerEffect.draw(canvas, x, startY, x + cellW, startY + cellH, MEDIA_RADIUS, isDark)
                         needsShimmerRedraw = true
                     }
@@ -2669,7 +2671,7 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
                 allReceivers[0].draw(canvas)
                 if (drawSending) {
                     drawAttachmentUploadSpinner(canvas, startX, startY, leftW, leftH, MEDIA_RADIUS)
-                } else if (!allReceivers[0].hasMainImage()) {
+                } else if (!allReceivers[0].hasMainImage() && allReceivers[0].shouldAnimateLoadingPlaceholder()) {
                     shimmerEffect.draw(canvas, startX, startY, startX + leftW, startY + leftH, MEDIA_RADIUS, isDark)
                     needsShimmerRedraw = true
                 }
@@ -2681,7 +2683,7 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
                     allReceivers[i].draw(canvas)
                     if (drawSending) {
                         drawAttachmentUploadSpinner(canvas, rx, ry, rightW, rightH, MEDIA_RADIUS)
-                    } else if (!allReceivers[i].hasMainImage()) {
+                    } else if (!allReceivers[i].hasMainImage() && allReceivers[i].shouldAnimateLoadingPlaceholder()) {
                         shimmerEffect.draw(canvas, rx, ry, rx + rightW, ry + rightH, MEDIA_RADIUS, isDark)
                         needsShimmerRedraw = true
                     }
@@ -2701,7 +2703,7 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
                     allReceivers[i].draw(canvas)
                     if (drawSending) {
                         drawAttachmentUploadSpinner(canvas, x, y, cellW, cellH, MEDIA_RADIUS)
-                    } else if (!allReceivers[i].hasMainImage()) {
+                    } else if (!allReceivers[i].hasMainImage() && allReceivers[i].shouldAnimateLoadingPlaceholder()) {
                         shimmerEffect.draw(canvas, x, y, x + cellW, y + cellH, MEDIA_RADIUS, isDark)
                         needsShimmerRedraw = true
                     }
@@ -2725,7 +2727,7 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
     private fun drawMediaOverlays(canvas: Canvas, msg: MessageEntity, imgX: Float, imgY: Float) {
         if (drawSending) {
             drawAttachmentUploadSpinner(canvas, imgX, imgY, photoWidth.toFloat(), photoHeight.toFloat(), MEDIA_RADIUS)
-        } else if (!photoImage.hasMainImage()) {
+        } else if (!photoImage.hasMainImage() && photoImage.shouldAnimateLoadingPlaceholder()) {
             shimmerEffect.draw(canvas, imgX, imgY, imgX + photoWidth, imgY + photoHeight, MEDIA_RADIUS,
                 theme.resolvedMode != com.mezon.mobile.ui.theme.ThemeMode.LIGHT)
             postInvalidateDelayed(32)
@@ -2892,10 +2894,16 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
         }
         reactionCountLayouts = countLayouts
 
+        val loadToken = ++reactionBitmapLoadToken
         val bitmaps = Array<android.graphics.Bitmap?>(groups.size) { null }
         val cancellables = Array<MezonImageLoader.Cancellable?>(groups.size) { null }
         val loader = MezonImageLoader.getInstance(context)
         var pendingLoads = 0
+
+        fun finishOneLoad() {
+            pendingLoads--
+            if (pendingLoads <= 0) invalidate()
+        }
 
         for (i in groups.indices) {
             val url = getEmojiUrl(groups[i].emojiId.toString()) ?: continue
@@ -2906,13 +2914,28 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
             }
             pendingLoads++
             val idx = i
-            cancellables[i] = loader.load(url, REACTION_EMOJI_SIZE, REACTION_EMOJI_SIZE,
-                onSuccess = { bmp ->
-                    bitmaps[idx] = bmp
-                    reactionEmojiBitmaps = bitmaps
-                    pendingLoads--
-                    if (pendingLoads <= 0) invalidate()
-                }, onError = { pendingLoads-- })
+            fun startLoad(loadUrl: String, isRetry: Boolean) {
+                cancellables[idx] = loader.load(loadUrl, REACTION_EMOJI_SIZE, REACTION_EMOJI_SIZE,
+                    onSuccess = { bmp ->
+                        if (loadToken != reactionBitmapLoadToken) return@load
+                        bitmaps[idx] = bmp
+                        reactionEmojiBitmaps = bitmaps
+                        finishOneLoad()
+                    },
+                    onError = {
+                        if (loadToken != reactionBitmapLoadToken) return@load
+                        if (!isRetry) {
+                            val direct = getEmojiDirectUrl(groups[idx].emojiId.toString())
+                            if (direct != null && direct != loadUrl) {
+                                startLoad(direct, true)
+                                return@load
+                            }
+                        }
+                        finishOneLoad()
+                    }
+                )
+            }
+            startLoad(url, false)
         }
         reactionEmojiBitmaps = bitmaps
         reactionEmojiCancellables = cancellables
