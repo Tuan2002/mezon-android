@@ -106,6 +106,13 @@ class ImageReceiver(private val parentView: View) {
             pendingLocalUri = null
             setLocalUri(uri, parentView.context)
         }
+        if (!hasPending && pendingLocalUri == null) {
+            val url = currentUrl
+            val thumb = currentThumbUrl
+            if (url != null && imageBitmap == null && animatedDrawable == null && mainCancellable == null) {
+                setImage(url, thumb, parentView.context)
+            }
+        }
     }
 
     fun onDetachedFromWindow() {
@@ -122,7 +129,11 @@ class ImageReceiver(private val parentView: View) {
         val urlChanged = url != currentUrl
         val thumbChanged = thumbUrl != currentThumbUrl
 
-        if (!urlChanged && !thumbChanged) return
+        if (!urlChanged && !thumbChanged) {
+            val hasLoadedImage = imageBitmap != null || thumbBitmap != null || animatedDrawable != null
+            val hasActiveRequest = mainCancellable != null || thumbCancellable != null
+            if (hasLoadedImage || hasActiveRequest) return
+        }
 
         if (!attached) {
             recycle()

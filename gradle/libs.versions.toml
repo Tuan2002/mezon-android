@@ -28,7 +28,7 @@ zxing = "3.5.3"
 bouncyCastle = "1.78.1"
 photoView = "2.3.0"
 appcompat = "1.7.0"
-webrtc = "125.6422.07"
+webrtc = "144.7559.01"
 
 [libraries]
 google-webrtc = { module = "io.github.webrtc-sdk:android", version.ref = "webrtc" }

@@ -25,6 +25,7 @@ class CallFragment : BaseFragment() {
     private var durationView: CallDurationView? = null
     private var contentContainer: FrameLayout? = null
     private var dmHeader: DmCallHeaderView? = null
+    private var lastConnectedMainVideoMode: Boolean? = null
 
     override fun onInject(entryPoint: FragmentEntryPoint) {
         callController = entryPoint.callController()
@@ -126,13 +127,12 @@ class CallFragment : BaseFragment() {
         durationView?.stopTimer()
         releaseLocalPipOverlay()
         releaseVideoView()
+        lastConnectedMainVideoMode = null
         super.onFragmentDestroy()
     }
 
     private fun shouldShowRemoteVideo(): Boolean {
-        if (callController.callState !is CallState.Connected) return false
-        return callController.isRemoteVideoEnabled &&
-            callController.remoteVideoTrack != null
+        return callController.shouldShowRemoteVideoForUi()
     }
 
     private fun applyLocalVideoPreviewInMainLayout() {
@@ -237,9 +237,11 @@ class CallFragment : BaseFragment() {
 
         when (state) {
             is CallState.Idle -> {
+                lastConnectedMainVideoMode = null
                 finishFragment()
             }
             is CallState.Outgoing -> {
+                lastConnectedMainVideoMode = null
                 hideLocalPipOverlay()
                 hideVideoView()
                 showAvatarView(callInfo)
@@ -250,6 +252,7 @@ class CallFragment : BaseFragment() {
                 durationView?.visibility = View.GONE
             }
             is CallState.Incoming -> {
+                lastConnectedMainVideoMode = null
                 hideLocalPipOverlay()
                 hideVideoView()
                 showAvatarView(callInfo)
@@ -259,6 +262,7 @@ class CallFragment : BaseFragment() {
                 durationView?.visibility = View.GONE
             }
             is CallState.Connecting -> {
+                lastConnectedMainVideoMode = null
                 hideLocalPipOverlay()
                 hideVideoView()
                 showAvatarView(callInfo)
@@ -274,6 +278,7 @@ class CallFragment : BaseFragment() {
                 durationView?.visibility = View.VISIBLE
                 durationView?.startTimer(state.connectedTime)
                 applyConnectedMainLayout(callInfo)
+                lastConnectedMainVideoMode = shouldShowRemoteVideo()
                 startForegroundService(callInfo)
             }
         }
@@ -285,8 +290,16 @@ class CallFragment : BaseFragment() {
         updateHeaderControls()
 
         val callInfo = callController.currentCallInfo()
-        if (callController.callState is CallState.Connected) {
-            applyConnectedMainLayout(callInfo)
+        if (callController.callState is CallState.Connected && callInfo != null) {
+            val wantVideo = shouldShowRemoteVideo()
+            if (lastConnectedMainVideoMode != wantVideo) {
+                lastConnectedMainVideoMode = wantVideo
+                applyConnectedMainLayout(callInfo)
+            } else if (wantVideo) {
+                applyLocalVideoPreviewInMainLayout()
+            } else {
+                bindLocalPipOverlay()
+            }
         }
     }
 

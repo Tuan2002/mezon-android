@@ -878,4 +878,10 @@
     <string name="message_call_log_start_group_call">%1$s đã bắt đầu 1 cuộc gọi nhóm</string>
     <string name="message_call_log_start_audio_call">%1$s đã bắt đầu 1 cuộc gọi thoại</string>
     <string name="message_call_log_start_video_call">%1$s đã bắt đầu 1 cuộc gọi video</string>
+
+    <string name="call_full_screen_intent_title">Cuộc gọi đến toàn màn hình</string>
+    <string name="call_full_screen_intent_message">Cho phép Mezon dùng thông báo toàn màn hình khi khóa màn hình để bạn không bỏ lỡ cuộc gọi thoại.</string>
+    <string name="call_full_screen_intent_open_settings">Bật trong cài đặt</string>
+    <string name="call_full_screen_intent_start_call_anyway">Vẫn gọi</string>
+    <string name="call_full_screen_intent_incoming_hint">Đang tắt toàn màn hình khi khóa — chạm để bật</string>
 </resources>
