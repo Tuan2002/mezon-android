@@ -87,6 +87,18 @@ import com.mezon.mezon.api.updateAIAgentRequest
 import com.mezon.mezon.api.LogedDeviceList
 import com.mezon.mezon.api.ListClanDiscover
 import com.mezon.mezon.api.ListAuditLog
+import com.mezon.mezon.api.WebhookListResponse
+import com.mezon.mezon.api.WebhookGenerateResponse
+import com.mezon.mezon.api.ListClanWebhookResponse
+import com.mezon.mezon.api.GenerateClanWebhookResponse
+import com.mezon.mezon.api.clanWebhookRequest
+import com.mezon.mezon.api.generateClanWebhookRequest
+import com.mezon.mezon.api.listClanWebhookRequest
+import com.mezon.mezon.api.updateClanWebhookRequest
+import com.mezon.mezon.api.webhookCreateRequest
+import com.mezon.mezon.api.webhookDeleteRequestById
+import com.mezon.mezon.api.webhookListRequest
+import com.mezon.mezon.api.webhookUpdateRequestById
 import com.mezon.mezon.api.InviteUserRes
 import com.mezon.mezon.api.inviteUserRequest
 import com.mezon.mezon.api.clanDiscover as clanDiscoverProto
@@ -681,6 +693,134 @@ class MezonApi @Inject constructor(
         }
         val bytes = rpc(apiUrl, token, "ListAuditLog", request.toByteArray())
         return ListAuditLog.parseFrom(bytes)
+    }
+
+    suspend fun listWebhooksByChannelId(
+        apiUrl: String,
+        token: String,
+        channelId: Long,
+        clanId: Long,
+    ): WebhookListResponse {
+        val request = webhookListRequest {
+            this.channelId = channelId
+            this.clanId = clanId
+        }
+        val bytes = rpc(apiUrl, token, "ListWebhookByChannelId", request.toByteArray())
+        return WebhookListResponse.parseFrom(bytes)
+    }
+
+    suspend fun generateWebhook(
+        apiUrl: String,
+        token: String,
+        webhookName: String,
+        channelId: Long,
+        clanId: Long,
+        avatar: String,
+    ): WebhookGenerateResponse {
+        val request = webhookCreateRequest {
+            this.webhookName = webhookName
+            this.channelId = channelId
+            this.avatar = avatar
+            this.clanId = clanId
+        }
+        val bytes = rpc(apiUrl, token, "GenerateWebhook", request.toByteArray())
+        return WebhookGenerateResponse.parseFrom(bytes)
+    }
+
+    suspend fun updateWebhookById(
+        apiUrl: String,
+        token: String,
+        webhookId: Long,
+        webhookName: String,
+        avatarUrl: String,
+        channelIdExisting: Long,
+        newChannelId: Long,
+        clanId: Long,
+    ) {
+        val request = webhookUpdateRequestById {
+            this.id = webhookId
+            this.webhookName = webhookName
+            this.avatar = avatarUrl
+            this.channelId = channelIdExisting
+            this.channelIdUpdate = newChannelId
+            this.clanId = clanId
+        }
+        rpc(apiUrl, token, "UpdateWebhookById", request.toByteArray())
+    }
+
+    suspend fun deleteWebhookById(
+        apiUrl: String,
+        token: String,
+        webhookId: Long,
+        clanId: Long,
+        hookChannelId: Long,
+    ) {
+        val request = webhookDeleteRequestById {
+            this.id = webhookId
+            this.clanId = clanId
+            this.channelId = hookChannelId
+        }
+        rpc(apiUrl, token, "DeleteWebhookById", request.toByteArray())
+    }
+
+    suspend fun listClanWebhooks(
+        apiUrl: String,
+        token: String,
+        clanId: Long,
+    ): ListClanWebhookResponse {
+        val request = listClanWebhookRequest {
+            this.clanId = clanId
+        }
+        val bytes = rpc(apiUrl, token, "ListClanWebhook", request.toByteArray())
+        return ListClanWebhookResponse.parseFrom(bytes)
+    }
+
+    suspend fun generateClanWebhook(
+        apiUrl: String,
+        token: String,
+        clanId: Long,
+        webhookName: String,
+        avatar: String,
+    ): GenerateClanWebhookResponse {
+        val request = generateClanWebhookRequest {
+            this.clanId = clanId
+            this.webhookName = webhookName
+            this.avatar = avatar
+        }
+        val bytes = rpc(apiUrl, token, "GenerateClanWebhook", request.toByteArray())
+        return GenerateClanWebhookResponse.parseFrom(bytes)
+    }
+
+    suspend fun updateClanWebhookById(
+        apiUrl: String,
+        token: String,
+        webhookId: Long,
+        clanId: Long,
+        webhookName: String,
+        avatar: String,
+        resetToken: Boolean,
+    ) {
+        val request = updateClanWebhookRequest {
+            id = webhookId
+            this.clanId = clanId
+            this.webhookName = webhookName
+            this.avatar = avatar
+            this.resetToken = resetToken
+        }
+        rpc(apiUrl, token, "UpdateClanWebhookById", request.toByteArray())
+    }
+
+    suspend fun deleteClanWebhookById(
+        apiUrl: String,
+        token: String,
+        webhookId: Long,
+        clanId: Long,
+    ) {
+        val request = clanWebhookRequest {
+            id = webhookId
+            this.clanId = clanId
+        }
+        rpc(apiUrl, token, "DeleteClanWebhookById", request.toByteArray())
     }
 
     suspend fun listChannelsByClan(
