@@ -22,6 +22,7 @@ class DialogCell(context: Context, private val theme: ThemeColors) : BaseCell(co
 
     private val avatarDrawable = AvatarDrawable()
     private var currentAvatarUrl: String? = null
+    private var currentAvatarLoadUrl: String? = null
     private var avatarDisposable: MezonImageLoader.Cancellable? = null
     private var attachedToWindow = false
     private var needsLayout = false
@@ -92,11 +93,9 @@ class DialogCell(context: Context, private val theme: ThemeColors) : BaseCell(co
             val changed = newDm != null && newDm != directMessage
             if (newDm != null) directMessage = newDm
             avatarDrawable.setInfo(dm.channelId, dm.displayName.ifEmpty { dm.label })
-            if (changed) {
-                buildLayouts()
-                loadAvatar(dm.avatarUrl)
-                invalidate()
-            }
+            buildLayouts()
+            loadAvatar(dm.avatarUrl)
+            invalidate()
             return changed
         }
 
@@ -202,21 +201,26 @@ class DialogCell(context: Context, private val theme: ThemeColors) : BaseCell(co
     }
 
     private fun loadAvatar(url: String) {
-        if (url == currentAvatarUrl && avatarDrawable.hasPhoto()) return
+        val loadUrl = avatarImgproxyUrl(url, AVATAR_SIZE).ifEmpty { url }
+        if (loadUrl == currentAvatarLoadUrl && avatarDrawable.hasPhoto()) return
         currentAvatarUrl = url
+        currentAvatarLoadUrl = loadUrl
         avatarDrawable.setPhoto(null)
         avatarDisposable?.cancel()
         avatarDisposable = null
 
-        if (url.isNotEmpty()) {
-            val proxyUrl = avatarImgproxyUrl(url, AVATAR_SIZE)
+        if (loadUrl.isNotEmpty()) {
+            val expectedLoadUrl = loadUrl
             avatarDisposable = MezonImageLoader.getInstance(context).load(
-                proxyUrl, AVATAR_SIZE, AVATAR_SIZE,
+                loadUrl, AVATAR_SIZE, AVATAR_SIZE,
                 onSuccess = { bmp ->
+                    if (currentAvatarLoadUrl != expectedLoadUrl) return@load
                     avatarDrawable.setPhoto(bmp)
                     invalidate()
                 }
             )
+        } else {
+            currentAvatarLoadUrl = null
         }
     }
 

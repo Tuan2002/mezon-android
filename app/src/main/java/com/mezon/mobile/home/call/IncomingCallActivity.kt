@@ -17,6 +17,7 @@ import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.TextView
+import com.mezon.mobile.R
 import com.mezon.mobile.core.AndroidUtilities
 import com.mezon.mobile.core.LayoutHelper
 import com.mezon.mobile.core.NotificationCenter
@@ -49,6 +50,7 @@ class IncomingCallActivity : Activity(), NotificationCenter.NotificationCenterDe
     private var nameView: TextView? = null
     private var ringingAvatarView: AvatarView? = null
     private var actionsContainer: LinearLayout? = null
+    private var fullScreenIntentHint: TextView? = null
     private var connectingContainer: LinearLayout? = null
 
     private var connectedRoot: FrameLayout? = null
@@ -59,6 +61,7 @@ class IncomingCallActivity : Activity(), NotificationCenter.NotificationCenterDe
     private var connectedLocalPip: LocalCallVideoPip? = null
     private var connectedControlBar: CallControlBar? = null
     private var connectedDurationView: CallDurationView? = null
+    private var lastConnectedMainVideoMode: Boolean? = null
 
     private val autoDeclineRunnable = Runnable {
         if (!dismissed && !connecting) {
@@ -72,6 +75,10 @@ class IncomingCallActivity : Activity(), NotificationCenter.NotificationCenterDe
             CallController.instance?.endCall(CallEndReason.TIMEOUT)
             finishCallActivity()
         }
+    }
+
+    private val deferredIncomingRingtoneRunnable = Runnable {
+        applyIncomingRingtoneIfStillValid()
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -118,21 +125,23 @@ class IncomingCallActivity : Activity(), NotificationCenter.NotificationCenterDe
 
         attachObservers()
 
+        refreshFullScreenIntentHint()
+
         when (state) {
             is CallState.Connecting -> {
                 connecting = true
+                cancelDeferredIncomingRingtone()
                 callAudioManager?.stopTone()
                 showConnectingUi()
             }
             is CallState.Connected -> {
                 connecting = true
+                cancelDeferredIncomingRingtone()
                 callAudioManager?.stopTone()
                 showConnectedUi(state.connectedTime)
             }
             else -> {
-                callAudioManager = CallAudioManager(this)
-                callAudioManager?.start(false)
-                callAudioManager?.playRingtone()
+                scheduleIncomingRingtoneFromActivity()
                 handler.postDelayed(autoDeclineRunnable, 30_000)
             }
         }
@@ -146,6 +155,7 @@ class IncomingCallActivity : Activity(), NotificationCenter.NotificationCenterDe
     override fun onResume() {
         super.onResume()
         setIncomingCallUiForeground(true)
+        refreshFullScreenIntentHint()
     }
 
     override fun onPause() {
@@ -158,6 +168,7 @@ class IncomingCallActivity : Activity(), NotificationCenter.NotificationCenterDe
         if (intent == null) return
         loadIncomingData(intent)
         bindUiData()
+        refreshFullScreenIntentHint()
     }
 
     private fun attachObservers() {
@@ -192,14 +203,22 @@ class IncomingCallActivity : Activity(), NotificationCenter.NotificationCenterDe
         Log.d(TAG, "handleStateChanged: state=${state::class.simpleName}")
         when (state) {
             is CallState.Idle -> finishCallActivity()
+            is CallState.Incoming -> {
+                if (!connecting && !dismissed && !isFinishing) {
+                    scheduleIncomingRingtoneFromActivity()
+                }
+                refreshFullScreenIntentHint()
+            }
             is CallState.Connecting -> {
                 connecting = true
+                cancelDeferredIncomingRingtone()
                 callAudioManager?.stopTone()
                 handler.removeCallbacks(autoDeclineRunnable)
                 showConnectingUi()
             }
             is CallState.Connected -> {
                 connecting = true
+                cancelDeferredIncomingRingtone()
                 callAudioManager?.stopTone()
                 handler.removeCallbacks(autoDeclineRunnable)
                 handler.removeCallbacks(acceptTimeoutRunnable)
@@ -228,12 +247,14 @@ class IncomingCallActivity : Activity(), NotificationCenter.NotificationCenterDe
     private fun incomingCallIsVideo(): Boolean {
         ensureCallController()?.currentCallInfo()?.let { return it.isVideo }
         val raw = offerJson ?: return false
+        val parsed = rootJsonForIncomingOffer(raw) ?: return false
         return try {
-            val parsed = JSONObject(raw)
-            val compressed = parsed.optString("offer", parsed.optString("sdp", ""))
-            if (compressed.isEmpty()) return false
-            val sdp = if (compressed.startsWith("v=")) compressed else SdpCompressor.decompress(compressed)
-            sdp.contains("m=video")
+            when {
+                parsed.has("isVideoCall") -> parsed.getBoolean("isVideoCall")
+                parsed.has("is_video_call") -> parsed.getBoolean("is_video_call")
+                parsed.has("isVideo") -> parsed.getBoolean("isVideo")
+                else -> SdpCompressor.sdpPlainTextFromNegotiationJson(parsed)?.contains("m=video") == true
+            }
         } catch (_: Exception) {
             false
         }
@@ -369,6 +390,23 @@ class IncomingCallActivity : Activity(), NotificationCenter.NotificationCenterDe
             Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
         ).apply { bottomMargin = dp(70) })
 
+        fullScreenIntentHint = TextView(this).apply {
+            visibility = View.GONE
+            text = getString(R.string.call_full_screen_intent_incoming_hint)
+            setTextColor(tc.textLink)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+            gravity = Gravity.CENTER
+            setPadding(dp(24), 0, dp(24), 0)
+            setOnClickListener {
+                callManager()?.launchFullScreenIntentSettings(this@IncomingCallActivity)
+            }
+        }
+        root.addView(fullScreenIntentHint, FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT,
+            FrameLayout.LayoutParams.WRAP_CONTENT,
+            Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+        ).apply { bottomMargin = dp(138) })
+
         connectingContainer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
@@ -392,6 +430,31 @@ class IncomingCallActivity : Activity(), NotificationCenter.NotificationCenterDe
         titleView?.text = "Incoming Call"
         ringingAvatarView?.setInfo(0L, callerName)
         ringingAvatarView?.setImageUrl(callerAvatar)
+    }
+
+    private fun scheduleIncomingRingtoneFromActivity() {
+        handler.removeCallbacks(deferredIncomingRingtoneRunnable)
+        ensureCallController()?.stopIncomingCallRingtone()
+        handler.post(deferredIncomingRingtoneRunnable)
+    }
+
+    private fun cancelDeferredIncomingRingtone() {
+        handler.removeCallbacks(deferredIncomingRingtoneRunnable)
+    }
+
+    private fun applyIncomingRingtoneIfStillValid() {
+        if (dismissed || connecting || isFinishing) return
+        val c = ensureCallController() ?: return
+        if (c.callState !is CallState.Incoming) return
+        try {
+            callAudioManager?.stop()
+            callAudioManager = null
+            callAudioManager = CallAudioManager(this).also {
+                it.startForIncomingRing()
+                it.playRingtone()
+            }
+        } catch (_: Exception) {
+        }
     }
 
     private fun loadIncomingData(intent: Intent?) {
@@ -426,16 +489,27 @@ class IncomingCallActivity : Activity(), NotificationCenter.NotificationCenterDe
 
         val json = offerJson
         if (!json.isNullOrBlank()) {
-            try {
-                val parsed = JSONObject(json)
+            rootJsonForIncomingOffer(json)?.let { parsed ->
                 callerName = parsed.optString("callerName", callerName)
                 val parsedAvatar = parsed.optString("callerAvatar", "")
                 if (parsedAvatar.isNotBlank()) {
                     callerAvatar = parsedAvatar
                 }
-            } catch (e: Exception) {
-                Log.w(TAG, "Failed to parse offerJson", e)
             }
+        }
+    }
+
+    private fun rootJsonForIncomingOffer(raw: String): JSONObject? {
+        val t = raw.trim()
+        if (t.isEmpty()) return null
+        return try {
+            if (t.startsWith("{")) {
+                JSONObject(t)
+            } else {
+                JSONObject(SdpCompressor.decompress(t))
+            }
+        } catch (_: Exception) {
+            null
         }
     }
 
@@ -453,10 +527,28 @@ class IncomingCallActivity : Activity(), NotificationCenter.NotificationCenterDe
         }
     }
 
+    private fun callManager(): CallManager? {
+        return try {
+            EntryPointAccessors.fromApplication(
+                applicationContext,
+                FragmentEntryPoint::class.java
+            ).callManager()
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun refreshFullScreenIntentHint() {
+        val hint = fullScreenIntentHint ?: return
+        val show = !connecting && !dismissed && callManager()?.needsFullScreenIntentSettings() == true
+        hint.visibility = if (show) View.VISIBLE else View.GONE
+    }
+
     private fun acceptCall() {
         if (dismissed || connecting) return
         connecting = true
 
+        cancelDeferredIncomingRingtone()
         callAudioManager?.stopTone()
         handler.removeCallbacks(autoDeclineRunnable)
         handler.postDelayed(acceptTimeoutRunnable, 60_000)
@@ -489,16 +581,19 @@ class IncomingCallActivity : Activity(), NotificationCenter.NotificationCenterDe
     }
 
     private fun showConnectingUi() {
+        lastConnectedMainVideoMode = null
         actionsContainer?.visibility = View.GONE
         connectingContainer?.visibility = View.VISIBLE
         statusView?.visibility = View.INVISIBLE
         connectedRoot?.visibility = View.GONE
+        fullScreenIntentHint?.visibility = View.GONE
     }
 
     private fun showConnectedUi(connectedTime: Long) {
         contentLayout?.visibility = View.GONE
         actionsContainer?.visibility = View.GONE
         connectingContainer?.visibility = View.GONE
+        fullScreenIntentHint?.visibility = View.GONE
 
         val controller = ensureCallController() ?: return
         val callInfo = controller.currentCallInfo() ?: return
@@ -510,6 +605,7 @@ class IncomingCallActivity : Activity(), NotificationCenter.NotificationCenterDe
         connectedHeader?.setPeerName(callInfo.peerName)
         connectedDurationView?.startTimer(connectedTime)
         applyConnectedMainLayout(callInfo)
+        lastConnectedMainVideoMode = shouldShowRemoteVideo()
         updateConnectedMediaUi()
     }
 
@@ -593,8 +689,7 @@ class IncomingCallActivity : Activity(), NotificationCenter.NotificationCenterDe
 
     private fun shouldShowRemoteVideo(): Boolean {
         val controller = CallController.instance ?: return false
-        if (controller.callState !is CallState.Connected) return false
-        return controller.isRemoteVideoEnabled && controller.remoteVideoTrack != null
+        return controller.shouldShowRemoteVideoForUi()
     }
 
     private fun applyConnectedMainLayout(callInfo: CallInfo) {
@@ -619,7 +714,15 @@ class IncomingCallActivity : Activity(), NotificationCenter.NotificationCenterDe
 
         val callInfo = controller.currentCallInfo()
         if (controller.callState is CallState.Connected && callInfo != null) {
-            applyConnectedMainLayout(callInfo)
+            val wantVideo = shouldShowRemoteVideo()
+            if (lastConnectedMainVideoMode != wantVideo) {
+                lastConnectedMainVideoMode = wantVideo
+                applyConnectedMainLayout(callInfo)
+            } else if (wantVideo) {
+                applyConnectedLocalVideoPreviewInMainLayout()
+            } else {
+                bindConnectedLocalPip()
+            }
         }
     }
 
@@ -760,11 +863,12 @@ class IncomingCallActivity : Activity(), NotificationCenter.NotificationCenterDe
         dismissed = true
 
         statusView?.text = "Call ended"
+        cancelDeferredIncomingRingtone()
         callAudioManager?.stopTone()
         handler.removeCallbacks(autoDeclineRunnable)
         handler.removeCallbacks(acceptTimeoutRunnable)
 
-        CallController.instance?.rejectCall()
+        ensureCallController()?.rejectCallFromIncomingCallUi(offerJson)
 
         MezonCallConnection.activeConnection?.let {
             it.setCallDisconnected(DisconnectCause.REJECTED)
@@ -777,6 +881,7 @@ class IncomingCallActivity : Activity(), NotificationCenter.NotificationCenterDe
     private fun finishCallActivity() {
         if (isFinishing) return
         dismissed = true
+        cancelDeferredIncomingRingtone()
         try {
             CallNotificationManager(this).dismissIncomingNotification()
         } catch (_: Exception) {}
@@ -784,6 +889,8 @@ class IncomingCallActivity : Activity(), NotificationCenter.NotificationCenterDe
     }
 
     override fun onDestroy() {
+        lastConnectedMainVideoMode = null
+        cancelDeferredIncomingRingtone()
         handler.removeCallbacks(autoDeclineRunnable)
         handler.removeCallbacks(acceptTimeoutRunnable)
         callAudioManager?.stopTone()

@@ -45,6 +45,10 @@ class WebRtcInfra @Inject constructor(
         mainHandler.post { ensureInitializedOnMain() }
     }
 
+    fun ensureFactoryReady() {
+        ensureReadyBlocking()
+    }
+
     private fun ensureReadyBlocking() {
         if (initialized) return
         if (Looper.myLooper() == Looper.getMainLooper()) {

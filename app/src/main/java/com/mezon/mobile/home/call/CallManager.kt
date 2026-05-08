@@ -1,5 +1,6 @@
 package com.mezon.mobile.home.call
 
+import android.app.Activity
 import android.app.NotificationManager
 import android.content.ComponentName
 import android.content.Context
@@ -7,6 +8,7 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import android.telecom.PhoneAccount
 import android.telecom.PhoneAccountHandle
 import android.telecom.TelecomManager
@@ -17,6 +19,7 @@ import javax.inject.Singleton
 
 private const val TAG = "CallManager"
 private const val ACCOUNT_ID = "MezonCallAccount"
+private const val TELECOM_OFFER_JSON_MAX_CHARS = 48_000
 
 @Singleton
 class CallManager @Inject constructor(
@@ -36,8 +39,12 @@ class CallManager @Inject constructor(
 
     private fun registerPhoneAccount() {
         try {
+            var capabilities = PhoneAccount.CAPABILITY_SELF_MANAGED
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                capabilities = capabilities or PhoneAccount.CAPABILITY_SUPPORTS_VIDEO_CALLING
+            }
             val account = PhoneAccount.builder(phoneAccountHandle, "Mezon")
-                .setCapabilities(PhoneAccount.CAPABILITY_SELF_MANAGED)
+                .setCapabilities(capabilities)
                 .build()
             telecomManager?.registerPhoneAccount(account)
         } catch (e: Exception) {
@@ -49,15 +56,31 @@ class CallManager @Inject constructor(
         callerName: String,
         callerId: String,
         channelId: String,
-        offerJson: String
+        offerJson: String,
+        isVideoCall: Boolean
     ): Boolean {
+        val offerForBundle = if (offerJson.length <= TELECOM_OFFER_JSON_MAX_CHARS) offerJson else ""
+        if (offerJson.length > TELECOM_OFFER_JSON_MAX_CHARS) {
+            Log.w(TAG, "offerJson too large for Telecom Bundle (${offerJson.length} chars), omitting extras; use prefs")
+        }
         val extras = Bundle().apply {
             putString(EXTRA_CALLER_NAME, callerName)
             putString(EXTRA_CALLER_ID, callerId)
             putString(EXTRA_CHANNEL_ID, channelId)
-            putString(EXTRA_OFFER_JSON, offerJson)
+            putString(EXTRA_OFFER_JSON, offerForBundle)
+            putBoolean(EXTRA_IS_VIDEO_CALL, isVideoCall)
         }
         val manager = telecomManager ?: return false
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            try {
+                if (!manager.isIncomingCallPermitted(phoneAccountHandle)) {
+                    Log.w(TAG, "Telecom denied incoming call (isIncomingCallPermitted=false)")
+                    return false
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "isIncomingCallPermitted check failed", e)
+            }
+        }
         return try {
             manager.addNewIncomingCall(phoneAccountHandle, extras)
             true
@@ -75,11 +98,56 @@ class CallManager @Inject constructor(
         return true
     }
 
+    fun needsFullScreenIntentSettings(): Boolean {
+        return Build.VERSION.SDK_INT >= 34 && !canUseFullScreenIntent()
+    }
+
+    fun launchFullScreenIntentSettings(from: Context) {
+        if (Build.VERSION.SDK_INT < 34) return
+        val pkg = from.packageName
+        try {
+            val intent = Intent(Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT).apply {
+                data = Uri.parse("package:$pkg")
+                if (from !is Activity) {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+            }
+            from.startActivity(intent)
+            return
+        } catch (e: Exception) {
+            Log.e(TAG, "ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT failed", e)
+        }
+        try {
+            val fallback = Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
+                putExtra(Settings.EXTRA_APP_PACKAGE, pkg)
+                putExtra("android.provider.extra.APP_PACKAGE", pkg)
+                if (from !is Activity) {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+            }
+            from.startActivity(fallback)
+        } catch (e: Exception) {
+            Log.e(TAG, "notification settings fallback failed", e)
+            try {
+                val details = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                    data = Uri.fromParts("package", pkg, null)
+                    if (from !is Activity) {
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    }
+                }
+                from.startActivity(details)
+            } catch (e2: Exception) {
+                Log.e(TAG, "app details fallback failed", e2)
+            }
+        }
+    }
+
     companion object {
         const val EXTRA_CALLER_NAME = "caller_name"
         const val EXTRA_CALLER_ID = "caller_id"
         const val EXTRA_CHANNEL_ID = "channel_id"
         const val EXTRA_CALLER_AVATAR = "caller_avatar"
         const val EXTRA_OFFER_JSON = "offer_json"
+        const val EXTRA_IS_VIDEO_CALL = "is_video_call"
     }
 }
