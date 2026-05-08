@@ -1007,6 +1007,12 @@ class ChatFragment : BaseFragment() {
             }
         }
 
+        observe(NotificationCenter.dialogsNeedReload) { _, _, _ ->
+            if (isPaused) return@observe
+            if (clanId != 0L || channelType != CHANNEL_TYPE_DM) return@observe
+            actionBar?.let { setupDmHeaderCallMenu(it) }
+        }
+
         observe(NotificationCenter.jumpToMessage) { _, _, args ->
             val targetChannelId = args.getOrNull(0) as? Long ?: return@observe
             val targetMessageId = args.getOrNull(1) as? Long ?: return@observe
@@ -2851,7 +2857,8 @@ class ChatFragment : BaseFragment() {
             return participants.size <= 1 || participants.all { it.userId == myId }
         }
         val dm = dialogsController.getDialog(channelId) ?: return false
-        return dm.otherUserId == 0L || dm.otherUserId == myId
+        if (dm.otherUserId == 0L) return false
+        return dm.otherUserId == myId
     }
 
     private fun dmHeaderCallOtherUserId(): Long? {
@@ -2913,7 +2920,12 @@ class ChatFragment : BaseFragment() {
                 }
             }
         })
-        val callMenuItem = chatActionBar.createMenu().addItem(MENU_DM_VOICE_CALL, MezonIcon.phoneCallIcon.resId)
+        val menu = chatActionBar.createMenu()
+        if (menu.getItem(MENU_DM_VOICE_CALL) != null) {
+            chatActionBar.setItemsColor(themeColors.onSurface)
+            return
+        }
+        val callMenuItem = menu.addItem(MENU_DM_VOICE_CALL, MezonIcon.phoneCallIcon.resId)
         callMenuItem.contentDescription = getString(R.string.user_profile_voice_call)
         val callItemLp = callMenuItem.layoutParams as LinearLayout.LayoutParams
         callItemLp.height = LayoutHelper.MATCH_PARENT
