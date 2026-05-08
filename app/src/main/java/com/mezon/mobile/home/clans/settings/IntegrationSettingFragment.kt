@@ -7,17 +7,20 @@ import android.net.Uri
 import android.os.Bundle
 import android.text.SpannableString
 import android.text.Spanned
-import android.text.method.LinkMovementMethod
 import android.text.style.ClickableSpan
 import android.text.style.ForegroundColorSpan
-import android.view.Gravity
+import android.text.method.LinkMovementMethod
 import android.view.View
+import android.view.ViewGroup
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
+import androidx.recyclerview.widget.LinearLayoutManager
+import androidx.recyclerview.widget.RecyclerView
 import com.mezon.mobile.R
 import com.mezon.mobile.core.BaseFragment
 import com.mezon.mobile.core.LayoutHelper
+import com.mezon.mobile.core.ThemeColors
 import com.mezon.mobile.di.FragmentEntryPoint
 import com.mezon.mobile.home.clans.ChannelController
 import com.mezon.mobile.home.clans.CreateClanRnUiTokens
@@ -84,61 +87,25 @@ class IntegrationSettingFragment : BaseFragment() {
         }
         root.addView(actionBar, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT))
 
-        val scroll = ClanSettingsUiHelpers.newMezonScrollRoot(context)
-        val inner = LinearLayout(context).apply {
-            orientation = LinearLayout.VERTICAL
+        val recyclerView = RecyclerView(context).apply {
+            layoutManager = LinearLayoutManager(context)
+            setHasFixedSize(true)
+            itemAnimator = null
+            overScrollMode = View.OVER_SCROLL_NEVER
+            clipToPadding = false
             setPadding(LayoutHelper.dp(16f), LayoutHelper.dp(8f), LayoutHelper.dp(16f), LayoutHelper.dp(24f))
+            adapter = IntegrationSettingAdapter(
+                themeColors,
+                buildIntegrationDescriptionSpans(context),
+                getString(R.string.integration_automated_message),
+                getString(R.string.integration_channel_webhooks),
+                getString(R.string.integration_clan_webhooks),
+                Runnable { presentFragment(WebhooksListFragment.newInstance(clanId, isClanScope = false)) },
+                Runnable { presentFragment(WebhooksListFragment.newInstance(clanId, isClanScope = true)) },
+            )
         }
 
-        inner.addView(
-            TextView(context).apply {
-                text = buildIntegrationDescriptionSpans(context)
-                textSize = 12f
-                setTextColor(CreateClanRnUiTokens.textDisabled(themeColors))
-                movementMethod = LinkMovementMethod.getInstance()
-                setPadding(0, 0, 0, LayoutHelper.dp(18f))
-            },
-            LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT)
-        )
-
-        val webhookSubtitle = getString(R.string.integration_automated_message)
-        inner.addView(
-            ClanSettingsUiHelpers.buildMezonSection(
-                context,
-                themeColors,
-                null,
-                listOf(
-                    ClanSettingsUiHelpers.buildMezonChevronSubtitleRow(
-                        context,
-                        themeColors,
-                        MezonIcon.webhookIcon,
-                        getString(R.string.integration_channel_webhooks),
-                        webhookSubtitle,
-                        Runnable {
-                            presentFragment(WebhooksListFragment.newInstance(clanId, isClanScope = false))
-                        }
-                    ),
-                    ClanSettingsUiHelpers.buildMezonChevronSubtitleRow(
-                        context,
-                        themeColors,
-                        MezonIcon.webhookIcon,
-                        getString(R.string.integration_clan_webhooks),
-                        webhookSubtitle,
-                        Runnable {
-                            presentFragment(WebhooksListFragment.newInstance(clanId, isClanScope = true))
-                        }
-                    ),
-                )
-            ),
-            LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT)
-        )
-
-        scroll.addView(inner, LinearLayout.LayoutParams(
-            LinearLayout.LayoutParams.MATCH_PARENT,
-            LinearLayout.LayoutParams.WRAP_CONTENT
-        ))
-
-        root.addView(scroll, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, 0, 1f))
+        root.addView(recyclerView, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, 0, 1f))
         fragmentView = root
         return root
     }
@@ -171,6 +138,86 @@ class IntegrationSettingFragment : BaseFragment() {
     private fun safeOpenDocs(context: Context, url: String) {
         runCatching {
             context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+        }
+    }
+
+    private class IntegrationSettingAdapter(
+        private val themeColors: ThemeColors,
+        private val introText: CharSequence,
+        private val webhookSubtitle: String,
+        private val channelWebhooksTitle: String,
+        private val clanWebhooksTitle: String,
+        private val onChannelWebhooks: Runnable,
+        private val onClanWebhooks: Runnable,
+    ) : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
+
+        init {
+            setHasStableIds(true)
+        }
+
+        override fun getItemId(position: Int): Long = position.toLong()
+
+        override fun getItemCount(): Int = 2
+
+        override fun getItemViewType(position: Int): Int =
+            if (position == 0) VIEW_TYPE_INTRO else VIEW_TYPE_SECTION
+
+        override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): RecyclerView.ViewHolder {
+            val context = parent.context
+            return when (viewType) {
+                VIEW_TYPE_INTRO -> IntroViewHolder(createIntroTextView(context))
+                else -> SectionViewHolder(
+                    ClanSettingsUiHelpers.buildMezonSection(
+                        context,
+                        themeColors,
+                        null,
+                        listOf(
+                            ClanSettingsUiHelpers.buildMezonChevronSubtitleRow(
+                                context,
+                                themeColors,
+                                MezonIcon.webhookIcon,
+                                channelWebhooksTitle,
+                                webhookSubtitle,
+                                onChannelWebhooks,
+                            ),
+                            ClanSettingsUiHelpers.buildMezonChevronSubtitleRow(
+                                context,
+                                themeColors,
+                                MezonIcon.webhookIcon,
+                                clanWebhooksTitle,
+                                webhookSubtitle,
+                                onClanWebhooks,
+                            ),
+                        ),
+                    ),
+                )
+            }
+        }
+
+        override fun onBindViewHolder(holder: RecyclerView.ViewHolder, position: Int) {
+            if (holder is IntroViewHolder) holder.bind(introText)
+        }
+
+        private fun createIntroTextView(context: Context): TextView {
+            return TextView(context).apply {
+                textSize = 12f
+                setTextColor(CreateClanRnUiTokens.textDisabled(themeColors))
+                movementMethod = LinkMovementMethod.getInstance()
+                setPadding(0, 0, 0, LayoutHelper.dp(18f))
+            }
+        }
+
+        private class IntroViewHolder(private val textView: TextView) : RecyclerView.ViewHolder(textView) {
+            fun bind(text: CharSequence) {
+                textView.text = text
+            }
+        }
+
+        private class SectionViewHolder(itemView: View) : RecyclerView.ViewHolder(itemView)
+
+        companion object {
+            private const val VIEW_TYPE_INTRO = 0
+            private const val VIEW_TYPE_SECTION = 1
         }
     }
 }

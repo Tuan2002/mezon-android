@@ -38,6 +38,7 @@ import com.mezon.mobile.ui.MezonToast
 import com.mezon.mobile.ui.cells.ActionBarView
 import com.mezon.mobile.ui.cells.MezonIcon
 import com.mezon.mobile.ui.cells.ToastOverlay
+import com.mezon.mobile.util.FileUtils
 import com.mezon.mobile.util.Webhook as WebhookUtil
 import com.mezon.mezon.api.ClanWebhook
 import com.mezon.mezon.api.Webhook
@@ -473,6 +474,11 @@ class WebhookEditFragment : BaseFragment() {
         busy?.visibility = View.VISIBLE
         fragmentScope.launch(mainDispatcher) {
             runCatching {
+                val fileSize = withContext(ioDispatcher) { FileUtils.getPickedFileSize(cr, uri) }
+                if (fileSize > WebhookUtil.MAX_WEBHOOK_AVATAR_BYTES) {
+                    MezonToast.show(this@WebhookEditFragment, ToastOverlay.ToastType.ERROR, getString(R.string.clan_image_too_large, WebhookUtil.MAX_WEBHOOK_AVATAR_BYTES / (1024 * 1024)))
+                    return@launch
+                }
                 val bytes = withContext(ioDispatcher) {
                     cr.openInputStream(uri)?.use { it.readBytes() } ?: throw RuntimeException("read")
                 }
