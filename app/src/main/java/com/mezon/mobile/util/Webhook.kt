@@ -11,7 +11,7 @@ object Webhook {
     val PRESET_NAMES = listOf(
         "Captain hook",
         "Spidey bot",
-        "Komu Knight"
+        "Komu Knight",
         "Mezon Bot",
     )
 

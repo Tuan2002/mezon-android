@@ -1,5 +1,10 @@
 package com.mezon.mobile.util
 
+import android.content.ContentResolver
+import android.net.Uri
+import android.provider.OpenableColumns
+import java.io.File
+
 object FileUtils {
 
     fun getFileColor(filename: String, fallbackColor: Int): Int {
@@ -25,5 +30,25 @@ object FileUtils {
             bytes < 1024 * 1024 -> "${bytes / 1024} KB"
             else -> "%.1f MB".format(bytes / (1024f * 1024f))
         }
+    }
+
+    fun getPickedFileSize(cr: ContentResolver, uri: Uri): Long {
+        if (uri.scheme == ContentResolver.SCHEME_FILE) {
+            val path = uri.path ?: return -1L
+            return runCatching { File(path).length() }.getOrDefault(-1L)
+        }
+        val fromPfd = runCatching {
+            cr.openFileDescriptor(uri, "r")?.use { pfd ->
+                val s = pfd.statSize
+                if (s >= 0) s else -1L
+            } ?: -1L
+        }.getOrDefault(-1L)
+        if (fromPfd >= 0) return fromPfd
+        return runCatching {
+            cr.query(uri, arrayOf(OpenableColumns.SIZE), null, null, null)?.use { cursor ->
+                val idx = cursor.getColumnIndex(OpenableColumns.SIZE)
+                if (idx >= 0 && cursor.moveToFirst() && !cursor.isNull(idx)) cursor.getLong(idx) else -1L
+            } ?: -1L
+        }.getOrDefault(-1L)
     }
 }
