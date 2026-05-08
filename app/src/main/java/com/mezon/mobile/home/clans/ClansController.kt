@@ -13,8 +13,12 @@ import com.mezon.mobile.di.IoDispatcher
 import com.mezon.mobile.network.ApiCacheTracker
 import com.mezon.mezon.api.ClanBadgeCount
 import com.mezon.mezon.api.ClanDesc
+import com.mezon.mezon.api.GenerateClanWebhookResponse
+import com.mezon.mezon.api.ListClanWebhookResponse
 import com.mezon.mezon.api.SystemMessage
 import com.mezon.mezon.api.SystemMessageRequest
+import com.mezon.mezon.api.WebhookGenerateResponse
+import com.mezon.mezon.api.WebhookListResponse
 import com.mezon.mobile.network.MezonApi
 import com.mezon.mobile.network.MezonSocket
 import com.mezon.mobile.network.SocketEventDispatcher
@@ -619,6 +623,138 @@ class ClansController @Inject constructor(
             if (clan.logo.isEmpty()) continue
             val url = avatarImgproxyUrl(clan.logo, sizePx)
             loader.load(url, sizePx, sizePx, onSuccess = {})
+        }
+    }
+
+    suspend fun fetchClanWebhooks(clanId: Long): ListClanWebhookResponse {
+        return sessionManager.withAutoRefresh { session ->
+            withContext(ioDispatcher) {
+                api.listClanWebhooks(session.apiUrl, session.token, clanId)
+            }
+        }
+    }
+
+    suspend fun fetchChannelWebhooksForClan(clanId: Long): WebhookListResponse {
+        return sessionManager.withAutoRefresh { session ->
+            withContext(ioDispatcher) {
+                api.listWebhooksByChannelId(session.apiUrl, session.token, 0L, clanId)
+            }
+        }
+    }
+
+    suspend fun generateChannelWebhook(
+        webhookName: String,
+        channelId: Long,
+        clanId: Long,
+        avatar: String,
+    ): WebhookGenerateResponse {
+        return sessionManager.withAutoRefresh { session ->
+            withContext(ioDispatcher) {
+                api.generateWebhook(session.apiUrl, session.token, webhookName, channelId, clanId, avatar)
+            }
+        }
+    }
+
+    suspend fun generateClanWebhook(
+        clanId: Long,
+        webhookName: String,
+        avatar: String,
+    ): GenerateClanWebhookResponse {
+        return sessionManager.withAutoRefresh { session ->
+            withContext(ioDispatcher) {
+                api.generateClanWebhook(session.apiUrl, session.token, clanId, webhookName, avatar)
+            }
+        }
+    }
+
+    suspend fun updateChannelWebhookById(
+        webhookId: Long,
+        webhookName: String,
+        avatarUrl: String,
+        channelIdExisting: Long,
+        newChannelId: Long,
+        clanId: Long,
+    ) {
+        sessionManager.withAutoRefresh { session ->
+            withContext(ioDispatcher) {
+                api.updateWebhookById(
+                    session.apiUrl,
+                    session.token,
+                    webhookId,
+                    webhookName,
+                    avatarUrl,
+                    channelIdExisting = channelIdExisting,
+                    newChannelId = newChannelId,
+                    clanId = clanId,
+                )
+            }
+        }
+    }
+
+    suspend fun updateClanWebhookById(
+        webhookId: Long,
+        clanId: Long,
+        webhookName: String,
+        avatar: String,
+        resetToken: Boolean,
+    ) {
+        sessionManager.withAutoRefresh { session ->
+            withContext(ioDispatcher) {
+                api.updateClanWebhookById(
+                    session.apiUrl,
+                    session.token,
+                    webhookId,
+                    clanId,
+                    webhookName,
+                    avatar,
+                    resetToken = resetToken,
+                )
+            }
+        }
+    }
+
+    suspend fun deleteChannelWebhook(webhookId: Long, clanId: Long, hookChannelId: Long) {
+        sessionManager.withAutoRefresh { session ->
+            withContext(ioDispatcher) {
+                api.deleteWebhookById(session.apiUrl, session.token, webhookId, clanId, hookChannelId)
+            }
+        }
+    }
+
+    suspend fun deleteClanWebhook(webhookId: Long, clanId: Long) {
+        sessionManager.withAutoRefresh { session ->
+            withContext(ioDispatcher) {
+                api.deleteClanWebhookById(session.apiUrl, session.token, webhookId, clanId)
+            }
+        }
+    }
+
+    suspend fun clanWebhookPublicUrl(webhookId: Long, clanId: Long): String? {
+        return sessionManager.withAutoRefresh { session ->
+            withContext(ioDispatcher) {
+                api.listClanWebhooks(session.apiUrl, session.token, clanId)
+                    .listClanWebhooksList.firstOrNull { it.id == webhookId }?.url
+            }
+        }
+    }
+
+    suspend fun uploadWebhookAvatar(bytes: ByteArray, mimeType: String): String {
+        return sessionManager.withAutoRefresh { session ->
+            withContext(ioDispatcher) {
+                val ts = System.currentTimeMillis() / 1000
+                val name = "${ts}_wh.jpg"
+                val presign = api.uploadAttachmentFile(
+                    session.apiUrl,
+                    session.token,
+                    name,
+                    mimeType,
+                    bytes.size,
+                    512,
+                    512,
+                )
+                api.putFileToPresignedUrl(presign.url, bytes, mimeType)
+                "${BuildConfig.MEZON_BASE_IMG_URL}/${presign.filename}"
+            }
         }
     }
 
