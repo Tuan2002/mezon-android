@@ -117,6 +117,8 @@ import com.mezon.mobile.home.chat.poll.PollVotePersistence
 import com.mezon.mobile.home.chat.poll.mergePollFromGetResponse
 import com.mezon.mobile.home.chat.poll.parsePollContent
 import com.mezon.mobile.home.chat.poll.votedAnswerIndices
+import com.mezon.mobile.home.call.CallManager
+import com.mezon.mobile.home.call.parseCallLogMessage
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -199,6 +201,7 @@ class ChatFragment : BaseFragment() {
     private lateinit var pinMessageController: com.mezon.mobile.home.PinMessageController
     private lateinit var walletController: WalletController
     private lateinit var callController: com.mezon.mobile.home.call.CallController
+    private lateinit var callManager: CallManager
     private lateinit var friendController: FriendController
 
     private lateinit var recyclerView: RecyclerListView
@@ -1044,6 +1047,7 @@ class ChatFragment : BaseFragment() {
         roleController = entryPoint.roleController()
         searchController = entryPoint.searchController()
         callController = entryPoint.callController()
+        callManager = entryPoint.callManager()
         friendController = entryPoint.friendController()
         emojiController = entryPoint.emojiController()
         anonymousController = entryPoint.anonymousController()
@@ -1534,19 +1538,47 @@ class ChatFragment : BaseFragment() {
                 return friendController.isUserBlocked(other.userId)
             }
             override fun didTapCallLogCallBack(cell: ChatMessageCell, msg: MessageEntity) {
-                val triple = resolveDmCallPeerForCallback(msg) ?: return
-                requestCallPermissions(needsCamera = false) {
-                    callController.startCall(
-                        triple.first,
-                        triple.second,
-                        triple.third,
-                        channelId,
-                        clanId,
-                        channelType,
-                        resolveChannelPrivate(),
-                        isVideo = false
+                val parsed = parseCallLogMessage(msg.content)
+                Log.d(
+                    TAG,
+                    "callLogCallback tap msgId=${msg.id} channelId=$channelId clanId=$clanId " +
+                        "senderId=${msg.senderId} isMe=${msg.isMe} parsedType=${parsed?.callLogType}"
+                )
+                val triple = resolveDmCallPeerForCallback(msg) ?: run {
+                    if (channelType == CHANNEL_TYPE_DM && clanId == 0L) {
+                        dialogsController.loadDmParticipants(channelId)
+                        MezonToast.show(
+                            this@ChatFragment,
+                            ToastOverlay.ToastType.INFO,
+                            getString(R.string.common_loading_data)
+                        )
+                        Log.w(TAG, "callLogCallback unresolved peer loadDmParticipants msgId=${msg.id} channelId=$channelId")
+                    } else {
+                        Log.w(
+                            TAG,
+                            "callLogCallback unresolved peer msgId=${msg.id} channelType=$channelType clanId=$clanId"
+                        )
+                    }
+                    return
+                }
+                Log.d(TAG, "callLogCallback resolved peerId=${triple.first} msgId=${msg.id}")
+                requestCallPermissions(needsCamera = false, reason = "callLogCallback") {
+                    Log.d(TAG, "callLogCallback permissions ok startCall peerId=${triple.first} msgId=${msg.id}")
+                    runOutgoingCallAfterFullScreenIntentPrompt(
+                        {
+                            callController.startCall(
+                                triple.first,
+                                triple.second,
+                                triple.third,
+                                channelId,
+                                clanId,
+                                channelType,
+                                resolveChannelPrivate(),
+                                isVideo = false
+                            )
+                            presentFragment(com.mezon.mobile.home.call.CallFragment())
+                        }
                     )
-                    presentFragment(com.mezon.mobile.home.call.CallFragment())
                 }
             }
         })
@@ -2841,11 +2873,27 @@ class ChatFragment : BaseFragment() {
         val o = parts.firstOrNull { it.userId != myId }
         if (o != null) {
             val name = o.displayName.ifBlank { o.username.ifBlank { "User" } }
+            Log.d(TAG, "resolveDmCallPeerForCallback peer=participants userId=${o.userId} msgId=${msg.id}")
             return Triple(o.userId, name, o.avatarUrl.ifBlank { null })
         }
         if (msg.senderId != myId) {
+            Log.d(TAG, "resolveDmCallPeerForCallback peer=senderId userId=${msg.senderId} msgId=${msg.id}")
             return Triple(msg.senderId, msg.senderName.ifBlank { "User" }, msg.senderAvatar.ifBlank { null })
         }
+        val dm = dialogsController.getDialog(channelId)
+        if (dm != null && dm.otherUserId != 0L && dm.otherUserId != myId) {
+            val name = dm.displayName.ifBlank { dm.label.ifBlank { "User" } }
+            Log.d(
+                TAG,
+                "resolveDmCallPeerForCallback peer=dialog otherUserId=${dm.otherUserId} msgId=${msg.id}"
+            )
+            return Triple(dm.otherUserId, name, dm.avatarUrl.ifBlank { null })
+        }
+        Log.w(
+            TAG,
+            "resolveDmCallPeerForCallback no peer msgId=${msg.id} channelId=$channelId myId=$myId senderId=${msg.senderId} " +
+                "participantsSize=${parts.size} dmOther=${dm?.otherUserId}"
+        )
         return null
     }
 
@@ -2904,17 +2952,21 @@ class ChatFragment : BaseFragment() {
                             return
                         }
                         requestCallPermissions(needsCamera = false) {
-                            callController.startCall(
-                                triple.first,
-                                triple.second,
-                                triple.third,
-                                channelId,
-                                clanId,
-                                channelType,
-                                resolveChannelPrivate(),
-                                isVideo = false
+                            runOutgoingCallAfterFullScreenIntentPrompt(
+                                {
+                                    callController.startCall(
+                                        triple.first,
+                                        triple.second,
+                                        triple.third,
+                                        channelId,
+                                        clanId,
+                                        channelType,
+                                        resolveChannelPrivate(),
+                                        isVideo = false
+                                    )
+                                    presentFragment(com.mezon.mobile.home.call.CallFragment())
+                                }
                             )
-                            presentFragment(com.mezon.mobile.home.call.CallFragment())
                         }
                     }
                 }
@@ -3912,6 +3964,8 @@ class ChatFragment : BaseFragment() {
             }
             if (audioGranted) {
                 pendingCallPermissionCallback?.invoke()
+            } else {
+                Log.w(TAG, "requestCallPermissions denied RECORD_AUDIO results=${grantResults.contentToString()}")
             }
             pendingCallPermissionCallback = null
         }
@@ -4168,17 +4222,21 @@ class ChatFragment : BaseFragment() {
                     val senderName = msg.senderName ?: "Unknown"
                     val senderAvatar = msg.senderAvatar
                     requestCallPermissions(needsCamera = false) {
-                        callController.startCall(
-                            userId,
-                            senderName,
-                            senderAvatar.ifBlank { null },
-                            channelId,
-                            clanId,
-                            channelType,
-                            resolveChannelPrivate(),
-                            isVideo = false
+                        runOutgoingCallAfterFullScreenIntentPrompt(
+                            {
+                                callController.startCall(
+                                    userId,
+                                    senderName,
+                                    senderAvatar.ifBlank { null },
+                                    channelId,
+                                    clanId,
+                                    channelType,
+                                    resolveChannelPrivate(),
+                                    isVideo = false
+                                )
+                                presentFragment(com.mezon.mobile.home.call.CallFragment())
+                            }
                         )
-                        presentFragment(com.mezon.mobile.home.call.CallFragment())
                     }
                 }
                 override fun onAddFriend(userId: Long) {
@@ -5075,8 +5133,17 @@ class ChatFragment : BaseFragment() {
 
     private var pendingCallPermissionCallback: (() -> Unit)? = null
 
-    private fun requestCallPermissions(needsCamera: Boolean = true, onGranted: () -> Unit) {
-        val activity = getParentActivity() ?: run { onGranted(); return }
+    private fun requestCallPermissions(
+        needsCamera: Boolean = true,
+        reason: String = "unspecified",
+        onGranted: () -> Unit
+    ) {
+        val activity = getParentActivity()
+        if (activity == null) {
+            Log.w(TAG, "requestCallPermissions skipped no activity reason=$reason")
+            onGranted()
+            return
+        }
         val needed = mutableListOf<String>()
         if (androidx.core.content.ContextCompat.checkSelfPermission(activity, android.Manifest.permission.RECORD_AUDIO)
             != android.content.pm.PackageManager.PERMISSION_GRANTED) {
@@ -5088,11 +5155,33 @@ class ChatFragment : BaseFragment() {
             needed.add(android.Manifest.permission.CAMERA)
         }
         if (needed.isEmpty()) {
-            onGranted()
+            Log.d(TAG, "requestCallPermissions already granted reason=$reason")
+            runOutgoingCallAfterFullScreenIntentPrompt(onGranted)
         } else {
-            pendingCallPermissionCallback = onGranted
+            Log.d(TAG, "requestCallPermissions prompting reason=$reason perms=$needed")
+            pendingCallPermissionCallback = { runOutgoingCallAfterFullScreenIntentPrompt(onGranted) }
             androidx.core.app.ActivityCompat.requestPermissions(activity, needed.toTypedArray(), REQUEST_CALL_PERMISSIONS)
         }
+    }
+
+    private fun runOutgoingCallAfterFullScreenIntentPrompt(startCall: () -> Unit) {
+        val act = getParentActivity()
+        if (!callManager.needsFullScreenIntentSettings() || act == null) {
+            startCall()
+            return
+        }
+        AlertDialog.Builder(act)
+            .setTitle(getString(R.string.call_full_screen_intent_title))
+            .setMessage(getString(R.string.call_full_screen_intent_message))
+            .setPositiveButton(getString(R.string.call_full_screen_intent_open_settings)) { d, _ ->
+                callManager.launchFullScreenIntentSettings(act)
+                d.dismiss()
+            }
+            .setNegativeButton(getString(R.string.call_full_screen_intent_start_call_anyway)) { d, _ ->
+                d.dismiss()
+                startCall()
+            }
+            .show()
     }
 
 }

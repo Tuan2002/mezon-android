@@ -27,6 +27,7 @@ import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 import java.util.Locale
+import java.util.concurrent.atomic.AtomicBoolean
 
 class MezonImageLoader private constructor(context: Context) {
 
@@ -68,7 +69,13 @@ class MezonImageLoader private constructor(context: Context) {
     private data class LoadCallback(
         val onSuccess: (Any) -> Unit,
         val onError: ((Exception) -> Unit)?
-    )
+    ) {
+        private val cancelled = AtomicBoolean(false)
+        fun cancel() {
+            cancelled.set(true)
+        }
+        fun isCancelled(): Boolean = cancelled.get()
+    }
 
     private data class PendingDecode(
         val memKey: String,
@@ -154,20 +161,14 @@ class MezonImageLoader private constructor(context: Context) {
         val p = fetchUrl.indexOf(marker)
         if (p >= 0) {
             val embedded = fetchUrl.substring(p + marker.length).substringBefore('@')
-            return stripQueryAndFragment(embedded)
+            return stripFragment(embedded)
         }
-        return when {
-            fetchUrl.startsWith("https://cdn.mezon") -> stripQueryAndFragment(fetchUrl)
-            fetchUrl.startsWith("https://profile.mezon") -> stripQueryAndFragment(fetchUrl)
-            fetchUrl.startsWith("http://cdn.mezon") -> stripQueryAndFragment(fetchUrl)
-            fetchUrl.startsWith("http://profile.mezon") -> stripQueryAndFragment(fetchUrl)
-            else -> fetchUrl
-        }
+        return stripFragment(fetchUrl)
     }
 
-    private fun stripQueryAndFragment(raw: String): String {
+    private fun stripFragment(raw: String): String {
         if (raw.isEmpty()) return raw
-        return raw.substringBefore('#').substringBefore('?')
+        return raw.substringBefore('#')
     }
 
     private fun loadInternal(
@@ -196,7 +197,10 @@ class MezonImageLoader private constructor(context: Context) {
         val cb = LoadCallback(onSuccess, onError)
 
         if (addCallback(memKey, cb)) {
-            return Cancellable { removePendingCallback(logicalUrl, memKey, cb) }
+            return Cancellable {
+                cb.cancel()
+                removePendingCallback(logicalUrl, memKey, cb)
+            }
         }
 
         val urlFile = diskFileForUrl(logicalUrl)
@@ -204,12 +208,18 @@ class MezonImageLoader private constructor(context: Context) {
             touchFile(urlFile)
             if (animated) decodeAnimatedInBackground(urlFile, memKey, reqWidth, reqHeight)
             else decodeInBackground(urlFile, memKey, reqWidth, reqHeight)
-            return Cancellable { removePendingCallback(logicalUrl, memKey, cb) }
+            return Cancellable {
+                cb.cancel()
+                removePendingCallback(logicalUrl, memKey, cb)
+            }
         }
 
         enqueueDecodeAfterDownload(logicalUrl, memKey, reqWidth, reqHeight, animated)
         ensureNetworkFetch(url, logicalUrl)
-        return Cancellable { removePendingCallback(logicalUrl, memKey, cb) }
+        return Cancellable {
+            cb.cancel()
+            removePendingCallback(logicalUrl, memKey, cb)
+        }
     }
 
     private fun enqueueDecodeAfterDownload(
@@ -329,7 +339,9 @@ class MezonImageLoader private constructor(context: Context) {
         val copy: List<LoadCallback>
         synchronized(callbacks) { copy = ArrayList(callbacks) }
         runOnMain {
-            for (cb in copy) cb.onSuccess(result)
+            for (cb in copy) {
+                if (!cb.isCancelled()) cb.onSuccess(result)
+            }
         }
     }
 
@@ -338,7 +350,9 @@ class MezonImageLoader private constructor(context: Context) {
         val copy: List<LoadCallback>
         synchronized(callbacks) { copy = ArrayList(callbacks) }
         runOnMain {
-            for (cb in copy) cb.onError?.invoke(error)
+            for (cb in copy) {
+                if (!cb.isCancelled()) cb.onError?.invoke(error)
+            }
         }
     }
 
@@ -435,10 +449,11 @@ class MezonImageLoader private constructor(context: Context) {
     
     fun invalidateCachedLoad(url: String, reqWidth: Int, reqHeight: Int) {
         if (url.isEmpty()) return
-        inflightUrlCalls.remove(url)?.cancel()
+        val logicalUrl = stableUrlForDiskAndMemory(url)
+        inflightUrlCalls.remove(logicalUrl)?.cancel()
         removeFromCache(url, reqWidth, reqHeight)
         try {
-            diskFileForUrl(url).takeIf { it.exists() }?.delete()
+            diskFileForUrl(logicalUrl).takeIf { it.exists() }?.delete()
         } catch (_: Throwable) {
         }
     }
@@ -530,7 +545,10 @@ class MezonImageLoader private constructor(context: Context) {
         @Suppress("UNCHECKED_CAST")
         val cb = LoadCallback(onSuccess as (Any) -> Unit, onError)
         if (addCallback(cacheKey, cb)) {
-            return Cancellable { removePendingCallback("", cacheKey, cb) }
+            return Cancellable {
+                cb.cancel()
+                removePendingCallback("", cacheKey, cb)
+            }
         }
 
         DECODE_EXECUTOR.execute {
@@ -560,7 +578,10 @@ class MezonImageLoader private constructor(context: Context) {
                 dispatchError(cacheKey, e)
             }
         }
-        return Cancellable { removePendingCallback("", cacheKey, cb) }
+        return Cancellable {
+            cb.cancel()
+            removePendingCallback("", cacheKey, cb)
+        }
     }
 
     fun interface Cancellable {

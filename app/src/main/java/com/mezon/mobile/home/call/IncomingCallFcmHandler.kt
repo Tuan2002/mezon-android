@@ -1,9 +1,12 @@
 package com.mezon.mobile.home.call
 
 import android.content.Context
+import android.os.Handler
+import android.os.Looper
 import android.telecom.DisconnectCause
 import android.util.Log
 import com.google.firebase.messaging.RemoteMessage
+import com.mezon.mobile.MainActivity
 import com.mezon.mobile.core.StartupCache
 import com.mezon.mobile.home.ConnectionController
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -13,6 +16,7 @@ import javax.inject.Singleton
 
 private const val TAG = "IncomingCallFcm"
 private const val INCOMING_CALL_FCM_MAX_AGE_MS = 60_000L
+private val mainHandler = Handler(Looper.getMainLooper())
 
 @Singleton
 class IncomingCallFcmHandler @Inject constructor(
@@ -93,7 +97,7 @@ class IncomingCallFcmHandler @Inject constructor(
             .commit()
         Log.i(TAG, "dispatchOffer: offer filters passed (not cancel, idle, session ok) → reconnect socket for signaling")
         connectionController.reconnectSocketForOfferSignaling()
-        webRtcInfra.prewarm()
+        webRtcInfra.ensureFactoryReady()
         Log.d(TAG, "feeding offer to CallController")
         callController.handleIncomingOfferFromFcm(
             callerName,
@@ -102,29 +106,40 @@ class IncomingCallFcmHandler @Inject constructor(
             channelId,
             offerJson
         )
-        callManager.showIncomingCall(callerName, callerId, channelId, offerJson)
-        val useFsi = callManager.canUseFullScreenIntent()
-        try {
-            CallForegroundService.startRinging(
-                appContext,
+        mainHandler.post {
+            if (MainActivity.isResumed) {
+                return@post
+            }
+            callManager.showIncomingCall(
                 callerName,
-                callerAvatar,
                 callerId,
                 channelId,
                 offerJson,
-                useFsi
+                callController.currentCallInfo()?.isVideo == true
             )
-            Log.i(TAG, "incoming ring via FGS+Telecom notified")
-        } catch (e: Exception) {
-            Log.e(TAG, "ring FGS failed, notify fallback", e)
-            CallNotificationManager(appContext).showIncomingCallNotification(
-                callerName = callerName,
-                callerAvatar = callerAvatar,
-                callerId = callerId,
-                channelId = channelId,
-                offerJson = offerJson,
-                useFullScreenIntent = useFsi
-            )
+            val useFsi = callManager.canUseFullScreenIntent()
+            try {
+                CallForegroundService.startRinging(
+                    appContext,
+                    callerName,
+                    callerAvatar,
+                    callerId,
+                    channelId,
+                    offerJson,
+                    useFsi
+                )
+                Log.i(TAG, "incoming ring via FGS+Telecom notified")
+            } catch (e: Exception) {
+                Log.e(TAG, "ring FGS failed, notify fallback", e)
+                CallNotificationManager(appContext).showIncomingCallNotification(
+                    callerName = callerName,
+                    callerAvatar = callerAvatar,
+                    callerId = callerId,
+                    channelId = channelId,
+                    offerJson = offerJson,
+                    useFullScreenIntent = useFsi
+                )
+            }
         }
     }
 
