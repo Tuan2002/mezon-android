@@ -1,6 +1,8 @@
 package com.mezon.mobile.home.call
 
 import android.net.Uri
+import android.os.Build
+import android.os.Bundle
 import android.telecom.Connection
 import android.telecom.ConnectionRequest
 import android.telecom.ConnectionService
@@ -17,7 +19,7 @@ class MezonCallConnectionService : ConnectionService() {
         request: ConnectionRequest?
     ): Connection {
         val incomingCaller = request?.extras?.getString(CallManager.EXTRA_CALLER_NAME)
-        val hasOffer = request?.extras?.getString(CallManager.EXTRA_OFFER_JSON) != null
+        val hasOffer = !request?.extras?.getString(CallManager.EXTRA_OFFER_JSON).isNullOrBlank()
         Log.d(TAG, "onCreateIncomingConnection: caller=$incomingCaller, hasOffer=$hasOffer, controllerState=${CallController.instance?.callState?.let { it::class.simpleName }}")
         val connection = MezonCallConnection(applicationContext)
 
@@ -26,18 +28,15 @@ class MezonCallConnectionService : ConnectionService() {
             val callerId = extras.getString(CallManager.EXTRA_CALLER_ID, "")
             connection.setCallerDisplayName(callerName, TelecomManager.PRESENTATION_ALLOWED)
             connection.setAddress(Uri.parse("tel:$callerId"), TelecomManager.PRESENTATION_ALLOWED)
-            connection.extras = extras
-            connection.incomingExtras = android.os.Bundle(extras)
+            connection.putExtras(Bundle(extras))
+            connection.incomingExtras = Bundle(extras)
         }
 
         connection.setConnectionProperties(Connection.PROPERTY_SELF_MANAGED)
-        connection.setConnectionCapabilities(
-            Connection.CAPABILITY_SUPPORT_HOLD or
-                Connection.CAPABILITY_HOLD or
-                Connection.CAPABILITY_MUTE
-        )
+        connection.setConnectionCapabilities(Connection.CAPABILITY_MUTE)
         connection.setAudioModeIsVoip(true)
         connection.setRinging()
+        silenceSystemIncomingRingtone(connection)
 
         return connection
     }
@@ -48,6 +47,7 @@ class MezonCallConnectionService : ConnectionService() {
     ): Connection {
         val connection = MezonCallConnection(applicationContext)
         connection.setConnectionProperties(Connection.PROPERTY_SELF_MANAGED)
+        connection.setConnectionCapabilities(Connection.CAPABILITY_MUTE)
         connection.setAudioModeIsVoip(true)
         connection.setDialing()
         return connection
@@ -57,15 +57,40 @@ class MezonCallConnectionService : ConnectionService() {
         connectionManagerPhoneAccount: PhoneAccountHandle?,
         request: ConnectionRequest?
     ) {
+        Log.w(
+            TAG,
+            "onCreateIncomingConnectionFailed account=$connectionManagerPhoneAccount keys=${request?.extras?.keySet()}"
+        )
         val notifManager = CallNotificationManager(applicationContext)
         val extras = request?.extras
+        val offerFromExtras = extras?.getString(CallManager.EXTRA_OFFER_JSON)?.trim()?.takeIf { it.isNotEmpty() }
+        val offerFallback = offerFromExtras ?: run {
+            try {
+                applicationContext.getSharedPreferences(
+                    "call_data",
+                    android.content.Context.MODE_PRIVATE
+                ).getString("incoming_call", null)
+            } catch (_: Exception) {
+                null
+            }
+        }
         notifManager.showIncomingCallNotification(
             callerName = extras?.getString(CallManager.EXTRA_CALLER_NAME, "Unknown") ?: "Unknown",
             callerAvatar = null,
             callerId = extras?.getString(CallManager.EXTRA_CALLER_ID, "") ?: "",
             channelId = extras?.getString(CallManager.EXTRA_CHANNEL_ID, "") ?: "",
-            offerJson = extras?.getString(CallManager.EXTRA_OFFER_JSON),
+            offerJson = offerFallback,
             useFullScreenIntent = true
         )
+    }
+
+    private fun silenceSystemIncomingRingtone(connection: Connection) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return
+        try {
+            Connection::class.java
+                .getMethod("setSilentRingingRequested", Boolean::class.javaPrimitiveType)
+                .invoke(connection, true)
+        } catch (_: ReflectiveOperationException) {
+        }
     }
 }

@@ -57,10 +57,12 @@ class MezonCallConnection(private val context: Context) : Connection() {
     }
 
     override fun onReject() {
+        val offerEnvelope = incomingExtras?.getString(CallManager.EXTRA_OFFER_JSON)?.trim()?.takeIf { it.isNotEmpty() }
+            ?: context.getSharedPreferences("call_data", Context.MODE_PRIVATE).getString("incoming_call", null)
         setDisconnected(DisconnectCause(DisconnectCause.REJECTED))
         destroy()
         activeConnection = null
-        ensureCallController()?.rejectCall()
+        ensureCallController()?.rejectCallFromIncomingCallUi(offerEnvelope)
     }
 
     override fun onDisconnect() {

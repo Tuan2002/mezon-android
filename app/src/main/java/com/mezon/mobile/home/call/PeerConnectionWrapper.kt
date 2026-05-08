@@ -63,6 +63,10 @@ class PeerConnectionWrapper(
     private val attachedRemoteSinks = mutableSetOf<SurfaceViewRenderer>()
     private var captureStarted = false
 
+    private fun VideoTrack.addRemoteVideoSinks() {
+        attachedRemoteSinks.forEach { addSink(it) }
+    }
+
     private val peerConnectionObserver = object : PeerConnection.Observer {
         override fun onSignalingChange(state: PeerConnection.SignalingState?) {}
 
@@ -111,7 +115,10 @@ class PeerConnectionWrapper(
             stream?.let { ms ->
                 mainHandler.post {
                     if (disposed) return@post
-                    ms.videoTracks?.firstOrNull()?.let { listener.onRemoteVideoTrack(it) }
+                    ms.videoTracks?.firstOrNull()?.let { track ->
+                        track.addRemoteVideoSinks()
+                        listener.onRemoteVideoTrack(track)
+                    }
                     ms.audioTracks?.firstOrNull()?.let { listener.onRemoteAudioTrack(it) }
                 }
             }
@@ -125,7 +132,10 @@ class PeerConnectionWrapper(
             mainHandler.post {
                 if (disposed) return@post
                 when (track) {
-                    is VideoTrack -> listener.onRemoteVideoTrack(track)
+                    is VideoTrack -> {
+                        track.addRemoteVideoSinks()
+                        listener.onRemoteVideoTrack(track)
+                    }
                     is AudioTrack -> listener.onRemoteAudioTrack(track)
                 }
             }

@@ -148,6 +148,7 @@ class DialogsController @Inject constructor(
                     synchronized(this@DialogsController) {
                         participantsByChannel.put(channelId, participants)
                     }
+                    notificationCenter.postNotificationOnMainThread(NotificationCenter.dialogsNeedReload)
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "loadDmParticipants failed for channel $channelId", e)

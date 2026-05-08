@@ -1015,4 +1015,10 @@
     <string name="message_call_log_start_group_call">%1$s started a group call</string>
     <string name="message_call_log_start_audio_call">%1$s started an audio call</string>
     <string name="message_call_log_start_video_call">%1$s started a video call</string>
+
+    <string name="call_full_screen_intent_title">Fullscreen incoming calls</string>
+    <string name="call_full_screen_intent_message">Allow Mezon to use fullscreen notifications while the device is locked so you won’t miss voice calls.</string>
+    <string name="call_full_screen_intent_open_settings">Turn on</string>
+    <string name="call_full_screen_intent_start_call_anyway">Start call anyway</string>
+    <string name="call_full_screen_intent_incoming_hint">Fullscreen while locked off — tap to turn on</string>
 </resources>

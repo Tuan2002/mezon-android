@@ -58,6 +58,32 @@ class CallAudioManager(private val context: Context) {
         }
     }
 
+    fun startForIncomingRing() {
+        if (isStarted) return
+        isStarted = true
+        acquireCpuWakeLock()
+        audioManager.mode = AudioManager.MODE_NORMAL
+    }
+
+    fun advanceToEstablishedCallRouting(isVideo: Boolean) {
+        if (!isStarted) {
+            start(isVideo)
+            return
+        }
+        if (audioFocusRequest == null) {
+            requestAudioFocus()
+        }
+        audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
+        if (bluetoothReceiver == null) {
+            registerBluetoothReceiver()
+        }
+        if (isVideo) {
+            setSpeaker()
+        } else {
+            setEarpiece()
+        }
+    }
+
     fun startRinging() {
         acquireCpuWakeLock()
     }
@@ -127,6 +153,7 @@ class CallAudioManager(private val context: Context) {
         try {
             val ringtoneUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE)
             tonePlayer = MediaPlayer().apply {
+                setWakeMode(context, PowerManager.PARTIAL_WAKE_LOCK)
                 setAudioAttributes(
                     AudioAttributes.Builder()
                         .setUsage(AudioAttributes.USAGE_NOTIFICATION_RINGTONE)
@@ -135,6 +162,7 @@ class CallAudioManager(private val context: Context) {
                 )
                 setDataSource(context, ringtoneUri)
                 isLooping = true
+                setVolume(1f, 1f)
                 prepare()
                 start()
             }
@@ -169,6 +197,7 @@ class CallAudioManager(private val context: Context) {
     fun stopTone() {
         tonePlayer?.let {
             try { it.stop() } catch (_: Exception) {}
+            try { it.reset() } catch (_: Exception) {}
             it.release()
         }
         tonePlayer = null
@@ -206,6 +235,8 @@ class CallAudioManager(private val context: Context) {
     }
 
     private fun requestAudioFocus() {
+        audioFocusRequest?.let { audioManager.abandonAudioFocusRequest(it) }
+        audioFocusRequest = null
         val attrs = AudioAttributes.Builder()
             .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
             .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
