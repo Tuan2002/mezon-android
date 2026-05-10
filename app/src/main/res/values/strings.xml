@@ -702,6 +702,12 @@
     <string name="phone_next_button">Next</string>
     <string name="phone_already_linked">This phone number is already linked to your account</string>
     <string name="phone_link_failed">Failed to link phone number. Please try again.</string>
+    <string name="phone_link_error_server">Couldn\'t send SMS. Try again later.</string>
+    <string name="phone_link_error_rate_limit">Too many SMS tries. Wait and retry.</string>
+    <string name="phone_link_error_bad_request">Invalid phone number. Check and retry.</string>
+    <string name="phone_link_error_session">Session expired. Sign in again.</string>
+    <string name="phone_link_error_forbidden">Can\'t link this phone number.</string>
+    <string name="phone_link_error_not_found">SMS unavailable. Try again later.</string>
 
     <!-- OTP Verify -->
     <string name="verify_email_title">Verify Your Email</string>
