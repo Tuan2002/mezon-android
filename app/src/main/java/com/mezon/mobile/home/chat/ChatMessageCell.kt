@@ -407,7 +407,7 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
                 avatarDrawable.setInfo(msg.senderId, displayName)
                 if (isAnon) loadAnonymousAvatar() else loadAvatar(msg.senderAvatar)
             }
-            if (drawPhotoImage) loadPhotoImage(msg)
+            if (drawPhotoImage) loadPhotoImage(msg) else clearPhotoReceivers()
             if (BuildConfig.DEBUG && drawPhotoImage) {
                 Log.d(
                     TAG,
@@ -481,6 +481,7 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
             drawSending = m.isSending
             updateColors(m)
             buildLayouts(m)
+            if (!drawPhotoImage) clearPhotoReceivers()
             requestLayout()
             invalidate()
             return true
@@ -489,6 +490,15 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
             invalidate()
         }
         return false
+    }
+
+    private fun clearPhotoReceivers() {
+        if (mediaGridCount == 0 && !photoImage.hasImage()) return
+        photoImage.recycle()
+        for (r in extraPhotoImages) r.recycle()
+        mediaGridCount = 0
+        mediaGridTotalH = 0
+        gridExtraCount = 0
     }
 
     private fun computePhotoSize(msg: MessageEntity, width: Int = currentWidth()) {
@@ -606,7 +616,7 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
             }
         }
 
-        gridExtraCount = if (allMedia.size > 4) allMedia.size - 3 else 0
+        gridExtraCount = if (allMedia.size > 4) allMedia.size - 4 else 0
         computeMediaGridHeight()
     }
 
@@ -626,8 +636,19 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
     private var spinnerAngle = 0f
     private val spinnerArcRect = RectF()
 
+    private fun videoThumbCacheKey(videoUrl: String): String = "vthumb:$videoUrl"
+
     @Suppress("deprecation")
     private fun loadVideoThumbnail(videoUrl: String) {
+        val pw = photoWidth.coerceAtLeast(1)
+        val ph = photoHeight.coerceAtLeast(1)
+        val loader = MezonImageLoader.getInstance(context)
+        val key = videoThumbCacheKey(videoUrl)
+        loader.getBitmapFromMemory(key, pw, ph)?.let {
+            photoImage.setBitmapDirectly(it)
+            invalidate()
+            return
+        }
         videoThumbJob?.cancel()
         videoThumbJob = VIDEO_THUMB_SCOPE.launch {
             val retriever = android.media.MediaMetadataRetriever()
@@ -640,6 +661,7 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
                     android.media.MediaMetadataRetriever.OPTION_CLOSEST_SYNC
                 )
                 if (frame != null) {
+                    loader.cacheBitmap(key, pw, ph, frame)
                     withContext(Dispatchers.Main) {
                         photoImage.setBitmapDirectly(frame)
                         invalidate()
@@ -653,6 +675,15 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
     }
 
     private fun loadLocalVideoThumbnail(localUrl: String) {
+        val pw = photoWidth.coerceAtLeast(1)
+        val ph = photoHeight.coerceAtLeast(1)
+        val loader = MezonImageLoader.getInstance(context)
+        val key = videoThumbCacheKey(localUrl)
+        loader.getBitmapFromMemory(key, pw, ph)?.let {
+            photoImage.setBitmapDirectly(it)
+            invalidate()
+            return
+        }
         videoThumbJob?.cancel()
         videoThumbJob = VIDEO_THUMB_SCOPE.launch {
             val retriever = android.media.MediaMetadataRetriever()
@@ -666,6 +697,7 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
                     android.media.MediaMetadataRetriever.OPTION_CLOSEST_SYNC
                 )
                 if (frame != null) {
+                    loader.cacheBitmap(key, pw, ph, frame)
                     withContext(Dispatchers.Main) {
                         photoImage.setBitmapDirectly(frame)
                         invalidate()

@@ -126,14 +126,21 @@ class ImageReceiver(private val parentView: View) {
     }
 
     fun setImage(url: String?, thumbUrl: String?, context: Context) {
+        if (url == null && thumbUrl == null) {
+            if (currentUrl == null && currentThumbUrl == null && !hasImage() &&
+                mainCancellable == null && thumbCancellable == null) return
+            recycle()
+            parentView.invalidate()
+            return
+        }
+
         val urlChanged = url != currentUrl
         val thumbChanged = thumbUrl != currentThumbUrl
+        val hasLoadedImage = imageBitmap != null || thumbBitmap != null || animatedDrawable != null
+        val hasActiveRequest = mainCancellable != null || thumbCancellable != null
 
-        if (!urlChanged && !thumbChanged) {
-            val hasLoadedImage = imageBitmap != null || thumbBitmap != null || animatedDrawable != null
-            val hasActiveRequest = mainCancellable != null || thumbCancellable != null
-            if (hasLoadedImage || hasActiveRequest) return
-        }
+        val forceReload = !urlChanged && !thumbChanged && !hasLoadedImage && !hasActiveRequest && url != null
+        if (!urlChanged && !thumbChanged && (hasLoadedImage || hasActiveRequest)) return
 
         if (!attached) {
             recycle()
@@ -143,12 +150,14 @@ class ImageReceiver(private val parentView: View) {
 
         val loader = MezonImageLoader.getInstance(context)
 
-        if (thumbChanged && thumbUrl != null) {
+        if ((thumbChanged || forceReload) && thumbUrl != null) {
             currentThumbUrl = thumbUrl
             thumbCancellable?.cancel()
             val tw = if (requestW > 0) requestW / 4 else 200
             val th = if (requestH > 0) requestH / 4 else 200
+            val expectedThumb = thumbUrl
             thumbCancellable = loader.load(thumbUrl, tw, th, onSuccess = { bmp ->
+                if (currentThumbUrl != expectedThumb) return@load
                 if (imageBitmap == null && animatedDrawable == null) {
                     thumbBitmap = bmp
                     parentView.invalidate()
@@ -156,7 +165,7 @@ class ImageReceiver(private val parentView: View) {
             })
         }
 
-        if (urlChanged && url != null) {
+        if ((urlChanged || forceReload) && url != null) {
             loadExhausted = false
             mainCancellable?.cancel()
             currentUrl = url

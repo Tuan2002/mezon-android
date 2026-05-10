@@ -1137,7 +1137,14 @@ class VoiceRoomFragment : BaseFragment() {
             addParticipantEntries(nextParticipants, p, remoteId, remoteName)
         }
 
-        updateParticipants(nextParticipants)
+        val prioritized = ArrayList<ParticipantInfo>(nextParticipants.size)
+        for (p in nextParticipants) {
+            if (p.isScreenShare) prioritized.add(p)
+        }
+        for (p in nextParticipants) {
+            if (!p.isScreenShare) prioritized.add(p)
+        }
+        updateParticipants(prioritized)
         Log.d(TAG, "doUpdateParticipantList: ${participants.size} participants")
         dismissFocusedShareIfStale()
         syncFocusedShareForPip()
