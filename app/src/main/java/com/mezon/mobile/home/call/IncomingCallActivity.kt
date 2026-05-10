@@ -1,7 +1,9 @@
 package com.mezon.mobile.home.call
 
+import android.Manifest
 import android.app.Activity
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.content.res.Configuration
 import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
@@ -17,6 +19,8 @@ import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.TextView
+import android.widget.Toast
+import androidx.core.content.ContextCompat
 import com.mezon.mobile.R
 import com.mezon.mobile.core.AndroidUtilities
 import com.mezon.mobile.core.LayoutHelper
@@ -62,6 +66,9 @@ class IncomingCallActivity : Activity(), NotificationCenter.NotificationCenterDe
     private var connectedControlBar: CallControlBar? = null
     private var connectedDurationView: CallDurationView? = null
     private var lastConnectedMainVideoMode: Boolean? = null
+
+    private var pendingConnectedVideoAfterCameraGrant = false
+    private var pendingConnectedUnmuteMicAfterAudioGrant = false
 
     private val autoDeclineRunnable = Runnable {
         if (!dismissed && !connecting) {
@@ -169,6 +176,81 @@ class IncomingCallActivity : Activity(), NotificationCenter.NotificationCenterDe
         loadIncomingData(intent)
         bindUiData()
         refreshFullScreenIntentHint()
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        when (requestCode) {
+            REQUEST_CALL_PERMISSIONS -> {
+                val msgRes = CallPermissionUi.permissionResultMessageForCall(
+                    permissions,
+                    grantResults,
+                    incomingCallIsVideo()
+                )
+                if (msgRes != null) {
+                    Toast.makeText(this, getString(msgRes), Toast.LENGTH_LONG).show()
+                    val act = this
+                    if (!CallPermissionUi.permissionGrantedInResult(
+                            permissions,
+                            grantResults,
+                            Manifest.permission.RECORD_AUDIO
+                        )
+                    ) {
+                        CallPermissionUi.showMicOrCameraDeniedFeedback(
+                            act,
+                            Manifest.permission.RECORD_AUDIO,
+                            R.string.permission_no_audio
+                        )
+                    } else if (incomingCallIsVideo() &&
+                        !CallPermissionUi.permissionGrantedInResult(
+                            permissions,
+                            grantResults,
+                            Manifest.permission.CAMERA
+                        )
+                    ) {
+                        CallPermissionUi.showMicOrCameraDeniedFeedback(
+                            act,
+                            Manifest.permission.CAMERA,
+                            R.string.permission_no_camera
+                        )
+                    }
+                }
+            }
+            REQUEST_CONNECTED_VIDEO_CAMERA -> {
+                CallPermissionUi.completePendingToggleAfterSinglePermissionResult(
+                    wasPending = pendingConnectedVideoAfterCameraGrant,
+                    clearPending = { pendingConnectedVideoAfterCameraGrant = false },
+                    permissions,
+                    grantResults,
+                    Manifest.permission.CAMERA,
+                    this,
+                    R.string.permission_no_camera,
+                    onDeniedToast = { msg ->
+                        Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
+                    },
+                    onGranted = { CallController.instance?.toggleVideo() }
+                )
+            }
+            REQUEST_CONNECTED_UNMUTE_MIC -> {
+                CallPermissionUi.completePendingToggleAfterSinglePermissionResult(
+                    wasPending = pendingConnectedUnmuteMicAfterAudioGrant,
+                    clearPending = { pendingConnectedUnmuteMicAfterAudioGrant = false },
+                    permissions,
+                    grantResults,
+                    Manifest.permission.RECORD_AUDIO,
+                    this,
+                    R.string.permission_no_audio,
+                    onDeniedToast = { msg ->
+                        Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
+                    },
+                    onGranted = { CallController.instance?.toggleMic() }
+                )
+            }
+        }
     }
 
     private fun attachObservers() {
@@ -546,6 +628,20 @@ class IncomingCallActivity : Activity(), NotificationCenter.NotificationCenterDe
 
     private fun acceptCall() {
         if (dismissed || connecting) return
+
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
+            != PackageManager.PERMISSION_GRANTED
+        ) {
+            Toast.makeText(this, getString(R.string.permission_no_audio), Toast.LENGTH_LONG).show()
+            CallPermissionUi.showMicOrCameraDeniedFeedback(
+                this,
+                Manifest.permission.RECORD_AUDIO,
+                R.string.permission_no_audio
+            )
+            requestCallPermissionsEagerly()
+            return
+        }
+
         connecting = true
 
         cancelDeferredIncomingRingtone()
@@ -639,8 +735,20 @@ class IncomingCallActivity : Activity(), NotificationCenter.NotificationCenterDe
             onSwitchCameraClick = {
                 controller?.switchCamera()
             }
-            onVideoToggleClick = {
-                controller?.toggleVideo()
+            onVideoToggleClick = vid@{
+                val ctl = controller ?: return@vid
+                if (CallPermissionUi.startCameraRequestIfNeededToEnableVideo(
+                        this@IncomingCallActivity,
+                        ctl.isLocalVideoEnabled,
+                        REQUEST_CONNECTED_VIDEO_CAMERA
+                    ) {
+                        pendingConnectedVideoAfterCameraGrant = true
+                    }
+                ) {
+                    return@vid
+                }
+                pendingConnectedVideoAfterCameraGrant = false
+                ctl.toggleVideo()
             }
         }
         root.addView(connectedHeader, LayoutHelper.createFrame(
@@ -671,7 +779,19 @@ class IncomingCallActivity : Activity(), NotificationCenter.NotificationCenterDe
                     finishCallActivity()
                 }
                 override fun onMicClicked() {
-                    controller?.toggleMic()
+                    val ctl = controller ?: return
+                    if (CallPermissionUi.startMicRequestIfNeededToUnmute(
+                            this@IncomingCallActivity,
+                            ctl.isLocalAudioEnabled,
+                            REQUEST_CONNECTED_UNMUTE_MIC
+                        ) {
+                            pendingConnectedUnmuteMicAfterAudioGrant = true
+                        }
+                    ) {
+                        return
+                    }
+                    pendingConnectedUnmuteMicAfterAudioGrant = false
+                    ctl.toggleMic()
                 }
             }
         }
@@ -890,6 +1010,8 @@ class IncomingCallActivity : Activity(), NotificationCenter.NotificationCenterDe
 
     override fun onDestroy() {
         lastConnectedMainVideoMode = null
+        pendingConnectedVideoAfterCameraGrant = false
+        pendingConnectedUnmuteMicAfterAudioGrant = false
         cancelDeferredIncomingRingtone()
         handler.removeCallbacks(autoDeclineRunnable)
         handler.removeCallbacks(acceptTimeoutRunnable)
@@ -904,6 +1026,8 @@ class IncomingCallActivity : Activity(), NotificationCenter.NotificationCenterDe
 
     companion object {
         private const val REQUEST_CALL_PERMISSIONS = 9001
+        private const val REQUEST_CONNECTED_VIDEO_CAMERA = 9105
+        private const val REQUEST_CONNECTED_UNMUTE_MIC = 9106
 
         @Volatile
         private var incomingCallUiForeground = false
