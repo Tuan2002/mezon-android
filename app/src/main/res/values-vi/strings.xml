@@ -630,6 +630,12 @@
     <string name="phone_next_button">Tiếp theo</string>
     <string name="phone_already_linked">Số điện thoại này đã được liên kết với tài khoản của bạn</string>
     <string name="phone_link_failed">Liên kết số điện thoại thất bại. Vui lòng thử lại.</string>
+    <string name="phone_link_error_server">Không gửi được SMS. Thử lại sau.</string>
+    <string name="phone_link_error_rate_limit">Gửi SMS quá nhiều. Đợi rồi thử lại.</string>
+    <string name="phone_link_error_bad_request">Số không hợp lệ. Kiểm tra và thử lại.</string>
+    <string name="phone_link_error_session">Phiên hết hạn. Đăng nhập lại.</string>
+    <string name="phone_link_error_forbidden">Không liên kết được số này.</string>
+    <string name="phone_link_error_not_found">SMS tạm không dùng được. Thử lại sau.</string>
 
     <!-- OTP Verify (liên kết email / điện thoại) -->
     <string name="verify_email_title">Xác minh email</string>
