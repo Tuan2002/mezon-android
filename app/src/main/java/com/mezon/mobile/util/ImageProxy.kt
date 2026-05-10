@@ -13,14 +13,16 @@ fun createImgproxyUrl(
     sourceUrl: String,
     widthPx: Int,
     heightPx: Int,
-    resizeType: String = "fit"
+    resizeType: String = "fit",
+    maxEdgePx: Int = MAX_PROXY_DIM
 ): String {
     if (sourceUrl.isEmpty()) return sourceUrl
     if (!sourceUrl.startsWith("https://cdn.mezon") && !sourceUrl.startsWith("https://profile.mezon")) {
         return sourceUrl
     }
-    val w = widthPx.coerceAtMost(MAX_PROXY_DIM)
-    val h = heightPx.coerceAtMost(MAX_PROXY_DIM)
+    val cap = maxEdgePx.coerceAtLeast(1).coerceAtMost(4096)
+    val w = widthPx.coerceAtMost(cap)
+    val h = heightPx.coerceAtMost(cap)
     val options = "rs:$resizeType:$w:$h:1/mb:$MAX_BYTES"
     return "$IMGPROXY_BASE_URL/$IMGPROXY_KEY/$options/plain/$sourceUrl@webp"
 }

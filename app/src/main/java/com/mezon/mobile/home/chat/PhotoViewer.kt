@@ -49,8 +49,8 @@ class PhotoViewer(context: Context) : Dialog(context, android.R.style.Theme_Blac
     private var toolbarVisible = true
 
     private var urls = emptyList<String>()
-    private var isAnimated = false
     private var currentIndex = 0
+    private var preferDrawableLoaderForSingle = false
     private val currentUrl get() = urls.getOrElse(currentIndex) { "" }
 
     init {
@@ -156,16 +156,20 @@ class PhotoViewer(context: Context) : Dialog(context, android.R.style.Theme_Blac
 
     fun show(
         url: String,
-        animated: Boolean = false,
         gallery: List<String> = emptyList(),
         index: Int = 0,
-        thumbBitmap: Bitmap? = null
+        thumbBitmap: Bitmap? = null,
+        preferDrawableLoader: Boolean = false
     ) {
         urls = if (gallery.isEmpty()) listOf(url) else gallery
         currentIndex = if (index in urls.indices) index else 0
-        isAnimated = animated
+        preferDrawableLoaderForSingle = preferDrawableLoader && urls.size == 1
 
-        viewPager.adapter = PhotoPagerAdapter(thumbBitmap.takeIf { !animated && urls.size == 1 })
+        val single = urls.size == 1
+        val thumbUrl = urls[0]
+        val singleAnimated = urlNeedsAnimatedDrawable(thumbUrl) || preferDrawableLoaderForSingle
+        val singleShowsThumb = single && !singleAnimated
+        viewPager.adapter = PhotoPagerAdapter(thumbBitmap.takeIf { singleShowsThumb })
         viewPager.setCurrentItem(currentIndex, false)
         viewPager.registerOnPageChangeCallback(object : ViewPager2.OnPageChangeCallback() {
             override fun onPageSelected(position: Int) {
@@ -208,6 +212,15 @@ class PhotoViewer(context: Context) : Dialog(context, android.R.style.Theme_Blac
 
     override fun onBackPressed() {
         dismissWithAnimation()
+    }
+
+    private fun urlNeedsAnimatedDrawable(url: String): Boolean {
+        if (url.isEmpty()) return false
+        val u = url.lowercase(Locale.US)
+        if (u.contains("tenor.com")) return true
+        if (u.contains("/stickers/")) return true
+        if (u.contains(".gif")) return true
+        return u.contains(".webp") && !u.endsWith("@webp")
     }
 
     private inner class PhotoPagerAdapter(
@@ -311,18 +324,21 @@ class PhotoViewer(context: Context) : Dialog(context, android.R.style.Theme_Blac
 
             val screenW = context.resources.displayMetrics.widthPixels
             val screenH = context.resources.displayMetrics.heightPixels
+            val proxyMaxEdge = maxOf(screenW, screenH).coerceAtMost(2560)
             val loader = MezonImageLoader.getInstance(context)
 
-            if (isAnimated) {
+            val drawableLoader = urlNeedsAnimatedDrawable(url) ||
+                (preferDrawableLoaderForSingle && urls.size == 1)
+            if (drawableLoader) {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                    holder.pendingLoad = loader.loadDrawable(url, screenW, screenH,
+                    holder.pendingLoad = loader.loadDrawable(url, 0, 0,
                         onSuccess = { drawable ->
                             if (holder.bindGeneration != bindGen) return@loadDrawable
                             applyLoadedDrawable(holder, position, url, drawable)
                         }
                     )
                 } else {
-                    holder.pendingLoad = loader.load(url, screenW, screenH,
+                    holder.pendingLoad = loader.load(url, 0, 0,
                         onSuccess = { bmp ->
                             if (holder.bindGeneration != bindGen) return@load
                             applyLoadedBitmap(holder, position, url, bmp)
@@ -330,7 +346,7 @@ class PhotoViewer(context: Context) : Dialog(context, android.R.style.Theme_Blac
                     )
                 }
             } else {
-                val loadUrl = createImgproxyUrl(url, screenW, screenH, "fit")
+                val loadUrl = createImgproxyUrl(url, screenW, screenH, "fit", proxyMaxEdge)
                 holder.pendingLoad = loader.load(loadUrl, screenW, screenH,
                     onSuccess = { bmp ->
                         if (holder.bindGeneration != bindGen) return@load

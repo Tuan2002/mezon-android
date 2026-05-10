@@ -28,15 +28,32 @@ import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 import java.util.Locale
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
+import com.mezon.mobile.di.FragmentEntryPoint
+import dagger.hilt.android.EntryPointAccessors
 
 class MezonImageLoader private constructor(context: Context) {
 
     private val appContext = context.applicationContext
 
-    private val client = OkHttpClient.Builder()
-        .connectTimeout(10, TimeUnit.SECONDS)
-        .readTimeout(15, TimeUnit.SECONDS)
-        .build()
+    private val client: OkHttpClient = run {
+        val shared = try {
+            EntryPointAccessors.fromApplication(appContext, FragmentEntryPoint::class.java).okHttpClient()
+        } catch (_: Throwable) {
+            null
+        }
+        if (shared != null) {
+            shared.newBuilder()
+                .connectTimeout(10, TimeUnit.SECONDS)
+                .readTimeout(15, TimeUnit.SECONDS)
+                .build()
+        } else {
+            OkHttpClient.Builder()
+                .connectTimeout(10, TimeUnit.SECONDS)
+                .readTimeout(15, TimeUnit.SECONDS)
+                .build()
+        }
+    }
 
     private val mainHandler = Handler(Looper.getMainLooper())
 
@@ -47,6 +64,17 @@ class MezonImageLoader private constructor(context: Context) {
 
     private val maxMemory = (Runtime.getRuntime().maxMemory() / 1024).toInt()
     private val totalCacheSize = maxMemory / 6
+
+    private val animatedMaxEdge: Int = run {
+        val mem = Runtime.getRuntime().maxMemory()
+        when {
+            mem >= 256L * 1024 * 1024 -> 2560
+            mem >= 128L * 1024 * 1024 -> 1920
+            else -> 1280
+        }
+    }
+
+    private val lastTrimAtMs = AtomicLong(0L)
 
     private val largeCache = object : LruCache<String, Bitmap>(totalCacheSize * 4 / 5) {
         override fun sizeOf(key: String, bitmap: Bitmap): Int = bitmap.byteCount / 1024
@@ -123,13 +151,17 @@ class MezonImageLoader private constructor(context: Context) {
     }
 
     private fun addCallback(cacheKey: String, cb: LoadCallback): Boolean {
-        val existing = pendingCallbacks[cacheKey]
-        if (existing != null) {
-            synchronized(existing) { existing.add(cb) }
-            return true
+        var wasExisting = false
+        pendingCallbacks.compute(cacheKey) { _, existing ->
+            if (existing != null) {
+                synchronized(existing) { existing.add(cb) }
+                wasExisting = true
+                existing
+            } else {
+                mutableListOf(cb)
+            }
         }
-        pendingCallbacks[cacheKey] = mutableListOf(cb)
-        return false
+        return wasExisting
     }
 
     fun load(
@@ -230,8 +262,11 @@ class MezonImageLoader private constructor(context: Context) {
         animated: Boolean
     ) {
         val task = PendingDecode(memKey, reqWidth, reqHeight, animated)
-        val list = pendingDecodes.getOrPut(logicalUrl) { mutableListOf() }
-        synchronized(list) { list.add(task) }
+        pendingDecodes.compute(logicalUrl) { _, existing ->
+            val list = existing ?: mutableListOf()
+            synchronized(list) { list.add(task) }
+            list
+        }
     }
 
     private fun ensureNetworkFetch(fetchUrl: String, logicalUrl: String, attempt: Int = 0) {
@@ -245,10 +280,10 @@ class MezonImageLoader private constructor(context: Context) {
             override fun onFailure(call: Call, e: IOException) {
                 inflightUrlCalls.remove(logicalUrl, call)
                 if (call.isCanceled()) return
-                if (attempt < 2) {
+                if (attempt < MAX_NETWORK_RETRIES) {
                     mainHandler.postDelayed({
                         ensureNetworkFetch(fetchUrl, logicalUrl, attempt + 1)
-                    }, 350L shl attempt)
+                    }, retryDelayMs(attempt))
                 } else {
                     dispatchAllDecodeError(logicalUrl, e)
                 }
@@ -259,10 +294,10 @@ class MezonImageLoader private constructor(context: Context) {
                 if (!response.isSuccessful) {
                     val code = response.code
                     response.close()
-                    if (attempt < 2 && (code == 408 || code == 429 || code >= 500)) {
+                    if (attempt < MAX_NETWORK_RETRIES && (code == 408 || code == 429 || code >= 500)) {
                         mainHandler.postDelayed({
                             ensureNetworkFetch(fetchUrl, logicalUrl, attempt + 1)
-                        }, 350L shl attempt)
+                        }, retryDelayMs(attempt))
                     } else {
                         dispatchAllDecodeError(logicalUrl, IOException("HTTP $code"))
                     }
@@ -278,14 +313,14 @@ class MezonImageLoader private constructor(context: Context) {
                     dispatchAllDecodeSuccess(logicalUrl, urlFile)
                 } catch (e: Exception) {
                     val ex = e as? Exception ?: Exception(e)
-                    if (attempt < 2 && e is IOException) {
+                    if (attempt < MAX_NETWORK_RETRIES && e is IOException) {
                         try {
                             diskFileForUrl(logicalUrl).delete()
                         } catch (_: Throwable) {
                         }
                         mainHandler.postDelayed({
                             ensureNetworkFetch(fetchUrl, logicalUrl, attempt + 1)
-                        }, 350L shl attempt)
+                        }, retryDelayMs(attempt))
                     } else {
                         dispatchAllDecodeError(logicalUrl, ex)
                     }
@@ -363,13 +398,21 @@ class MezonImageLoader private constructor(context: Context) {
                 opts.inJustDecodeBounds = true
                 BitmapFactory.decodeFile(file.absolutePath, opts)
                 val mimeType = opts.outMimeType?.lowercase(Locale.US).orEmpty()
-                opts.inSampleSize = calculateInSampleSize(opts, reqWidth, reqHeight)
+                opts.inSampleSize = if (reqWidth <= 0 && reqHeight <= 0) {
+                    calculateInSampleSizeToMaxEdge(opts, animatedMaxEdge)
+                } else {
+                    calculateInSampleSize(opts, reqWidth, reqHeight)
+                }
                 opts.inJustDecodeBounds = false
                 val isSmallThumb = reqWidth <= SMALL_IMAGE_THRESHOLD && reqHeight <= SMALL_IMAGE_THRESHOLD
                 opts.inPreferredConfig = if (isSmallThumb) Bitmap.Config.RGB_565 else Bitmap.Config.ARGB_8888
                 var bmp = BitmapFactory.decodeFile(file.absolutePath, opts)
                 if (bmp != null) {
-                    bmp = clampBitmap(bmp, reqWidth, reqHeight)
+                    bmp = if (reqWidth <= 0 && reqHeight <= 0) {
+                        clampBitmapToMaxEdge(bmp, animatedMaxEdge)
+                    } else {
+                        clampBitmap(bmp, reqWidth, reqHeight)
+                    }
                     bmp = applyExifRotation(file, bmp, mimeType)
                     putToMemory(cacheKey, bmp, reqWidth, reqHeight)
                     dispatchSuccess(cacheKey, bmp)
@@ -386,33 +429,48 @@ class MezonImageLoader private constructor(context: Context) {
     private fun decodeAnimatedInBackground(file: File, cacheKey: String, reqWidth: Int = 0, reqHeight: Int = 0) {
         DECODE_EXECUTOR.execute {
             try {
-                val targetW = if (reqWidth > 0) reqWidth else 800
-                val targetH = if (reqHeight > 0) reqHeight else 800
-
-                val boundsOpts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                BitmapFactory.decodeFile(file.absolutePath, boundsOpts)
-                val sampleSize = calculateInSampleSize(boundsOpts, targetW, targetH)
-                val decodeOpts = BitmapFactory.Options().apply {
-                    inSampleSize = sampleSize
-                    inPreferredConfig = Bitmap.Config.ARGB_8888
-                }
-                var firstFrame = BitmapFactory.decodeFile(file.absolutePath, decodeOpts)
-                if (firstFrame != null) {
-                    firstFrame = clampBitmap(firstFrame, targetW, targetH)
-                    putToMemory(cacheKey, firstFrame, targetW, targetH)
-                }
-
+                val intrinsicMode = reqWidth <= 0 && reqHeight <= 0
                 if (Build.VERSION.SDK_INT >= 28) {
                     val source = ImageDecoder.createSource(file)
-                    val drawable = ImageDecoder.decodeDrawable(source) { decoder, _, _ ->
+                    val drawable = ImageDecoder.decodeDrawable(source) { decoder, info, _ ->
                         decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
-                        if (reqWidth > 0 && reqHeight > 0) {
+                        if (intrinsicMode) {
+                            val w = info.size.width
+                            val h = info.size.height
+                            if (w > 0 && h > 0) {
+                                val maxD = kotlin.math.max(w, h)
+                                if (maxD > animatedMaxEdge) {
+                                    val scale = animatedMaxEdge.toFloat() / maxD.toFloat()
+                                    decoder.setTargetSize(
+                                        (w * scale).toInt().coerceAtLeast(1),
+                                        (h * scale).toInt().coerceAtLeast(1)
+                                    )
+                                }
+                            }
+                        } else {
                             decoder.setTargetSize(reqWidth, reqHeight)
                         }
                     }
                     dispatchSuccess(cacheKey, drawable)
                 } else {
+                    val boundsOpts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                    BitmapFactory.decodeFile(file.absolutePath, boundsOpts)
+                    val sampleSize = if (intrinsicMode) {
+                        calculateInSampleSizeToMaxEdge(boundsOpts, animatedMaxEdge)
+                    } else {
+                        calculateInSampleSize(boundsOpts, reqWidth, reqHeight)
+                    }
+                    val decodeOpts = BitmapFactory.Options().apply {
+                        inSampleSize = sampleSize
+                        inPreferredConfig = Bitmap.Config.ARGB_8888
+                    }
+                    var firstFrame = BitmapFactory.decodeFile(file.absolutePath, decodeOpts)
                     if (firstFrame != null) {
+                        firstFrame = if (intrinsicMode) {
+                            clampBitmapToMaxEdge(firstFrame, animatedMaxEdge)
+                        } else {
+                            clampBitmap(firstFrame, reqWidth, reqHeight)
+                        }
                         val drawable = android.graphics.drawable.BitmapDrawable(null, firstFrame)
                         dispatchSuccess(cacheKey, drawable)
                     } else {
@@ -427,6 +485,11 @@ class MezonImageLoader private constructor(context: Context) {
 
     fun getBitmapFromMemory(url: String, reqWidth: Int, reqHeight: Int): Bitmap? {
         return getFromMemory(cacheKey(stableUrlForDiskAndMemory(url), reqWidth, reqHeight))
+    }
+
+    fun cacheBitmap(url: String, reqWidth: Int, reqHeight: Int, bmp: Bitmap) {
+        if (url.isEmpty() || bmp.isRecycled) return
+        putToMemory(cacheKey(stableUrlForDiskAndMemory(url), reqWidth, reqHeight), bmp, reqWidth, reqHeight)
     }
 
     fun cancelAll() {
@@ -505,6 +568,10 @@ class MezonImageLoader private constructor(context: Context) {
     }
 
     private fun trimDiskCache() {
+        val now = System.currentTimeMillis()
+        val prev = lastTrimAtMs.get()
+        if (now - prev < TRIM_DEBOUNCE_MS) return
+        if (!lastTrimAtMs.compareAndSet(prev, now)) return
         DECODE_EXECUTOR.execute {
             trimDir(diskCacheDir, maxDiskCacheBytes)
             trimDir(avatarCacheDir, maxAvatarDiskBytes)
@@ -596,8 +663,17 @@ class MezonImageLoader private constructor(context: Context) {
         private var instance: MezonImageLoader? = null
 
         private const val SMALL_IMAGE_THRESHOLD = 100
+        private const val MAX_NETWORK_RETRIES = 3
+        private const val RETRY_BASE_DELAY_MS = 750L
+        private const val RETRY_MAX_DELAY_MS = 3000L
+
+        private fun retryDelayMs(attempt: Int): Long {
+            val raw = RETRY_BASE_DELAY_MS shl attempt
+            return raw.coerceAtMost(RETRY_MAX_DELAY_MS)
+        }
         private const val MAX_DECODE_QUEUE = 64
         private const val LARGE_FILE_TRIM_PRIORITY_BYTES = 384_000
+        private const val TRIM_DEBOUNCE_MS = 60_000L
 
         private val AVATAR_BUCKET_MARKERS = arrayOf(
             "/rs:fill:64:64:1/",
@@ -696,6 +772,34 @@ class MezonImageLoader private constructor(context: Context) {
             val scale = minOf(reqWidth.toFloat() / bmp.width, reqHeight.toFloat() / bmp.height)
             val dstW = (bmp.width * scale).toInt().coerceAtLeast(1)
             val dstH = (bmp.height * scale).toInt().coerceAtLeast(1)
+            val useFilter = reqWidth > SMALL_IMAGE_THRESHOLD || reqHeight > SMALL_IMAGE_THRESHOLD
+            val scaled = Bitmap.createScaledBitmap(bmp, dstW, dstH, useFilter)
+            if (scaled !== bmp) bmp.recycle()
+            return scaled
+        }
+
+        private fun calculateInSampleSizeToMaxEdge(options: BitmapFactory.Options, maxEdge: Int): Int {
+            val photoW = options.outWidth.toFloat()
+            val photoH = options.outHeight.toFloat()
+            if (maxEdge <= 0 || photoW <= 0f || photoH <= 0f) return 1
+            val maxDim = kotlin.math.max(photoW, photoH)
+            if (maxDim <= maxEdge) return 1
+            var sample = 1
+            while (maxDim / (sample * 2) >= maxEdge) {
+                sample *= 2
+            }
+            return sample
+        }
+
+        private fun clampBitmapToMaxEdge(bmp: Bitmap, maxEdge: Int): Bitmap {
+            if (maxEdge <= 0) return bmp
+            val w = bmp.width
+            val h = bmp.height
+            val maxDim = kotlin.math.max(w, h)
+            if (maxDim <= maxEdge) return bmp
+            val scale = maxEdge.toFloat() / maxDim.toFloat()
+            val dstW = (w * scale).toInt().coerceAtLeast(1)
+            val dstH = (h * scale).toInt().coerceAtLeast(1)
             val scaled = Bitmap.createScaledBitmap(bmp, dstW, dstH, true)
             if (scaled !== bmp) bmp.recycle()
             return scaled

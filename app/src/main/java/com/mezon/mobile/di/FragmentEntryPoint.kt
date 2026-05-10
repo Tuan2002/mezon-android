@@ -42,6 +42,7 @@ import dagger.hilt.InstallIn
 import dagger.hilt.components.SingletonComponent
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
+import okhttp3.OkHttpClient
 
 @EntryPoint
 @InstallIn(SingletonComponent::class)
@@ -83,6 +84,7 @@ interface FragmentEntryPoint {
     fun callController(): CallController
     fun callManager(): CallManager
     fun webRtcInfra(): WebRtcInfra
+    fun okHttpClient(): OkHttpClient
 
     @IoDispatcher
     fun ioDispatcher(): CoroutineDispatcher
