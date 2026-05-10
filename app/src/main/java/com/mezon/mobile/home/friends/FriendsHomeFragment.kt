@@ -1,6 +1,8 @@
 package com.mezon.mobile.home.friends
 
+import android.Manifest
 import android.content.Context
+import android.content.pm.PackageManager
 import android.graphics.PorterDuff
 import android.graphics.PorterDuffColorFilter
 import android.graphics.Typeface
@@ -12,27 +14,49 @@ import android.text.TextWatcher
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
+import android.view.ViewGroup
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
-import android.widget.Toast
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
 import androidx.recyclerview.widget.LinearLayoutManager
 import com.mezon.mezon.api.Friend
+import com.mezon.mobile.MainActivity
 import com.mezon.mobile.R
+import com.mezon.mobile.core.AlertDialog
 import com.mezon.mobile.core.BaseFragment
 import com.mezon.mobile.core.LayoutHelper
 import com.mezon.mobile.core.NotificationCenter
 import com.mezon.mobile.core.RecyclerListView
 import com.mezon.mobile.di.FragmentEntryPoint
+import com.mezon.mobile.home.ChatController
+import com.mezon.mobile.home.DialogsController
+import com.mezon.mobile.home.call.CallController
+import com.mezon.mobile.home.call.CallFragment
+import com.mezon.mobile.home.call.CallManager
+import com.mezon.mobile.home.call.CallPermissionUi
 import com.mezon.mobile.home.chat.UserProfileBottomSheet
+import com.mezon.mobile.network.CHANNEL_TYPE_DM
 import com.mezon.mobile.ui.cells.MezonIcon
+import com.mezon.mobile.ui.MezonToast
+import com.mezon.mobile.ui.cells.ToastOverlay
 import java.util.Locale
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class FriendsHomeFragment : BaseFragment() {
 
     private lateinit var friendController: FriendController
+    private lateinit var dialogsController: DialogsController
+    private lateinit var chatController: ChatController
+    private lateinit var callController: CallController
+    private lateinit var callManager: CallManager
+
+    private var pendingCallPermissionCallback: (() -> Unit)? = null
 
     private lateinit var searchInput: EditText
     private lateinit var requestRow: LinearLayout
@@ -47,6 +71,10 @@ class FriendsHomeFragment : BaseFragment() {
 
     override fun onInject(entryPoint: FragmentEntryPoint) {
         friendController = entryPoint.friendController()
+        dialogsController = entryPoint.dialogsController()
+        chatController = entryPoint.chatController()
+        callController = entryPoint.callController()
+        callManager = entryPoint.callManager()
     }
 
     override fun onFragmentCreate(): Boolean {
@@ -177,6 +205,31 @@ class FriendsHomeFragment : BaseFragment() {
         return wrapped
     }
 
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ) {
+        if (requestCode == REQUEST_FRIENDS_CALL_AUDIO) {
+            val audioGranted = permissions.indices.any { i ->
+                permissions[i] == Manifest.permission.RECORD_AUDIO &&
+                    grantResults.getOrNull(i) == PackageManager.PERMISSION_GRANTED
+            }
+            if (audioGranted) {
+                pendingCallPermissionCallback?.invoke()
+            } else {
+                val act = getParentActivity() ?: return
+                MezonToast.show(this, ToastOverlay.ToastType.ERROR, getString(R.string.permission_no_audio))
+                CallPermissionUi.showMicOrCameraDeniedFeedback(
+                    act,
+                    Manifest.permission.RECORD_AUDIO,
+                    R.string.permission_no_audio
+                )
+            }
+            pendingCallPermissionCallback = null
+        }
+    }
+
     private fun buildRequestRow(context: Context): LinearLayout {
         val row = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -262,10 +315,10 @@ class FriendsHomeFragment : BaseFragment() {
     private fun handleAction(friend: Friend, action: FriendRowAction) {
         when (action) {
             FriendRowAction.CALL -> {
-                Toast.makeText(requireContext(), getString(R.string.feature_coming_soon), Toast.LENGTH_SHORT).show()
+                beginVoiceCallWithFriend(friend)
             }
             FriendRowAction.MESSAGE -> {
-                Toast.makeText(requireContext(), getString(R.string.feature_coming_soon), Toast.LENGTH_SHORT).show()
+                openDmWithFriend(friend)
             }
             FriendRowAction.OPEN_PROFILE -> {
                 val sheet = UserProfileBottomSheet(
@@ -289,7 +342,107 @@ class FriendsHomeFragment : BaseFragment() {
         }
     }
 
+    private fun friendDisplayLine(friend: Friend): String =
+        friend.user.displayName.ifBlank { friend.user.username }
+
+    private fun showFriendsToast(message: String, type: ToastOverlay.ToastType) {
+        val parent = getLayoutContainer() ?: (fragmentView as? ViewGroup) ?: return
+        ToastOverlay(requireContext(), themeColors).show(parent, type, message)
+    }
+
+    private fun openDmWithFriend(friend: Friend) {
+        fragmentScope.launch {
+            val dmChannelId = dialogsController.getOrCreateDm(friend.user.id)
+            if (dmChannelId == 0L) {
+                withContext(Dispatchers.Main) {
+                    showFriendsToast(getString(R.string.qr_dm_open_failed), ToastOverlay.ToastType.ERROR)
+                }
+                return@launch
+            }
+            chatController.openChannel(dmChannelId, 0L, CHANNEL_TYPE_DM)
+            withContext(Dispatchers.Main.immediate) {
+                val activity = getParentActivity() as? MainActivity ?: return@withContext
+                activity.openChat(
+                    dmChannelId,
+                    friendDisplayLine(friend),
+                    0L,
+                    CHANNEL_TYPE_DM
+                )
+            }
+        }
+    }
+
+    private fun beginVoiceCallWithFriend(friend: Friend) {
+        requestCallPermissions {
+            fragmentScope.launch {
+                val dmChannelId = dialogsController.getOrCreateDm(friend.user.id)
+                if (dmChannelId == 0L) {
+                    withContext(Dispatchers.Main) {
+                        showFriendsToast(getString(R.string.qr_dm_open_failed), ToastOverlay.ToastType.ERROR)
+                    }
+                    return@launch
+                }
+                withContext(Dispatchers.Main.immediate) {
+                    chatController.openChannel(dmChannelId, 0L, CHANNEL_TYPE_DM)
+                    val name = friendDisplayLine(friend)
+                    val avatar = friend.user.avatarUrl.takeIf { it.isNotBlank() }
+                    callController.startCall(
+                        friend.user.id,
+                        name,
+                        avatar,
+                        dmChannelId,
+                        0L,
+                        CHANNEL_TYPE_DM,
+                        false,
+                        isVideo = false
+                    )
+                    presentFragment(CallFragment())
+                }
+            }
+        }
+    }
+
+    private fun requestCallPermissions(onGranted: () -> Unit) {
+        val activity = getParentActivity()
+        if (activity == null) {
+            onGranted()
+            return
+        }
+        val needed = mutableListOf<String>()
+        if (ContextCompat.checkSelfPermission(activity, Manifest.permission.RECORD_AUDIO)
+            != PackageManager.PERMISSION_GRANTED) {
+            needed.add(Manifest.permission.RECORD_AUDIO)
+        }
+        if (needed.isEmpty()) {
+            runOutgoingCallAfterFullScreenIntentPrompt(onGranted)
+        } else {
+            pendingCallPermissionCallback = { runOutgoingCallAfterFullScreenIntentPrompt(onGranted) }
+            ActivityCompat.requestPermissions(activity, needed.toTypedArray(), REQUEST_FRIENDS_CALL_AUDIO)
+        }
+    }
+
+    private fun runOutgoingCallAfterFullScreenIntentPrompt(startCall: () -> Unit) {
+        val act = getParentActivity()
+        if (!callManager.needsFullScreenIntentSettings() || act == null) {
+            startCall()
+            return
+        }
+        AlertDialog.Builder(act)
+            .setTitle(getString(R.string.call_full_screen_intent_title))
+            .setMessage(getString(R.string.call_full_screen_intent_message))
+            .setPositiveButton(getString(R.string.call_full_screen_intent_open_settings)) { d, _ ->
+                callManager.launchFullScreenIntentSettings(act)
+                d.dismiss()
+            }
+            .setNegativeButton(getString(R.string.call_full_screen_intent_start_call_anyway)) { d, _ ->
+                d.dismiss()
+                startCall()
+            }
+            .show()
+    }
+
     companion object {
         private const val MENU_ADD_FRIEND = 1001
+        private const val REQUEST_FRIENDS_CALL_AUDIO = 9031
     }
 }

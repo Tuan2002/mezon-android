@@ -167,18 +167,65 @@ class DialogsController @Inject constructor(
         }
         return try {
             sessionManager.withAutoRefresh { session ->
+                val currentUserId = session.userId.toLongOrNull() ?: 0L
                 val response = api.createChannelDesc(
                     apiUrl = session.apiUrl,
                     token = session.token,
                     type = CHANNEL_TYPE_DM,
                     userIds = listOf(userId)
                 )
+                ingestChannelDescForCreatedDm(response, currentUserId)
                 response.channelId
             }
         } catch (e: Exception) {
             Log.e(TAG, "getOrCreateDm failed for userId=$userId", e)
             0L
         }
+    }
+
+    private fun ingestChannelDescForCreatedDm(desc: ChannelDescription, currentUserId: Long) {
+        val participants = desc.extractParticipants()
+        val fresh = desc.toDirectMessage(currentUserId, appContext)
+        val toPersist: DirectMessage
+        synchronized(this) {
+            if (participants.isNotEmpty()) {
+                participantsByChannel.put(desc.channelId, participants)
+            }
+            val existing = dialogsDict[fresh.channelId]
+            val merged = if (existing != null) {
+                existing.copy(
+                    type = fresh.type.takeIf { it != 0 } ?: existing.type,
+                    label = fresh.label.ifBlank { existing.label },
+                    avatarUrl = fresh.avatarUrl.ifBlank { existing.avatarUrl },
+                    displayName = fresh.displayName.ifBlank { existing.displayName },
+                    lastMessageContent = fresh.lastMessageContent.ifBlank { existing.lastMessageContent },
+                    isOnline = existing.isOnline,
+                    otherUserId = if (fresh.otherUserId != 0L) fresh.otherUserId else existing.otherUserId,
+                    lastSeenMessageId = maxOf(existing.lastSeenMessageId, fresh.lastSeenMessageId),
+                    lastSentMessageId = maxOf(existing.lastSentMessageId, fresh.lastSentMessageId),
+                    lastSeenMessageTs = maxOf(existing.lastSeenMessageTs, fresh.lastSeenMessageTs),
+                    lastSentMessageTs = maxOf(existing.lastSentMessageTs, fresh.lastSentMessageTs),
+                    unreadCount = mergeDmUnreadFromList(existing.unreadCount, fresh),
+                    isMute = existing.isMute
+                )
+            } else {
+                fresh
+            }
+            dialogsDict.put(merged.channelId, merged)
+            toPersist = merged
+            val oldIdx = dialogs.indexOfFirst { it.channelId == merged.channelId }
+            if (oldIdx >= 0) dialogs.removeAt(oldIdx)
+            var lo = 0
+            var hi = dialogs.size
+            val target = merged.lastSentMessageTs
+            while (lo < hi) {
+                val mid = (lo + hi) ushr 1
+                if (dialogs[mid].lastSentMessageTs > target) lo = mid + 1 else hi = mid
+            }
+            dialogs.add(lo, merged)
+        }
+        appScope.launch(ioDispatcher) { directMessageDao.upsert(toPersist) }
+        notificationCenter.postNotificationOnMainThread(NotificationCenter.dialogsNeedReload)
     }
 
     fun loadDialogs(page: Int = 1, limit: Int = 500) {

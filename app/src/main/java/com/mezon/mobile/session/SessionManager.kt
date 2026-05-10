@@ -74,7 +74,9 @@ class SessionManager @Inject constructor(
 
     val sessionFlow: Flow<StoredSession?> = dataStore.data.map { prefs ->
         val rawToken = prefs[SessionKeys.TOKEN] ?: return@map null
+        if (rawToken.isEmpty()) return@map null
         val token = decryptSecret(rawToken)
+        if (token.isEmpty() && rawToken.startsWith(ENCRYPTED_PREFIX)) return@map null
         StoredSession(
             token = token,
             refreshToken = decryptSecret(prefs[SessionKeys.REFRESH_TOKEN] ?: ""),

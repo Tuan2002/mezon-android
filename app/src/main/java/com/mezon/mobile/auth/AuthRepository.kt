@@ -45,6 +45,7 @@ class AuthRepository @Inject constructor(
                     userId = response.userId,
                     idToken = response.idToken
                 )
+                sessionManager.clearSession()
                 walletCacheStore.clear()
                 sessionManager.saveSession(stored)
                 StartupCache.needsUsernameSetup = false
@@ -84,7 +85,6 @@ class AuthRepository @Inject constructor(
                     reqId = reqId,
                     otpCode = otpCode
                 )
-                StartupCache.needsUsernameSetup = session.created == true
                 val stored = StoredSession(
                     token = session.token,
                     refreshToken = session.refreshToken,
@@ -93,6 +93,8 @@ class AuthRepository @Inject constructor(
                     userId = session.userId,
                     idToken = session.idToken
                 )
+                sessionManager.clearSession()
+                StartupCache.needsUsernameSetup = session.created == true
                 walletCacheStore.clear()
                 sessionManager.saveSession(stored)
                 stored

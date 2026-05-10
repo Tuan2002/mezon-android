@@ -1,19 +1,31 @@
 package com.mezon.mobile.home.call
 
+import android.Manifest
 import android.content.Context
 import android.content.Intent
 import android.graphics.drawable.GradientDrawable
 import android.view.Gravity
 import android.view.View
 import android.widget.FrameLayout
+import com.mezon.mobile.R
 import com.mezon.mobile.core.AndroidUtilities
 import com.mezon.mobile.core.BaseFragment
 import com.mezon.mobile.core.LayoutHelper
 import com.mezon.mobile.core.NotificationCenter
 import com.mezon.mobile.di.FragmentEntryPoint
 import com.mezon.mobile.home.profile.UserController
+import com.mezon.mobile.ui.MezonToast
+import com.mezon.mobile.ui.cells.ToastOverlay
 
 class CallFragment : BaseFragment() {
+
+    companion object {
+        private const val REQUEST_CALL_ENABLE_VIDEO_CAMERA = 9101
+        private const val REQUEST_CALL_UNMUTE_MIC = 9102
+    }
+
+    private var pendingEnableVideoAfterCameraGrant = false
+    private var pendingUnmuteMicAfterAudioGrant = false
 
     private lateinit var callController: CallController
     private lateinit var userController: UserController
@@ -63,7 +75,19 @@ class CallFragment : BaseFragment() {
             onSwitchCameraClick = {
                 callController.switchCamera()
             }
-            onVideoToggleClick = {
+            onVideoToggleClick = vid@{
+                val act = getParentActivity() ?: return@vid
+                if (CallPermissionUi.startCameraRequestIfNeededToEnableVideo(
+                        act,
+                        callController.isLocalVideoEnabled,
+                        REQUEST_CALL_ENABLE_VIDEO_CAMERA
+                    ) {
+                        pendingEnableVideoAfterCameraGrant = true
+                    }
+                ) {
+                    return@vid
+                }
+                pendingEnableVideoAfterCameraGrant = false
                 callController.toggleVideo()
             }
         }
@@ -95,6 +119,18 @@ class CallFragment : BaseFragment() {
                     finishFragment()
                 }
                 override fun onMicClicked() {
+                    val act = getParentActivity() ?: return
+                    if (CallPermissionUi.startMicRequestIfNeededToUnmute(
+                            act,
+                            callController.isLocalAudioEnabled,
+                            REQUEST_CALL_UNMUTE_MIC
+                        ) {
+                            pendingUnmuteMicAfterAudioGrant = true
+                        }
+                    ) {
+                        return
+                    }
+                    pendingUnmuteMicAfterAudioGrant = false
                     callController.toggleMic()
                 }
             }
@@ -121,6 +157,47 @@ class CallFragment : BaseFragment() {
             finishFragment()
         }
         return super.onFragmentCreate()
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ) {
+        when (requestCode) {
+            REQUEST_CALL_ENABLE_VIDEO_CAMERA -> {
+                val act = getParentActivity() ?: return
+                CallPermissionUi.completePendingToggleAfterSinglePermissionResult(
+                    wasPending = pendingEnableVideoAfterCameraGrant,
+                    clearPending = { pendingEnableVideoAfterCameraGrant = false },
+                    permissions,
+                    grantResults,
+                    Manifest.permission.CAMERA,
+                    act,
+                    R.string.permission_no_camera,
+                    onDeniedToast = { msg ->
+                        MezonToast.show(this, ToastOverlay.ToastType.ERROR, msg)
+                    },
+                    onGranted = { callController.toggleVideo() }
+                )
+            }
+            REQUEST_CALL_UNMUTE_MIC -> {
+                val act = getParentActivity() ?: return
+                CallPermissionUi.completePendingToggleAfterSinglePermissionResult(
+                    wasPending = pendingUnmuteMicAfterAudioGrant,
+                    clearPending = { pendingUnmuteMicAfterAudioGrant = false },
+                    permissions,
+                    grantResults,
+                    Manifest.permission.RECORD_AUDIO,
+                    act,
+                    R.string.permission_no_audio,
+                    onDeniedToast = { msg ->
+                        MezonToast.show(this, ToastOverlay.ToastType.ERROR, msg)
+                    },
+                    onGranted = { callController.toggleMic() }
+                )
+            }
+        }
     }
 
     override fun onFragmentDestroy() {
