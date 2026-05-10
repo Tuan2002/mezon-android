@@ -1238,6 +1238,11 @@ class ChatController @Inject constructor(
 
     fun getCurrentUserId(): Long {
         if (cachedCurrentUserId != 0L) return cachedCurrentUserId
+        val fromStartup = com.mezon.mobile.core.StartupCache.userId.toLongOrNull() ?: 0L
+        if (fromStartup != 0L) {
+            cachedCurrentUserId = fromStartup
+            return fromStartup
+        }
         appScope.launch(ioDispatcher) {
             val session = sessionManager.sessionFlow.first()
             cachedCurrentUserId = session?.userId?.toLongOrNull() ?: 0L

@@ -27,7 +27,6 @@ import com.mezon.mobile.home.UserClanController
 import com.mezon.mobile.home.clans.ChannelController
 import com.mezon.mobile.home.clans.ClanEntity
 import com.mezon.mobile.home.clans.ClansController
-import com.mezon.mobile.home.clans.ClanSubSettingPlaceholderFragment
 import com.mezon.mobile.home.clans.CreateClanRnUiTokens
 import com.mezon.mobile.home.clans.RoleController
 import com.mezon.mobile.home.profile.UserController
@@ -416,7 +415,7 @@ class ClanSettingFragment : BaseFragment() {
                         })
                     else ->
                         navigationRow(ctx, row.icon, row.labelRes, Runnable {
-                            presentFragment(ClanSubSettingPlaceholderFragment.newInstance(row.subScreenTitleRes, clanId))
+                            MezonToast.show(this, ToastOverlay.ToastType.INFO, getString(R.string.feature_coming_soon))
                         })
                 }
             ClanSetting.MenuRow.InvitePeople ->

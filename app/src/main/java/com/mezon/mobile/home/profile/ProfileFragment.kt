@@ -338,6 +338,12 @@ class ProfileFragment : BaseFragment() {
         ))
 
         rightIconsLayout.addView(createCircleIconButton(context, MezonIcon.shopIcon) {
+            val parent = getLayoutContainer() ?: (fragmentView as? ViewGroup) ?: return@createCircleIconButton
+            ToastOverlay(requireContext(), themeColors).show(
+                parent,
+                ToastOverlay.ToastType.INFO,
+                getString(R.string.feature_coming_soon)
+            )
         })
         val gapIcon = View(context)
         rightIconsLayout.addView(gapIcon, LinearLayout.LayoutParams(LayoutHelper.dp(12), 0))

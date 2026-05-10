@@ -118,6 +118,7 @@ import com.mezon.mobile.home.chat.poll.mergePollFromGetResponse
 import com.mezon.mobile.home.chat.poll.parsePollContent
 import com.mezon.mobile.home.chat.poll.votedAnswerIndices
 import com.mezon.mobile.home.call.CallManager
+import com.mezon.mobile.home.call.CallPermissionUi
 import com.mezon.mobile.home.call.parseCallLogMessage
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
@@ -1011,6 +1012,7 @@ class ChatFragment : BaseFragment() {
         }
 
         observe(NotificationCenter.dialogsNeedReload) { _, _, _ ->
+            Log.d("DmCallMenu", "dialogsNeedReload fired isPaused=$isPaused clanId=$clanId channelType=$channelType actionBar=${actionBar != null}")
             if (isPaused) return@observe
             if (clanId != 0L || channelType != CHANNEL_TYPE_DM) return@observe
             actionBar?.let { setupDmHeaderCallMenu(it) }
@@ -2900,9 +2902,10 @@ class ChatFragment : BaseFragment() {
     private fun isDmSelfOnlyChat(): Boolean {
         if (channelType != CHANNEL_TYPE_DM || clanId != 0L) return false
         val myId = chatController.getCurrentUserId()
+        if (myId == 0L) return false
         val participants = dialogsController.getParticipants(channelId)
         if (participants.isNotEmpty()) {
-            return participants.size <= 1 || participants.all { it.userId == myId }
+            return participants.all { it.userId == myId }
         }
         val dm = dialogsController.getDialog(channelId) ?: return false
         if (dm.otherUserId == 0L) return false
@@ -2931,10 +2934,28 @@ class ChatFragment : BaseFragment() {
     }
 
     private fun setupDmHeaderCallMenu(chatActionBar: ActionBarView) {
-        if (clanId != 0L || channelType != CHANNEL_TYPE_DM) return
-        if (isDmSelfOnlyChat()) return
+        val participants = dialogsController.getParticipants(channelId)
+        val dmCached = dialogsController.getDialog(channelId)
+        Log.d(
+            "DmCallMenu",
+            "enter channelId=$channelId clanId=$clanId channelType=$channelType " +
+                "participants=${participants.size} dmCached=${dmCached != null} " +
+                "dmOtherUserId=${dmCached?.otherUserId} myId=${chatController.getCurrentUserId()}"
+        )
+        if (clanId != 0L || channelType != CHANNEL_TYPE_DM) {
+            Log.d("DmCallMenu", "skip not-DM clanId=$clanId channelType=$channelType")
+            return
+        }
+        if (isDmSelfOnlyChat()) {
+            Log.d("DmCallMenu", "skip self-only-chat channelId=$channelId")
+            return
+        }
         val otherId = dmHeaderCallOtherUserId()
-        if (otherId != null && friendController.isUserBlocked(otherId)) return
+        if (otherId != null && friendController.isUserBlocked(otherId)) {
+            Log.d("DmCallMenu", "skip peer-blocked otherId=$otherId")
+            return
+        }
+        Log.d("DmCallMenu", "proceed otherId=$otherId")
         chatActionBar.setMenuOnItemClick(object : ActionBarView.ActionBarMenuOnItemClick() {
             override fun onItemClick(id: Int) {
                 when (id) {
@@ -2974,9 +2995,11 @@ class ChatFragment : BaseFragment() {
         })
         val menu = chatActionBar.createMenu()
         if (menu.getItem(MENU_DM_VOICE_CALL) != null) {
+            Log.d("DmCallMenu", "menu item already exists — only refresh color")
             chatActionBar.setItemsColor(themeColors.onSurface)
             return
         }
+        Log.d("DmCallMenu", "adding new MENU_DM_VOICE_CALL item iconRes=${MezonIcon.phoneCallIcon.resId}")
         val callMenuItem = menu.addItem(MENU_DM_VOICE_CALL, MezonIcon.phoneCallIcon.resId)
         callMenuItem.contentDescription = getString(R.string.user_profile_voice_call)
         val callItemLp = callMenuItem.layoutParams as LinearLayout.LayoutParams
@@ -2987,6 +3010,13 @@ class ChatFragment : BaseFragment() {
         callMenuItem.iconView.scaleType = ImageView.ScaleType.FIT_CENTER
         callMenuItem.iconView.layoutParams = FrameLayout.LayoutParams(callIconPx, callIconPx, Gravity.CENTER)
         chatActionBar.setItemsColor(themeColors.onSurface)
+        Log.d(
+            "DmCallMenu",
+            "DONE menuChildCount=${menu.childCount} menuVis=${menu.visibility} " +
+                "callItemVis=${callMenuItem.visibility} actionBarParent=${chatActionBar.parent != null} " +
+                "actionBarW=${chatActionBar.width} actionBarH=${chatActionBar.height} " +
+                "themeOnSurface=${themeColors.onSurface}"
+        )
     }
 
     private fun resolveChannelPrivate(): Boolean {
@@ -3958,16 +3988,47 @@ class ChatFragment : BaseFragment() {
             }
         }
         if (requestCode == REQUEST_CALL_PERMISSIONS) {
+            val msgRes = CallPermissionUi.permissionResultMessageForCall(
+                permissions,
+                grantResults,
+                pendingCallPermissionRequestIncludedCamera
+            )
             val audioGranted = permissions.indices.any { i ->
                 permissions[i] == Manifest.permission.RECORD_AUDIO &&
-                    grantResults[i] == PackageManager.PERMISSION_GRANTED
+                    grantResults.getOrNull(i) == PackageManager.PERMISSION_GRANTED
             }
-            if (audioGranted) {
+            val cameraGranted = permissions.indices.any { i ->
+                permissions[i] == Manifest.permission.CAMERA &&
+                    grantResults.getOrNull(i) == PackageManager.PERMISSION_GRANTED
+            }
+            val needCamera = pendingCallPermissionRequestIncludedCamera
+            val ok = audioGranted && (!needCamera || cameraGranted)
+            if (ok) {
                 pendingCallPermissionCallback?.invoke()
             } else {
-                Log.w(TAG, "requestCallPermissions denied RECORD_AUDIO results=${grantResults.contentToString()}")
+                Log.w(TAG, "requestCallPermissions denied results=${grantResults.contentToString()}")
+                val activity = getParentActivity()
+                if (msgRes != null) {
+                    MezonToast.show(this, ToastOverlay.ToastType.ERROR, getString(msgRes))
+                }
+                if (activity != null) {
+                    if (!audioGranted) {
+                        CallPermissionUi.showMicOrCameraDeniedFeedback(
+                            activity,
+                            Manifest.permission.RECORD_AUDIO,
+                            R.string.permission_no_audio
+                        )
+                    } else if (needCamera && !cameraGranted) {
+                        CallPermissionUi.showMicOrCameraDeniedFeedback(
+                            activity,
+                            Manifest.permission.CAMERA,
+                            R.string.permission_no_camera
+                        )
+                    }
+                }
             }
             pendingCallPermissionCallback = null
+            pendingCallPermissionRequestIncludedCamera = false
         }
     }
 
@@ -5132,6 +5193,7 @@ class ChatFragment : BaseFragment() {
     }
 
     private var pendingCallPermissionCallback: (() -> Unit)? = null
+    private var pendingCallPermissionRequestIncludedCamera = false
 
     private fun requestCallPermissions(
         needsCamera: Boolean = true,
@@ -5156,9 +5218,12 @@ class ChatFragment : BaseFragment() {
         }
         if (needed.isEmpty()) {
             Log.d(TAG, "requestCallPermissions already granted reason=$reason")
+            pendingCallPermissionRequestIncludedCamera = false
             runOutgoingCallAfterFullScreenIntentPrompt(onGranted)
         } else {
             Log.d(TAG, "requestCallPermissions prompting reason=$reason perms=$needed")
+            pendingCallPermissionRequestIncludedCamera =
+                needed.contains(android.Manifest.permission.CAMERA)
             pendingCallPermissionCallback = { runOutgoingCallAfterFullScreenIntentPrompt(onGranted) }
             androidx.core.app.ActivityCompat.requestPermissions(activity, needed.toTypedArray(), REQUEST_CALL_PERMISSIONS)
         }
