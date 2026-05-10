@@ -329,13 +329,12 @@ internal class ChannelMediaGalleryAdapter(
                 VideoPlayerDialog(ctx).play(url)
 
             tapped.filetype.contains("gif", true) ->
-                PhotoViewer(ctx).show(url, animated = true, thumbBitmap = null)
+                PhotoViewer(ctx).show(url, thumbBitmap = null, preferDrawableLoader = true)
 
             else -> {
                 val idx = orderedImages.indexOf(url).takeIf { it >= 0 } ?: 0
                 PhotoViewer(ctx).show(
                     url,
-                    animated = false,
                     gallery = orderedImages,
                     index = idx,
                     thumbBitmap = null

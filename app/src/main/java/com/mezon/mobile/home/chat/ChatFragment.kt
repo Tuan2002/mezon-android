@@ -1466,7 +1466,7 @@ class ChatFragment : BaseFragment() {
 
                 when {
                     isVideo -> VideoPlayerDialog(context).play(url)
-                    isGif -> PhotoViewer(context).show(url, animated = true, thumbBitmap = thumbBmp)
+                    isGif -> PhotoViewer(context).show(url, thumbBitmap = thumbBmp, preferDrawableLoader = true)
                     else -> {
                         val gallery = allMedia.filter { !it.filetype.startsWith("video/") }.map { it.url }
                         val idx = gallery.indexOf(url).coerceAtLeast(0)
