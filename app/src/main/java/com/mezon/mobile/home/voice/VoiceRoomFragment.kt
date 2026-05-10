@@ -659,11 +659,11 @@ class VoiceRoomFragment : BaseFragment() {
                     ctx, Manifest.permission.RECORD_AUDIO
                 ) == PackageManager.PERMISSION_GRANTED
                 if (!audioGranted) {
-                    Toast.makeText(
-                        ctx,
-                        getString(R.string.voice_room_listen_only_hint),
-                        Toast.LENGTH_LONG
-                    ).show()
+                    showPermissionDeniedDialog(
+                        titleRes = R.string.voice_room_mic_permission_title,
+                        messageRes = R.string.voice_room_mic_permission_message,
+                        dismissOnCancel = false
+                    )
                 }
                 connectToRoom()
             }
