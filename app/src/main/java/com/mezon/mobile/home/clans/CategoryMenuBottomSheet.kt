@@ -9,7 +9,6 @@ import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
-import android.widget.Toast
 import com.mezon.mobile.R
 import com.mezon.mobile.core.AndroidUtilities
 import com.mezon.mobile.core.BottomSheet
@@ -22,14 +21,12 @@ class CategoryMenuBottomSheet(
     context: android.content.Context,
     private val clanId: Long,
     private val clanName: String,
-    private val clanLogoUrl: String
+    private val clanLogoUrl: String,
+    private val categoryId: Long,
+    private val onCreateChannel: () -> Unit
 ) : BottomSheet(context) {
 
     private val themeColors = ThemeColors.instance
-
-    private fun showComingSoon() {
-        Toast.makeText(context, context.getString(R.string.feature_coming_soon), Toast.LENGTH_SHORT).show()
-    }
 
     init {
         containerHeight = (AndroidUtilities.displaySize.y * 0.45f).toInt()
@@ -83,7 +80,9 @@ class CategoryMenuBottomSheet(
             isClickable = true
             isFocusable = true
             setOnClickListener {
-                showComingSoon()
+                if (categoryId == 0L) return@setOnClickListener
+                dismiss()
+                onCreateChannel()
             }
         }
 

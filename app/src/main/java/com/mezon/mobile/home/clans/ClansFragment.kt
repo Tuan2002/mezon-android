@@ -291,7 +291,11 @@ class ClansFragment : BaseFragment() {
                         context,
                         clan.clanId,
                         clan.clanName,
-                        clan.logo
+                        clan.logo,
+                        catId,
+                        onCreateChannel = {
+                            presentFragment(CreateChannelFragment.newInstance(catId))
+                        }
                     ).show()
                 }
             }

@@ -2,6 +2,9 @@ package com.mezon.mobile.ui.cells
 
 import android.content.Context
 import android.graphics.Canvas
+import android.graphics.PorterDuff
+import android.graphics.Typeface
+import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
 import android.text.Editable
 import android.text.InputType
@@ -14,6 +17,8 @@ import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
+import androidx.core.content.ContextCompat
+import com.mezon.mobile.R
 import com.mezon.mobile.core.LayoutHelper
 import com.mezon.mobile.core.ThemeColors
 
@@ -164,9 +169,21 @@ class InputCell(context: Context, private val theme: ThemeColors) : LinearLayout
         if (message != null) {
             errorView.text = message
             errorView.visibility = View.VISIBLE
+            val iconPx = LayoutHelper.dp(16)
+            val icon: Drawable? =
+                ContextCompat.getDrawable(context, R.drawable.ic_circle_information)?.mutate()?.apply {
+                    setBounds(0, 0, iconPx, iconPx)
+                    setTint(theme.error)
+                    setTintMode(PorterDuff.Mode.SRC_IN)
+                }
+            errorView.setCompoundDrawablesRelative(icon, null, null, null)
+            errorView.compoundDrawablePadding = LayoutHelper.dp(6)
+            errorView.setTypeface(null, Typeface.ITALIC)
             bgDrawable.setStroke(LayoutHelper.dp(1), theme.error)
         } else {
             errorView.visibility = View.GONE
+            errorView.setCompoundDrawablesRelative(null, null, null, null)
+            errorView.setTypeface(null, Typeface.NORMAL)
             bgDrawable.setStroke(LayoutHelper.dp(1), strokeWhenValid ?: theme.outlineVariant)
         }
     }
