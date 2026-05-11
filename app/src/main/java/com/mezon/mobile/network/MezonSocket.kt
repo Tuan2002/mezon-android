@@ -31,6 +31,7 @@ import com.mezon.mezon.rtapi.statusUnfollow
 import com.mezon.mezon.rtapi.statusUpdate
 import com.mezon.mezon.rtapi.voiceReactionSend
 import com.mezon.mezon.rtapi.webrtcSignalingFwd
+import java.util.Locale
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -107,6 +108,7 @@ class MezonSocket @Inject constructor(
     @Volatile private var isReconnecting = false
     @Volatile private var userDisconnected = false
     @Volatile private var hasConnectedBefore = false
+    @Volatile private var forceRefreshNextReconnect = false
 
     fun connect(wsUrl: String, token: String) {
         if (_connectionState.value == ConnectionState.CONNECTED ||
@@ -177,6 +179,11 @@ class MezonSocket @Inject constructor(
         val sent = ws.send(bytes)
         if (!sent) {
             pendingRequests.remove(cid)
+            Log.w(TAG, "send: ws.send returned false case=${env.messageCase} bytes=${bytes.size} state=${_connectionState.value} queueSize=${ws.queueSize()}, forcing reconnect")
+            _connectionState.value = ConnectionState.DISCONNECTED
+            try { ws.close(1001, "send enqueue failed") } catch (_: Exception) {}
+            if (webSocket === ws) webSocket = null
+            if (!userDisconnected) scheduleReconnect()
             throw IllegalStateException("Failed to enqueue WebSocket message")
         }
 
@@ -468,12 +475,17 @@ class MezonSocket @Inject constructor(
         jsonData: String,
         channelId: Long,
         callerId: Long
-    ): Envelope = send {
-        this.incomingCallPush = incomingCallPush {
-            this.receiverId = receiverId
-            this.jsonData = jsonData
-            this.channelId = channelId
-            this.callerId = callerId
+    ): Envelope {
+        val offerUtf8Bytes = jsonData.toByteArray(Charsets.UTF_8).size
+        val offerKb = offerUtf8Bytes / 1024.0
+        Log.d(TAG, "makeCallPush jsonData len=${jsonData.length} chars utf8=${offerUtf8Bytes}B ${String.format(Locale.US, "%.2f", offerKb)}KiB receiverId=$receiverId channelId=$channelId callerId=$callerId")
+        return send {
+            this.incomingCallPush = incomingCallPush {
+                this.receiverId = receiverId
+                this.jsonData = jsonData
+                this.channelId = channelId
+                this.callerId = callerId
+            }
         }
     }
 
@@ -557,6 +569,10 @@ class MezonSocket @Inject constructor(
 
         override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
             Log.d(TAG, "Server closing: $code $reason")
+            if (code == 1008 || (code in 4001..4099)) {
+                Log.w(TAG, "Server close suggests auth issue (code=$code), will force refresh on reconnect")
+                forceRefreshNextReconnect = true
+            }
             webSocket.close(1000, null)
         }
 
@@ -569,7 +585,13 @@ class MezonSocket @Inject constructor(
         }
 
         override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-            Log.e(TAG, "WebSocket failure: ${t.message}")
+            val httpCode = response?.code
+            val httpMsg = response?.message
+            Log.e(TAG, "WebSocket failure: ${t.message} (http=$httpCode $httpMsg type=${t.javaClass.simpleName})")
+            if (httpCode == 401 || httpCode == 403) {
+                Log.w(TAG, "WebSocket handshake failed with auth code $httpCode, will force refresh on reconnect")
+                forceRefreshNextReconnect = true
+            }
             _connectionState.value = ConnectionState.DISCONNECTED
             heartbeatJob?.cancel()
             cancelAllPending("Connection failed: ${t.message}")
@@ -657,7 +679,18 @@ class MezonSocket @Inject constructor(
             reconnectDelayMs = (reconnectDelayMs * 2).coerceAtMost(RECONNECT_MAX_MS)
 
             try {
-                val session = sessionManager.requireValidSession()
+                val session = if (forceRefreshNextReconnect) {
+                    Log.d(TAG, "Force-refreshing session before reconnect")
+                    forceRefreshNextReconnect = false
+                    try {
+                        sessionManager.refresh()
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Forced refresh failed, falling back to requireValidSession", e)
+                        sessionManager.requireValidSession()
+                    }
+                } else {
+                    sessionManager.requireValidSession()
+                }
                 currentWsUrl = session.wsUrl
                 currentToken = session.token
                 isReconnecting = false
