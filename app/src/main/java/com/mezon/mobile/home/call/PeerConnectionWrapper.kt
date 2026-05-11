@@ -247,20 +247,27 @@ class PeerConnectionWrapper(
     }
 
     fun requestAnswerWhenRemoteReady(callback: (SessionDescription) -> Unit) {
-        if (disposed) return
-        val runNow = synchronized(answerLock) {
+        if (disposed) {
+            android.util.Log.w(TAG, "requestAnswerWhenRemoteReady: disposed, skip")
+            return
+        }
+        val (runNow, remoteSet) = synchronized(answerLock) {
             if (remoteDescriptionSet) {
-                true
+                true to true
             } else {
                 pendingAnswerCallback = callback
-                false
+                false to false
             }
         }
+        android.util.Log.d(TAG, "requestAnswerWhenRemoteReady: runNow=$runNow remoteDescriptionSet=$remoteSet")
         if (runNow) {
             if (localAudioTrack == null) {
                 addLocalAudioTrackIfPermitted()
             }
+            android.util.Log.d(TAG, "requestAnswerWhenRemoteReady: immediate createAnswerAndFlush")
             createAnswerAndFlush(callback)
+        } else {
+            android.util.Log.d(TAG, "requestAnswerWhenRemoteReady: deferred until setRemoteDescription completes (eager path)")
         }
     }
 
@@ -269,7 +276,12 @@ class PeerConnectionWrapper(
             val p = pendingAnswerCallback
             pendingAnswerCallback = null
             p
-        } ?: return
+        }
+        if (cb == null) {
+            android.util.Log.d(TAG, "drainPendingAnswerAfterRemoteSet: no pending callback")
+            return
+        }
+        android.util.Log.d(TAG, "drainPendingAnswerAfterRemoteSet: invoke createAnswerAndFlush for deferred accept")
         if (disposed) return
         if (localAudioTrack == null) {
             addLocalAudioTrackIfPermitted()
