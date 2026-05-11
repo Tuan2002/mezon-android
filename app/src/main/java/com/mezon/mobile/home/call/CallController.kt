@@ -34,7 +34,35 @@ import dagger.Lazy
 
 private const val TAG = "CallController"
 private const val CALL_TIMEOUT_MS = 30_000L
+private const val CONNECTING_PHASE_TIMEOUT_MS = 60_000L
 private const val REMOTE_VIDEO_INITIAL_SUPPRESS_MS = 2000L
+private const val WEBRTC_CANDIDATE_LOG_MAX = 200
+
+private fun sdpMLineCount(sdp: String): Int = sdp.lineSequence().count { it.startsWith("m=") }
+
+private fun sdpPreviewForLog(sdp: String): String {
+    val head = sdp.replace("\r\n", "\n").lineSequence()
+        .take(4)
+        .joinToString(" ¦ ") { it.trim().take(96) }
+    return "len=${sdp.length} mLines=${sdpMLineCount(sdp)} head=[$head]"
+}
+
+private fun iceCandidatePreviewForLog(c: IceCandidate): String {
+    val s = c.sdp
+    val clip = s.take(WEBRTC_CANDIDATE_LOG_MAX)
+    val more = if (s.length > WEBRTC_CANDIDATE_LOG_MAX) "…(+${s.length - WEBRTC_CANDIDATE_LOG_MAX})" else ""
+    return "mid=${c.sdpMid} mline=${c.sdpMLineIndex} $clip$more"
+}
+
+private fun iceCandidateKindForLog(sdp: String): String = when {
+    sdp.contains(" typ relay ") -> "relay"
+    sdp.contains(" typ srflx ") -> "srflx"
+    sdp.contains(" typ host ") -> "host"
+    sdp.contains(" typ prflx ") -> "prflx"
+    sdp.contains("end-of-candidates", ignoreCase = true) -> "eoc"
+    sdp.isBlank() -> "empty"
+    else -> "other"
+}
 
 @Singleton
 class CallController @Inject constructor(
@@ -86,8 +114,12 @@ class CallController @Inject constructor(
     private var peerConnection: PeerConnectionWrapper? = null
     private var callAudioManager: CallAudioManager? = null
     private var timeoutJob: Job? = null
+    private var connectingPhaseTimeoutJob: Job? = null
     private var localOffer: SessionDescription? = null
     private val pendingIceCandidates = mutableListOf<IceCandidate>()
+
+    private var handshakeIceOutSeq = 0
+    private var handshakeIceInWireSeq = 0
 
     private val incomingPrepareHandler = Handler(Looper.getMainLooper())
 
@@ -118,6 +150,11 @@ class CallController @Inject constructor(
         }
     }
 
+    private fun resetHandshakeDebugCounters() {
+        handshakeIceOutSeq = 0
+        handshakeIceInWireSeq = 0
+    }
+
     fun startCall(
         peerId: Long,
         peerName: String,
@@ -132,6 +169,8 @@ class CallController @Inject constructor(
             Log.w(TAG, "Cannot start call: already in call state ${callState::class.simpleName}")
             return
         }
+
+        resetHandshakeDebugCounters()
 
         activeCallClanId = clanId
         activeCallChannelType = channelType
@@ -199,6 +238,7 @@ class CallController @Inject constructor(
                         put("channelId", channelId.toString())
                     }.toString()
 
+                    Log.d(TAG, "[WEBRTC:OFFER_LOCAL] peer=$peerId ch=$channelId video=$isVideo ${sdpPreviewForLog(offer.description)}")
                     Log.d(TAG, "startCall: payload offerJson=${offerJson.length} compressed=${compressedPayload.length} fcm=${fcmPayload.length} peer=$peerId")
                     appScope.launch(ioDispatcher) {
                         val signalingOk = sendWithRetry("startCall:SDP_OFFER") {
@@ -224,6 +264,7 @@ class CallController @Inject constructor(
                                 if (callState is CallState.Outgoing) endCall(CallEndReason.ERROR)
                             }
                         } else {
+                            Log.d(TAG, "[WEBRTC:OFFER_SENT] peer=$peerId ch=$channelId signaling=$signalingOk fcm=$fcmOk")
                             Log.d(TAG, "startCall: offer dispatched (signaling=$signalingOk fcm=$fcmOk)")
                         }
                     }
@@ -270,6 +311,7 @@ class CallController @Inject constructor(
         callAudioManager!!.advanceToEstablishedCallRouting(callInfo.isVideo)
 
         callState = CallState.Connecting(callInfo)
+        startConnectingPhaseTimeout()
         notificationCenter.postNotificationOnMainThread(NotificationCenter.callStateChanged, callState)
 
         try {
@@ -306,6 +348,7 @@ class CallController @Inject constructor(
         Log.d(TAG, "sendAnswer: callState=${callState::class.simpleName} answerSdpLen=${answer.description.length}")
         if (callState !is CallState.Connecting && callState !is CallState.Connected) {
             callState = CallState.Connecting(callInfo)
+            startConnectingPhaseTimeout()
             notificationCenter.postNotificationOnMainThread(NotificationCenter.callStateChanged, callState)
         }
 
@@ -314,6 +357,7 @@ class CallController @Inject constructor(
             put("type", "answer")
         }.toString()
         val compressedPayload = SdpCompressor.compress(answerJson)
+        Log.d(TAG, "[WEBRTC:ANSWER_LOCAL] peer=${callInfo.peerId} ch=${callInfo.channelId} ${sdpPreviewForLog(answer.description)}")
         Log.d(TAG, "sendAnswer: payload answerJson=${answerJson.length} compressed=${compressedPayload.length} peer=${callInfo.peerId}")
 
         appScope.launch(ioDispatcher) {
@@ -326,8 +370,10 @@ class CallController @Inject constructor(
                     callerId = userController.userId
                 )
             }
-            if (ok) Log.d(TAG, "sendAnswer: answer sent to peer=${callInfo.peerId}")
-            else Log.e(TAG, "sendAnswer: failed after retries — peer will not connect")
+            if (ok) {
+                Log.d(TAG, "[WEBRTC:ANSWER_SENT] peer=${callInfo.peerId} ch=${callInfo.channelId}")
+                Log.d(TAG, "sendAnswer: answer sent to peer=${callInfo.peerId}")
+            } else Log.e(TAG, "sendAnswer: failed after retries — peer will not connect")
         }
     }
 
@@ -360,6 +406,7 @@ class CallController @Inject constructor(
             )
 
             Log.d(TAG, "acceptCallFromFcm: caller=$callerName, sdpLen=${sdpString.length}")
+            resetHandshakeDebugCounters()
             callState = CallState.Incoming(callInfo, sdp)
             synchronized(pendingIceCandidates) { pendingIceCandidates.clear() }
             acceptCall()
@@ -411,6 +458,7 @@ class CallController @Inject constructor(
                 isInitiator = false
             )
 
+            resetHandshakeDebugCounters()
             callState = CallState.Incoming(callInfo, sdp)
             synchronized(pendingIceCandidates) { pendingIceCandidates.clear() }
             prepareIncomingPeerConnection(sdp)
@@ -632,6 +680,7 @@ class CallController @Inject constructor(
 
     fun endCall(reason: CallEndReason) {
         cancelTimeout()
+        cancelConnectingPhaseTimeout()
         cancelRemoteVideoRevealRefresh()
 
         val snapState = callState
@@ -691,6 +740,7 @@ class CallController @Inject constructor(
         isSpeakerOn = false
         localOffer = null
         synchronized(pendingIceCandidates) { pendingIceCandidates.clear() }
+        resetHandshakeDebugCounters()
 
         activeCallLogMessageId = 0L
 
@@ -776,6 +826,7 @@ class CallController @Inject constructor(
             val sdp = SessionDescription(SessionDescription.Type.OFFER, sdpString)
             val isVideo = resolveIsVideoFromOfferPayload(parsed, sdpString)
 
+            Log.d(TAG, "[WEBRTC:OFFER_REMOTE] caller=$callerId ch=$channelId name=$callerName video=$isVideo ${sdpPreviewForLog(sdpString)}")
             Log.d(TAG, "handleOffer: parsed caller=$callerName, video=$isVideo, sdpLen=${sdpString.length}, hasV0=${sdpString.contains("v=0")}, hasMaudio=${sdpString.contains("m=audio")}, hasMvideo=${sdpString.contains("m=video")}")
 
             val callInfo = CallInfo(
@@ -789,6 +840,8 @@ class CallController @Inject constructor(
 
             activeCallLogMessageId = 0L
 
+            resetHandshakeDebugCounters()
+            Log.d(TAG, "[WEBRTC:HANDSHAKE] offer via socket → Incoming + PC prepare")
             callState = CallState.Incoming(callInfo, sdp)
             synchronized(pendingIceCandidates) { pendingIceCandidates.clear() }
             prepareIncomingPeerConnection(sdp)
@@ -837,10 +890,13 @@ class CallController @Inject constructor(
             }
             val sdp = SessionDescription(SessionDescription.Type.ANSWER, sdpString)
 
+            Log.d(TAG, "[WEBRTC:HANDSHAKE] caller will apply remote ANSWER (handleRemoteAnswer)")
+            Log.d(TAG, "[WEBRTC:ANSWER_REMOTE] state=${state::class.simpleName} ${sdpPreviewForLog(sdpString)} pc=${peerConnection != null}")
             Log.d(TAG, "handleAnswer: applying remote answer sdpLen=${sdpString.length} pcExists=${peerConnection != null}")
             peerConnection?.handleRemoteAnswer(sdp)
             if (state is CallState.Outgoing) {
                 callState = CallState.Connecting(state.callInfo)
+                startConnectingPhaseTimeout()
                 Log.d(TAG, "handleAnswer: transitioned to Connecting, awaiting ICE")
                 notificationCenter.postNotificationOnMainThread(NotificationCenter.callStateChanged, callState)
             }
@@ -852,21 +908,24 @@ class CallController @Inject constructor(
 
     private fun handleIceCandidate(jsonData: String) {
         try {
+            handshakeIceInWireSeq++
+            val wireN = handshakeIceInWireSeq
             val json = JSONObject(jsonData)
             val candidate = IceCandidate(
                 json.getString("sdpMid"),
                 json.getInt("sdpMLineIndex"),
                 json.getString("candidate")
             )
+            val kind = iceCandidateKindForLog(candidate.sdp)
             val pc = peerConnection
             if (pc != null) {
-                Log.d(TAG, "handleIceCandidate: applied remote candidate mid=${candidate.sdpMid} mline=${candidate.sdpMLineIndex} state=${callState::class.simpleName}")
+                Log.d(TAG, "[WEBRTC:ICE_IN] #$wireN kind=$kind apply state=${callState::class.simpleName} ${iceCandidatePreviewForLog(candidate)}")
                 pc.addRemoteIceCandidate(candidate)
             } else {
                 synchronized(pendingIceCandidates) {
                     pendingIceCandidates.add(candidate)
                 }
-                Log.d(TAG, "handleIceCandidate: queued (no PC yet) total=${pendingIceCandidates.size} state=${callState::class.simpleName}")
+                Log.d(TAG, "[WEBRTC:ICE_IN] #$wireN kind=$kind queued depth=${pendingIceCandidates.size} state=${callState::class.simpleName} ${iceCandidatePreviewForLog(candidate)}")
             }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to parse ICE candidate", e)
@@ -877,8 +936,12 @@ class CallController @Inject constructor(
         val pc = peerConnection ?: return
         synchronized(pendingIceCandidates) {
             if (pendingIceCandidates.isNotEmpty()) {
-                Log.d(TAG, "Flushing ${pendingIceCandidates.size} pending ICE candidates")
+                val n = pendingIceCandidates.size
+                Log.d(TAG, "[WEBRTC:HANDSHAKE] flush ${n} ICE from signaling (no PC yet) → PeerConnectionWrapper")
+                var i = 0
                 for (candidate in pendingIceCandidates) {
+                    i++
+                    Log.d(TAG, "[WEBRTC:ICE_IN] flush[$i/$n] kind=${iceCandidateKindForLog(candidate.sdp)} ${iceCandidatePreviewForLog(candidate)}")
                     pc.addRemoteIceCandidate(candidate)
                 }
                 pendingIceCandidates.clear()
@@ -919,8 +982,10 @@ class CallController @Inject constructor(
     private fun handleSdpInit() {
         val state = callState
         if (state is CallState.Connecting) {
+            Log.d(TAG, "[WEBRTC:HANDSHAKE] SDP_INIT recv → Connected (peer signaled media ready)")
             val connectedTime = SystemClock.elapsedRealtime()
             callState = CallState.Connected(state.callInfo, connectedTime)
+            cancelConnectingPhaseTimeout()
             callAudioManager?.stopTone()
             sendMediaStatus()
             scheduleRemoteVideoRevealRefreshIfNeeded()
@@ -960,18 +1025,24 @@ class CallController @Inject constructor(
             put("sdpMLineIndex", candidate.sdpMLineIndex)
             put("candidate", candidate.sdp)
         }.toString()
-        Log.d(TAG, "onLocalIceCandidate: mid=${candidate.sdpMid} mline=${candidate.sdpMLineIndex} socketState=${socket.connectionState.value} state=${callState::class.simpleName} jsonLen=${json.length}")
+        handshakeIceOutSeq++
+        val seq = handshakeIceOutSeq
+        Log.d(
+            TAG,
+            "[WEBRTC:ICE_OUT] #$seq kind=${iceCandidateKindForLog(candidate.sdp)} socket=${socket.connectionState.value} state=${callState::class.simpleName} jsonLen=${json.length} ${iceCandidatePreviewForLog(candidate)}"
+        )
 
         sendSignaling(callInfo.peerId, callInfo.channelId, WebrtcSignalingType.ICE_CANDIDATE, json)
     }
 
     override fun onIceConnected() {
         val state = callState
-        Log.d(TAG, "onIceConnected: state=${state::class.simpleName}")
+        Log.d(TAG, "[WEBRTC:HANDSHAKE] onIceConnected state=${state::class.simpleName}")
         if (state is CallState.Connecting || state is CallState.Outgoing) {
             val callInfo = currentCallInfo() ?: return
             val connectedTime = SystemClock.elapsedRealtime()
             callState = CallState.Connected(callInfo, connectedTime)
+            cancelConnectingPhaseTimeout()
             cancelTimeout()
             callAudioManager?.stopTone()
             Log.d(TAG, "onIceConnected: transitioning to Connected, sending SDP_INIT + mediaStatus")
@@ -988,12 +1059,12 @@ class CallController @Inject constructor(
     }
 
     override fun onIceDisconnected() {
-        Log.w(TAG, "onIceDisconnected: ending call (was ${callState::class.simpleName}) socketState=${socket.connectionState.value}")
+        Log.w(TAG, "[WEBRTC:HANDSHAKE] onIceDisconnected was=${callState::class.simpleName} socket=${socket.connectionState.value}")
         endCall(CallEndReason.ICE_FAILED)
     }
 
     override fun onIceFailed() {
-        Log.e(TAG, "onIceFailed: ending call (was ${callState::class.simpleName}) socketState=${socket.connectionState.value}")
+        Log.e(TAG, "[WEBRTC:HANDSHAKE] onIceFailed was=${callState::class.simpleName} socket=${socket.connectionState.value}")
         endCall(CallEndReason.ICE_FAILED)
     }
 
@@ -1049,6 +1120,22 @@ class CallController @Inject constructor(
     private fun cancelTimeout() {
         timeoutJob?.cancel()
         timeoutJob = null
+    }
+
+    private fun startConnectingPhaseTimeout() {
+        connectingPhaseTimeoutJob?.cancel()
+        connectingPhaseTimeoutJob = appScope.launch(Dispatchers.Main) {
+            delay(CONNECTING_PHASE_TIMEOUT_MS)
+            if (callState is CallState.Connecting) {
+                Log.w(TAG, "Connecting phase exceeded ${CONNECTING_PHASE_TIMEOUT_MS}ms, ending call")
+                endCall(CallEndReason.TIMEOUT)
+            }
+        }
+    }
+
+    private fun cancelConnectingPhaseTimeout() {
+        connectingPhaseTimeoutJob?.cancel()
+        connectingPhaseTimeoutJob = null
     }
 
     private fun pushCancelCallToCallee(callInfo: CallInfo) {
