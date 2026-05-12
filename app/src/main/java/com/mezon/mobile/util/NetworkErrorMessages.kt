@@ -9,9 +9,7 @@ import java.net.UnknownHostException
 import java.util.Locale
 import javax.net.ssl.SSLException
 
-/**
- * Maps low-level connectivity failures (DNS, no route, timeout) to short user-facing copy for auth flows.
- */
+
 object NetworkErrorMessages {
 
     /**
