@@ -229,13 +229,16 @@ class PeerConnectionWrapper(
                             peerConnection?.setLocalDescription(object : SimpleSdpObserver() {
                                 override fun onSetSuccess() {
                                     android.util.Log.d(TAG, "[WEBRTC:HANDSHAKE] setLocalDescription ANSWER ok (callee lazy path)")
+                                    mainHandler.post { callback(preferredAnswer) }
                                 }
 
                                 override fun onSetFailure(error: String?) {
                                     android.util.Log.e(TAG, "[WEBRTC:HANDSHAKE] setLocalDescription ANSWER fail: $error")
+                                    mainHandler.post {
+                                        listener.onInboundSignalingSetupFailed(error ?: "setLocalDescription ANSWER failed")
+                                    }
                                 }
                             }, preferredAnswer)
-                            mainHandler.post { callback(preferredAnswer) }
                         }
                     }
                 }, MediaConstraints())
@@ -348,16 +351,19 @@ class PeerConnectionWrapper(
                 pc.setLocalDescription(object : SimpleSdpObserver() {
                     override fun onSetSuccess() {
                         android.util.Log.d(TAG, "[WEBRTC:HANDSHAKE] setLocalDescription ANSWER ok (callee eager/flush)")
+                        mainHandler.post {
+                            callback(preferredAnswer)
+                            flushPendingLocalIce()
+                        }
                     }
 
                     override fun onSetFailure(err: String?) {
                         android.util.Log.e(TAG, "[WEBRTC:HANDSHAKE] setLocalDescription ANSWER fail: $err")
+                        mainHandler.post {
+                            listener.onInboundSignalingSetupFailed(err ?: "setLocalDescription ANSWER failed")
+                        }
                     }
                 }, preferredAnswer)
-                mainHandler.post {
-                    callback(preferredAnswer)
-                    flushPendingLocalIce()
-                }
             }
 
             override fun onCreateFailure(error: String?) {
@@ -398,8 +404,18 @@ class PeerConnectionWrapper(
                     override fun onCreateSuccess(answer: SessionDescription?) {
                         answer?.let {
                             val preferredAnswer = preferVp8Codec(it)
-                            pc.setLocalDescription(SimpleSdpObserver(), preferredAnswer)
-                            mainHandler.post { callback(preferredAnswer) }
+                            pc.setLocalDescription(object : SimpleSdpObserver() {
+                                override fun onSetSuccess() {
+                                    mainHandler.post { callback(preferredAnswer) }
+                                }
+
+                                override fun onSetFailure(error: String?) {
+                                    android.util.Log.e(
+                                        TAG,
+                                        "handleRenegotiationRemoteOffer: setLocalDescription ANSWER fail: $error"
+                                    )
+                                }
+                            }, preferredAnswer)
                         }
                     }
                 }, MediaConstraints())
@@ -420,13 +436,13 @@ class PeerConnectionWrapper(
                     peerConnection?.setLocalDescription(object : SimpleSdpObserver() {
                         override fun onSetSuccess() {
                             android.util.Log.d(TAG, "[WEBRTC:HANDSHAKE] setLocalDescription OFFER ok (renegotiate)")
+                            mainHandler.post { callback(preferredSdp) }
                         }
 
                         override fun onSetFailure(error: String?) {
                             android.util.Log.e(TAG, "[WEBRTC:HANDSHAKE] setLocalDescription OFFER fail: $error")
                         }
                     }, preferredSdp)
-                    mainHandler.post { callback(preferredSdp) }
                 }
             }
         }, constraints)
@@ -451,6 +467,9 @@ class PeerConnectionWrapper(
 
             override fun onSetFailure(error: String?) {
                 android.util.Log.e(TAG, "[WEBRTC:HANDSHAKE] setRemoteDescription ANSWER fail: $error")
+                mainHandler.post {
+                    listener.onInboundSignalingSetupFailed(error ?: "setRemoteDescription ANSWER failed")
+                }
             }
         }, sdp)
     }
