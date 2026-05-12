@@ -3,6 +3,7 @@ package com.mezon.mobile.home.call
 import android.content.Context
 import android.os.Handler
 import android.os.Looper
+import android.util.Log
 import org.webrtc.AudioSource
 import org.webrtc.AudioTrack
 import org.webrtc.Camera2Enumerator
@@ -161,6 +162,7 @@ class PeerConnectionWrapper(
 
     fun createOffer(isVideo: Boolean, callback: (SessionDescription) -> Unit) {
         createPeerConnection()
+        holdLocalCandidates = true 
         addLocalMedia(isVideo)
 
         val constraints = sessionOfferConstraints()
@@ -376,6 +378,7 @@ class PeerConnectionWrapper(
             override fun onSetSuccess() {
                 remoteDescriptionSet = true
                 flushPendingIce()
+                mainHandler.post { flushPendingLocalIce() } 
             }
         }, sdp)
     }
@@ -638,7 +641,7 @@ class PeerConnectionWrapper(
 
     companion object {
         private const val ICE_RECONNECT_TIMEOUT_MS = 3000L
-    }
+            }
 }
 
 open class SimpleSdpObserver : SdpObserver {
