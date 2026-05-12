@@ -3,13 +3,14 @@ package com.mezon.mobile.network
 import com.mezon.mobile.di.ApplicationScope
 import com.mezon.mobile.session.SessionManager
 import android.util.Log
+import com.google.protobuf.ByteString as ProtoByteString
 import com.google.protobuf.StringValue
-import com.mezon.mezon.api.ListClanBadgeCountResponse
 import com.mezon.mezon.api.MessageAttachment
 import com.mezon.mezon.api.MessageMention
 import com.mezon.mezon.api.MessageRef
 import com.mezon.mezon.rtapi.EnvelopeKt
 import com.mezon.mezon.rtapi.Envelope
+import com.mezon.mezon.rtapi.apiRequestEvent
 import com.mezon.mezon.rtapi.channelJoin
 import com.mezon.mezon.rtapi.channelLeave
 import com.mezon.mezon.rtapi.channelMessageRemove
@@ -22,7 +23,6 @@ import com.mezon.mezon.rtapi.envelope
 import com.mezon.mezon.rtapi.incomingCallPush
 import com.mezon.mezon.rtapi.lastPinMessageEvent
 import com.mezon.mezon.rtapi.lastSeenMessageEvent
-import com.mezon.mezon.rtapi.listDataSocket
 import com.mezon.mezon.rtapi.markAsRead
 import com.mezon.mezon.rtapi.messageTypingEvent
 import com.mezon.mezon.rtapi.ping
@@ -31,6 +31,7 @@ import com.mezon.mezon.rtapi.statusUnfollow
 import com.mezon.mezon.rtapi.statusUpdate
 import com.mezon.mezon.rtapi.voiceReactionSend
 import com.mezon.mezon.rtapi.webrtcSignalingFwd
+import java.util.Locale
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -102,11 +103,15 @@ class MezonSocket @Inject constructor(
 
     private val cidCounter = AtomicInteger(0)
     private val pendingRequests = ConcurrentHashMap<Int, CompletableDeferred<Envelope>>()
+    private val pendingApiRequests = ConcurrentHashMap<Int, CompletableDeferred<ByteArray>>()
+    private val apiResponseStreams = ConcurrentHashMap<Int, ByteArray>()
+    private fun nextCid(): Int = cidCounter.updateAndGet { c -> if (c >= 65534) 1 else c + 1 }
     private var reconnectDelayMs = RECONNECT_MIN_MS
     private var reconnectFailCount = 0
     @Volatile private var isReconnecting = false
     @Volatile private var userDisconnected = false
     @Volatile private var hasConnectedBefore = false
+    @Volatile private var forceRefreshNextReconnect = false
 
     fun connect(wsUrl: String, token: String) {
         if (_connectionState.value == ConnectionState.CONNECTED ||
@@ -161,7 +166,7 @@ class MezonSocket @Inject constructor(
     }
 
     suspend fun send(block: EnvelopeKt.Dsl.() -> Unit): Envelope {
-        val cid = cidCounter.incrementAndGet()
+        val cid = nextCid()
         val env = envelope {
             this.cid = cid
             block()
@@ -177,6 +182,11 @@ class MezonSocket @Inject constructor(
         val sent = ws.send(bytes)
         if (!sent) {
             pendingRequests.remove(cid)
+            Log.w(TAG, "send: ws.send returned false case=${env.messageCase} bytes=${bytes.size} state=${_connectionState.value} queueSize=${ws.queueSize()}, forcing reconnect")
+            _connectionState.value = ConnectionState.DISCONNECTED
+            try { ws.close(1001, "send enqueue failed") } catch (_: Exception) {}
+            if (webSocket === ws) webSocket = null
+            if (!userDisconnected) scheduleReconnect()
             throw IllegalStateException("Failed to enqueue WebSocket message")
         }
 
@@ -212,15 +222,41 @@ class MezonSocket @Inject constructor(
         }
     }
 
-    suspend fun fetchListClanBadgeCountSocket(): ListClanBadgeCountResponse {
-        val env = send {
-            this.listDataSocket = listDataSocket { apiName = "ListClanBadgeCount" }
+    suspend fun sendApiRequest(
+        apiName: String,
+        body: ByteArray,
+        timeoutMs: Long = SEND_TIMEOUT_MS
+    ): ByteArray {
+        val ws = webSocket
+            ?: throw IllegalStateException("WebSocket not connected")
+
+        val cid = nextCid()
+        val env = envelope {
+            this.cid = cid
+            this.apiRequestEvent = apiRequestEvent {
+                this.apiIndex = MezonApiNameRegistry.indexOf(apiName)
+                this.apiName = apiName
+                this.body = ProtoByteString.copyFrom(body)
+            }
         }
-        require(env.messageCase == Envelope.MessageCase.LIST_DATA_SOCKET) {
-            "ListClanBadgeCount: expected LIST_DATA_SOCKET, got ${env.messageCase}"
+
+        val deferred = CompletableDeferred<ByteArray>()
+        pendingApiRequests[cid] = deferred
+
+        val sent = ws.send(env.toByteArray().toByteString())
+        if (!sent) {
+            pendingApiRequests.remove(cid)
+            apiResponseStreams.remove(cid)
+            throw IllegalStateException("Failed to enqueue WebSocket api_request_event")
         }
-        val data = env.listDataSocket
-        return if (data.hasClanBadgeCount()) data.clanBadgeCount else ListClanBadgeCountResponse.getDefaultInstance()
+
+        return try {
+            withTimeout(timeoutMs) { deferred.await() }
+        } catch (e: TimeoutCancellationException) {
+            pendingApiRequests.remove(cid)
+            apiResponseStreams.remove(cid)
+            throw RuntimeException("api_request_event '$apiName' timed out after ${timeoutMs}ms", e)
+        }
     }
 
     suspend fun joinChat(
@@ -468,12 +504,17 @@ class MezonSocket @Inject constructor(
         jsonData: String,
         channelId: Long,
         callerId: Long
-    ): Envelope = send {
-        this.incomingCallPush = incomingCallPush {
-            this.receiverId = receiverId
-            this.jsonData = jsonData
-            this.channelId = channelId
-            this.callerId = callerId
+    ): Envelope {
+        val offerUtf8Bytes = jsonData.toByteArray(Charsets.UTF_8).size
+        val offerKb = offerUtf8Bytes / 1024.0
+        Log.d(TAG, "makeCallPush jsonData len=${jsonData.length} chars utf8=${offerUtf8Bytes}B ${String.format(Locale.US, "%.2f", offerKb)}KiB receiverId=$receiverId channelId=$channelId callerId=$callerId")
+        return send {
+            this.incomingCallPush = incomingCallPush {
+                this.receiverId = receiverId
+                this.jsonData = jsonData
+                this.channelId = channelId
+                this.callerId = callerId
+            }
         }
     }
 
@@ -548,7 +589,12 @@ class MezonSocket @Inject constructor(
 
         override fun onMessage(webSocket: WebSocket, bytes: ByteString) {
             try {
-                val envelope = Envelope.parseFrom(bytes.toByteArray())
+                val raw = bytes.toByteArray()
+                if (raw.isNotEmpty() && (raw[0].toInt() and 0xFF) == 0xFF) {
+                    handleFramedApiResponse(raw)
+                    return
+                }
+                val envelope = Envelope.parseFrom(raw)
                 handleEnvelope(envelope)
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to parse Envelope", e)
@@ -557,6 +603,10 @@ class MezonSocket @Inject constructor(
 
         override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
             Log.d(TAG, "Server closing: $code $reason")
+            if (code == 1008 || (code in 4001..4099)) {
+                Log.w(TAG, "Server close suggests auth issue (code=$code), will force refresh on reconnect")
+                forceRefreshNextReconnect = true
+            }
             webSocket.close(1000, null)
         }
 
@@ -569,11 +619,52 @@ class MezonSocket @Inject constructor(
         }
 
         override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-            Log.e(TAG, "WebSocket failure: ${t.message}")
+            val httpCode = response?.code
+            val httpMsg = response?.message
+            Log.e(TAG, "WebSocket failure: ${t.message} (http=$httpCode $httpMsg type=${t.javaClass.simpleName})")
+            if (httpCode == 401 || httpCode == 403) {
+                Log.w(TAG, "WebSocket handshake failed with auth code $httpCode, will force refresh on reconnect")
+                forceRefreshNextReconnect = true
+            }
             _connectionState.value = ConnectionState.DISCONNECTED
             heartbeatJob?.cancel()
             cancelAllPending("Connection failed: ${t.message}")
             if (!userDisconnected) scheduleReconnect()
+        }
+    }
+
+    private fun handleFramedApiResponse(data: ByteArray) {
+        val headerLen = 7
+        if (data.size < headerLen) {
+            Log.w(TAG, "framed RPC frame too small (${data.size}B)")
+            return
+        }
+        val cid = ((data[1].toInt() and 0xFF) shl 8) or (data[2].toInt() and 0xFF)
+        val statusWord =
+            ((data[3].toInt() and 0xFF) shl 24) or
+            ((data[4].toInt() and 0xFF) shl 16) or
+            ((data[5].toInt() and 0xFF) shl 8) or
+            (data[6].toInt() and 0xFF)
+        val responseCode = (statusWord ushr 16) and 0xFFFF
+        val finFlag = statusWord and 0xFFFF
+        val payload = if (data.size > headerLen) data.copyOfRange(headerLen, data.size) else ByteArray(0)
+
+        val previous = apiResponseStreams[cid] ?: ByteArray(0)
+        val merged = if (payload.isEmpty()) previous else previous + payload
+
+        if (finFlag == 0xFF) {
+            apiResponseStreams.remove(cid)
+            val deferred = pendingApiRequests.remove(cid) ?: return
+            if (responseCode == 0) {
+                deferred.complete(merged)
+            } else {
+                val msg = if (merged.isNotEmpty()) String(merged, Charsets.UTF_8) else ""
+                deferred.completeExceptionally(
+                    RuntimeException("Server error code=$responseCode msg='$msg'")
+                )
+            }
+        } else {
+            apiResponseStreams[cid] = merged
         }
     }
 
@@ -589,6 +680,18 @@ class MezonSocket @Inject constructor(
                     )
                 } else {
                     deferred.complete(envelope)
+                }
+                return
+            }
+            val apiDeferred = pendingApiRequests.remove(cid)
+            if (apiDeferred != null) {
+                apiResponseStreams.remove(cid)
+                if (envelope.messageCase == Envelope.MessageCase.ERROR) {
+                    apiDeferred.completeExceptionally(
+                        RuntimeException("Server error: ${envelope.error.message}")
+                    )
+                } else {
+                    apiDeferred.complete(ByteArray(0))
                 }
                 return
             }
@@ -657,7 +760,18 @@ class MezonSocket @Inject constructor(
             reconnectDelayMs = (reconnectDelayMs * 2).coerceAtMost(RECONNECT_MAX_MS)
 
             try {
-                val session = sessionManager.requireValidSession()
+                val session = if (forceRefreshNextReconnect) {
+                    Log.d(TAG, "Force-refreshing session before reconnect")
+                    forceRefreshNextReconnect = false
+                    try {
+                        sessionManager.refresh()
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Forced refresh failed, falling back to requireValidSession", e)
+                        sessionManager.requireValidSession()
+                    }
+                } else {
+                    sessionManager.requireValidSession()
+                }
                 currentWsUrl = session.wsUrl
                 currentToken = session.token
                 isReconnecting = false
@@ -685,5 +799,10 @@ class MezonSocket @Inject constructor(
             deferred.completeExceptionally(RuntimeException(reason))
         }
         pendingRequests.clear()
+        pendingApiRequests.forEach { (_, deferred) ->
+            deferred.completeExceptionally(RuntimeException(reason))
+        }
+        pendingApiRequests.clear()
+        apiResponseStreams.clear()
     }
 }
