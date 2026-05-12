@@ -1457,14 +1457,6 @@ class SendTokenFragment : BaseFragment() {
                             val amountShow = amountField?.text?.toString().orEmpty()
                             val sym = getString(R.string.send_token_currency_symbol)
                             val recipientDisplay = buildRecipientDisplay()
-                            if (!toUserId.isNullOrBlank()) {
-                                sendTransferDmNotification(
-                                    receiverId = toUserId,
-                                    amountDisplay = amountShow,
-                                    symbol = sym,
-                                    note = note
-                                )
-                            }
                             val successFrag = TransferSuccessFragment.newInstance(
                                 amount = amountShow,
                                 symbol = sym,
@@ -1476,6 +1468,16 @@ class SendTokenFragment : BaseFragment() {
                             successFrag.onDone = { shouldFinishOnResume = true }
                             successFrag.onNewTransfer = { shouldFinishOnResume = true; pendingNewTransfer = true }
                             presentFragment(successFrag)
+                            if (!toUserId.isNullOrBlank()) {
+                                fragmentScope.launch(Dispatchers.IO) {
+                                    sendTransferDmNotification(
+                                        receiverId = toUserId,
+                                        amountDisplay = amountShow,
+                                        symbol = sym,
+                                        note = note
+                                    )
+                                }
+                            }
               
                             return@launch
                         } else {
