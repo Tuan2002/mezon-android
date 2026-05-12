@@ -132,6 +132,18 @@ import javax.inject.Inject
 import javax.inject.Singleton
 class UnauthorizedException(message: String) : RuntimeException(message)
 
+class SocketRpcTransportException(
+    message: String,
+    val retryOverHttp: Boolean = true,
+    cause: Throwable? = null
+) : RuntimeException(message, cause)
+
+class SocketRpcServerException(
+    message: String,
+    val code: Int,
+    cause: Throwable? = null
+) : RuntimeException(message, cause)
+
 @Serializable
 data class AuthEmailBody(
     val account: AccountEmailBody
@@ -241,6 +253,41 @@ class MezonApi @Inject constructor(
             "SessionRefresh",
             "RegistFCMDeviceToken",
             "SendChannelMessage"
+        )
+        private val SOCKET_RPC_API_NAMES = setOf(
+            "GetAccount",
+            "GetListEmojisByUserId",
+            "GetListFavoriteChannel",
+            "GetListStickersByUserId",
+            "GetNotificationClan",
+            "GetPinMessagesList",
+            "GetPoll",
+            "GetSystemMessageByClanId",
+            "GetUserProfileOnClan",
+            "GetUserStatus",
+            "ListActivity",
+            "ListAuditLog",
+            "ListChannelApps",
+            "ListChannelAttachment",
+            "ListChannelBadgeCount",
+            "ListChannelByUserId",
+            "ListChannelDescs",
+            "ListChannelMessages",
+            "ListChannelUsers",
+            "ListChannelUsersUC",
+            "ListChannelVoiceUsers",
+            "ListClanBadgeCount",
+            "ListClanDescs",
+            "ListClanUsers",
+            "ListClanWebhook",
+            "ListFriends",
+            "ListLogedDevice",
+            "ListNotifications",
+            "ListRoles",
+            "ListThreadDescs",
+            "ListUserClansByUserId",
+            "ListWebhookByChannelId",
+            "SearchMessage"
         )
     }
 
@@ -362,16 +409,30 @@ class MezonApi @Inject constructor(
         method: String,
         body: ByteArray
     ): ByteArray {
-        if (method !in HTTP_ONLY_API_NAMES) {
-            return rpcOverSocket(method, body)
+        if (method in HTTP_ONLY_API_NAMES || method !in SOCKET_RPC_API_NAMES) {
+            return rpcOverHttp(apiUrl, token, method, body)
         }
-        return rpcOverHttp(apiUrl, token, method, body)
+        return try {
+            rpcOverSocket(method, body)
+        } catch (e: UnauthorizedException) {
+            throw e
+        } catch (e: SocketRpcServerException) {
+            throw e
+        } catch (e: SocketRpcTransportException) {
+            Log.w("MezonApi", "SOCKET unavailable method=$method, falling back to HTTP: ${e.message}")
+            rpcOverHttp(apiUrl, token, method, body)
+        } catch (e: IllegalArgumentException) {
+            throw e
+        }
     }
 
     private suspend fun rpcOverSocket(method: String, body: ByteArray): ByteArray {
         val socket = mezonSocketLazy.get()
         if (!socket.awaitConnected(SOCKET_WAIT_MS)) {
-            throw IllegalStateException("WebSocket unavailable for '$method'")
+            throw SocketRpcTransportException(
+                "WebSocket unavailable for '$method'",
+                retryOverHttp = true
+            )
         }
         val started = System.currentTimeMillis()
         try {
@@ -388,6 +449,9 @@ class MezonApi @Inject constructor(
                 "MezonApi",
                 "SOCKET fail method=$method elapsedMs=${System.currentTimeMillis() - started} err=${e.message}"
             )
+            if (e is UnauthorizedException) {
+                socket.forceReconnectForAuthFailure("Socket RPC unauthorized for '$method'")
+            }
             throw e
         }
     }
@@ -1074,7 +1138,9 @@ class MezonApi @Inject constructor(
         return try {
             rpc(apiUrl, token, "LinkSMS", requestBytes)
         } catch (e: RuntimeException) {
-            if (e.message?.contains("(404)") == true) {
+            if (e.message?.contains("(404)") == true ||
+                (e as? SocketRpcServerException)?.code == 404
+            ) {
                 rpc(apiUrl, token, "LinkSms", requestBytes)
             } else {
                 throw e
