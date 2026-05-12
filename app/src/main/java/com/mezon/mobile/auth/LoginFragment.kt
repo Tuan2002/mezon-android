@@ -27,6 +27,7 @@ import com.mezon.mobile.core.LayoutHelper
 import com.mezon.mobile.di.FragmentEntryPoint
 import com.mezon.mobile.ui.cells.ActionButton
 import com.mezon.mobile.ui.cells.InputCell
+import com.mezon.mobile.util.NetworkErrorMessages
 import androidx.core.widget.CompoundButtonCompat
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -412,7 +413,15 @@ class LoginFragment : BaseFragment() {
                 }
                 .onFailure { err ->
                     Log.e(TAG, "SMS OTP failed: ${err.javaClass.simpleName}")
-                    showError(err.message ?: getString(R.string.otp_send_failed))
+                    hideLoading()
+                    val ctx = getContext() ?: return@onFailure
+                    showError(
+                        NetworkErrorMessages.userMessage(
+                            ctx,
+                            err,
+                            err.message ?: getString(R.string.otp_send_failed)
+                        )
+                    )
                 }
         }
     }
@@ -444,7 +453,15 @@ class LoginFragment : BaseFragment() {
                 }
                 .onFailure { err ->
                     Log.e(TAG, "Email OTP failed: ${err.javaClass.simpleName}")
-                    showError(err.message ?: getString(R.string.otp_send_failed))
+                    hideLoading()
+                    val ctx = getContext() ?: return@onFailure
+                    showError(
+                        NetworkErrorMessages.userMessage(
+                            ctx,
+                            err,
+                            err.message ?: getString(R.string.otp_send_failed)
+                        )
+                    )
                 }
         }
     }
@@ -466,6 +483,7 @@ class LoginFragment : BaseFragment() {
             }
             result
                 .onSuccess {
+                    hideLoading()
                     try {
                         entryPoint().fcmRepository().getAndRegisterToken()
                     } catch (e: Exception) {
@@ -475,7 +493,15 @@ class LoginFragment : BaseFragment() {
                 }
                 .onFailure { err ->
                     Log.e(TAG, "Password login failed: ${err.message}", err)
-                    showError(messageForPasswordLoginFailure(err.message))
+                    hideLoading()
+                    val ctx = getContext() ?: return@onFailure
+                    showError(
+                        NetworkErrorMessages.userMessage(
+                            ctx,
+                            err,
+                            messageForPasswordLoginFailure(err.message)
+                        )
+                    )
                 }
         }
     }
