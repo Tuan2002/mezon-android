@@ -227,8 +227,6 @@ class MezonSocket @Inject constructor(
             throw IllegalStateException("Failed to enqueue WebSocket message")
         }
 
-        Log.d(TAG, "Sent: cid=$cid, case=${env.messageCase}")
-
         return try {
             withTimeout(SEND_TIMEOUT_MS) { deferred.await() }
         } catch (e: TimeoutCancellationException) {
@@ -542,9 +540,6 @@ class MezonSocket @Inject constructor(
         channelId: Long,
         callerId: Long
     ): Envelope {
-        val offerUtf8Bytes = jsonData.toByteArray(Charsets.UTF_8).size
-        val offerKb = offerUtf8Bytes / 1024.0
-        Log.d(TAG, "makeCallPush jsonData len=${jsonData.length} chars utf8=${offerUtf8Bytes}B ${String.format(Locale.US, "%.2f", offerKb)}KiB receiverId=$receiverId channelId=$channelId callerId=$callerId")
         return send {
             this.incomingCallPush = incomingCallPush {
                 this.receiverId = receiverId

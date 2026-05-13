@@ -221,6 +221,9 @@ class PeerConnectionWrapper(
         createPeerConnection()
         if (peerConnection == null) {
             android.util.Log.e(TAG, "handleRemoteOfferEager: createPeerConnection returned null")
+            mainHandler.post {
+                listener.onInboundSignalingSetupFailed("createPeerConnection returned null")
+            }
             return
         }
         holdLocalCandidates = true
