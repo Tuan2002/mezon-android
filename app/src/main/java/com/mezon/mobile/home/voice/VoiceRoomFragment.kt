@@ -1276,8 +1276,8 @@ class VoiceRoomFragment : BaseFragment() {
     private fun updateAudioOutputIcon() {
         val am = audioManager ?: return
         val icon = when (am.getCurrentDevice()) {
-            AudioOutputDevice.EARPIECE -> MezonIcon.voiceLowIcon
-            AudioOutputDevice.SPEAKER -> MezonIcon.channelVoice
+            AudioOutputDevice.EARPIECE -> MezonIcon.voiceWaveIcon
+            AudioOutputDevice.SPEAKER -> MezonIcon.voiceWaveDoubleIcon
             AudioOutputDevice.BLUETOOTH -> MezonIcon.bluetoothIcon
         }
         headerView.setAudioOutputIcon(icon)
