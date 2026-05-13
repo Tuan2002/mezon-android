@@ -236,6 +236,7 @@ class CallController @Inject constructor(
                         put("callerAvatar", callerAvatar)
                         put("callerId", userController.userIdStr)
                         put("channelId", channelId.toString())
+                        put("sentAt", System.currentTimeMillis().toString())
                     }.toString()
 
                     Log.d(TAG, "[WEBRTC:OFFER_LOCAL] peer=$peerId ch=$channelId video=$isVideo ${sdpPreviewForLog(offer.description)}")
@@ -1148,6 +1149,7 @@ class CallController @Inject constructor(
             put("callerAvatar", callerAvatar)
             put("callerId", userController.userIdStr)
             put("channelId", callInfo.channelId.toString())
+            put("sentAt", System.currentTimeMillis().toString())
         }.toString()
         appScope.launch(ioDispatcher) {
             sendWithRetry("pushCancelCallToCallee") {
