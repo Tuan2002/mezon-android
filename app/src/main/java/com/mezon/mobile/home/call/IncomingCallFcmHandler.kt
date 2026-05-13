@@ -74,28 +74,34 @@ class IncomingCallFcmHandler @Inject constructor(
             }
         }
         if (innerOffer == "CANCEL_CALL") {
+            val answeredElsewhere = parsed.optBoolean("isConnected", false)
             CallNotificationManager(appContext).dismissIncomingNotification()
+            val ctrl = CallController.instance
+            if (answeredElsewhere && ctrl?.shouldIgnoreCancelCallFcmAnsweredElsewhere() == true) {
+                Log.d(TAG, "CANCEL_CALL isConnected=true ignored (local session active)")
+                return
+            }
             MezonCallConnection.activeConnection?.let {
                 it.setDisconnected(DisconnectCause(DisconnectCause.CANCELED))
                 it.destroy()
                 MezonCallConnection.activeConnection = null
             }
-            CallController.instance?.endCall(CallEndReason.CANCELLED)
+            if (answeredElsewhere) {
+                if (ctrl?.callState is CallState.Idle) {
+                    ctrl.clearIdleIncomingArtifactsAfterAnsweredElsewhere()
+                } else {
+                    ctrl?.endCall(CallEndReason.CLEAR_CALL)
+                }
+            } else {
+                ctrl?.endCall(CallEndReason.CANCELLED)
+            }
             return
         }
-        if (callController.callState !is CallState.Idle) {
-            Log.d(TAG, "skip offer, callState=${callController.callState::class.simpleName}")
-            return
-        }
-        StartupCache.suppressHomeListApiForIncomingCallWake = true
         val callerName = parsed.optString("callerName", "Unknown")
         val callerAvatar = parsed.optString("callerAvatar", "")
         val callerId = parsed.optString("callerId", "")
         val channelId = parsed.optString("channelId", "")
-        appContext.getSharedPreferences("call_data", Context.MODE_PRIVATE).edit()
-            .putString("incoming_call", offerJson)
-            .commit()
-        Log.i(TAG, "dispatchOffer: offer filters passed (not cancel, idle, session ok) → reconnect socket for signaling")
+        Log.i(TAG, "dispatchOffer: offer filters passed (not cancel, session ok) → reconnect socket for signaling")
         connectionController.reconnectSocketForOfferSignaling()
         webRtcInfra.ensureFactoryReady()
         Log.d(TAG, "feeding offer to CallController")
@@ -106,6 +112,14 @@ class IncomingCallFcmHandler @Inject constructor(
             channelId,
             offerJson
         )
+        if (callController.callState !is CallState.Incoming) {
+            Log.d(TAG, "dispatchOffer: offer consumed without incoming UI, state=${callController.callState::class.simpleName}")
+            return
+        }
+        StartupCache.suppressHomeListApiForIncomingCallWake = true
+        appContext.getSharedPreferences("call_data", Context.MODE_PRIVATE).edit()
+            .putString("incoming_call", offerJson)
+            .commit()
         mainHandler.post {
             if (MainActivity.isResumed) {
                 return@post
