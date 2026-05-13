@@ -965,6 +965,7 @@
     <string name="channel_creator_private_title">Private Channel</string>
     <string name="channel_creator_private_description">By making a private channel, only select members and roles will be able to view this channel</string>
     <string name="category_menu_create_channel">Create channel</string>
+    <string name="category_menu_create_channel_unavailable">Create channel isn’t available for this category right now.</string>
 
     <!-- Poll messages -->
     <string name="poll_select_one">Select one answer</string>

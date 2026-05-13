@@ -68,37 +68,53 @@ class CategoryMenuBottomSheet(
         })
         header.addView(title, LayoutHelper.createLinear(0, LayoutHelper.WRAP_CONTENT, 1f))
 
+        val canCreateInThisCategory = categoryId != 0L
+        val rowLabelColor =
+            if (canCreateInThisCategory) themeColors.textStrong else themeColors.onSurfaceVariant
+
         val createRow = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             setPadding(LayoutHelper.dp(14), LayoutHelper.dp(14), LayoutHelper.dp(14), LayoutHelper.dp(14))
-            background = android.graphics.drawable.RippleDrawable(
-                android.content.res.ColorStateList.valueOf(themeColors.onSurface and 0x1AFFFFFF),
-                android.graphics.drawable.ColorDrawable(themeColors.surfaceVariant),
-                android.graphics.drawable.ColorDrawable(0xFFFFFFFF.toInt())
-            )
-            isClickable = true
-            isFocusable = true
-            setOnClickListener {
-                if (categoryId == 0L) return@setOnClickListener
-                dismiss()
-                onCreateChannel()
+            background = if (canCreateInThisCategory) {
+                android.graphics.drawable.RippleDrawable(
+                    android.content.res.ColorStateList.valueOf(themeColors.onSurface and 0x1AFFFFFF),
+                    android.graphics.drawable.ColorDrawable(themeColors.surfaceVariant),
+                    android.graphics.drawable.ColorDrawable(0xFFFFFFFF.toInt())
+                )
+            } else {
+                android.graphics.drawable.ColorDrawable(themeColors.surfaceVariant)
+            }
+            isClickable = canCreateInThisCategory
+            isFocusable = canCreateInThisCategory
+            if (canCreateInThisCategory) {
+                setOnClickListener {
+                    dismiss()
+                    onCreateChannel()
+                }
             }
         }
 
         val plusIcon = ImageView(context).apply {
-            setImageDrawable(MezonIcon.plusLargeIcon.getDrawable(context, themeColors.textStrong))
+            setImageDrawable(MezonIcon.plusLargeIcon.getDrawable(context, rowLabelColor))
             scaleType = ImageView.ScaleType.FIT_CENTER
         }
         createRow.addView(plusIcon, LayoutHelper.createLinear(20, 20).apply { rightMargin = LayoutHelper.dp(12) })
 
         val createLabel = TextView(context).apply {
             text = context.getString(R.string.category_menu_create_channel)
-            setTextColor(themeColors.textStrong)
+            setTextColor(rowLabelColor)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
             typeface = Typeface.DEFAULT_BOLD
         }
         createRow.addView(createLabel, LayoutHelper.createLinear(0, LayoutHelper.WRAP_CONTENT, 1f))
+
+        createRow.contentDescription = if (canCreateInThisCategory) {
+            context.getString(R.string.category_menu_create_channel)
+        } else {
+            "${context.getString(R.string.category_menu_create_channel)}. " +
+                context.getString(R.string.category_menu_create_channel_unavailable)
+        }
 
         val root = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL

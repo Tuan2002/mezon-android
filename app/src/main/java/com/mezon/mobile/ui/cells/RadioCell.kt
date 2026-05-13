@@ -15,8 +15,7 @@ import com.mezon.mobile.core.ThemeColors
 
 class RadioCell(context: Context, private val theme: ThemeColors) : BaseCell(context) {
 
-    /** When false, selected state is a dot only (Discord-style); default keeps legacy checkmark overlay. */
-    var showSelectionCheckmark: Boolean = true
+    var drawSelectionAsCheckmark: Boolean = true
 
     private var checked = false
     private var progress = 0f
@@ -55,7 +54,7 @@ class RadioCell(context: Context, private val theme: ThemeColors) : BaseCell(con
     }
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
-        val side = if (!showSelectionCheckmark) LayoutHelper.dp(24) else LayoutHelper.dp(22)
+        val side = if (drawSelectionAsCheckmark) LayoutHelper.dp(22) else LayoutHelper.dp(24)
         setMeasuredDimension(side, side)
     }
 
@@ -69,36 +68,41 @@ class RadioCell(context: Context, private val theme: ThemeColors) : BaseCell(con
     override fun onDraw(canvas: Canvas) {
         val cx = width / 2f
         val cy = height / 2f
-
-        if (!showSelectionCheckmark) {
-            // Discord-style: off = hollow ring; on = filled primary + white center dot (not a checkbox).
-            val strokeW = LayoutHelper.dpf(2f)
-            val prevStyle = theme.radioPaint.style
-            val prevStroke = theme.radioPaint.strokeWidth
-            val maxR = baseRadiusPx()
-            try {
-                if (progress <= 0f) {
-                    theme.radioPaint.style = Paint.Style.STROKE
-                    theme.radioPaint.strokeWidth = strokeW
-                    theme.radioPaint.color = theme.outline
-                    val ringR = (maxR - strokeW / 2f).coerceAtLeast(strokeW)
-                    canvas.drawCircle(cx, cy, ringR, theme.radioPaint)
-                } else {
-                    theme.radioPaint.style = Paint.Style.FILL
-                    theme.radioPaint.strokeWidth = 0f
-                    theme.radioPaint.color = theme.primary
-                    canvas.drawCircle(cx, cy, maxR, theme.radioPaint)
-                    theme.radioFillPaint.color = Color.WHITE
-                    val dotR = (maxR * 0.36f) * progress
-                    canvas.drawCircle(cx, cy, dotR, theme.radioFillPaint)
-                }
-            } finally {
-                theme.radioPaint.style = prevStyle
-                theme.radioPaint.strokeWidth = prevStroke
-            }
+        if (!drawSelectionAsCheckmark) {
+            drawRingOrFilledPrimaryWithCenterDot(canvas, cx, cy)
             return
         }
+        drawOuterRingAndOptionalCheckmarkSelection(canvas, cx, cy)
+    }
 
+    private fun drawRingOrFilledPrimaryWithCenterDot(canvas: Canvas, cx: Float, cy: Float) {
+        val ringStrokeWidth = LayoutHelper.dpf(2f)
+        val prevStyle = theme.radioPaint.style
+        val prevStroke = theme.radioPaint.strokeWidth
+        val maxR = baseRadiusPx()
+        try {
+            if (progress <= 0f) {
+                theme.radioPaint.style = Paint.Style.STROKE
+                theme.radioPaint.strokeWidth = ringStrokeWidth
+                theme.radioPaint.color = theme.outline
+                val ringR = (maxR - ringStrokeWidth / 2f).coerceAtLeast(ringStrokeWidth)
+                canvas.drawCircle(cx, cy, ringR, theme.radioPaint)
+            } else {
+                theme.radioPaint.style = Paint.Style.FILL
+                theme.radioPaint.strokeWidth = 0f
+                theme.radioPaint.color = theme.primary
+                canvas.drawCircle(cx, cy, maxR, theme.radioPaint)
+                theme.radioFillPaint.color = Color.WHITE
+                val dotR = (maxR * 0.36f) * progress
+                canvas.drawCircle(cx, cy, dotR, theme.radioFillPaint)
+            }
+        } finally {
+            theme.radioPaint.style = prevStyle
+            theme.radioPaint.strokeWidth = prevStroke
+        }
+    }
+
+    private fun drawOuterRingAndOptionalCheckmarkSelection(canvas: Canvas, cx: Float, cy: Float) {
         theme.radioPaint.color = if (progress > 0f) theme.primary else theme.outline
         canvas.drawCircle(cx, cy, outerRadius, theme.radioPaint)
 
