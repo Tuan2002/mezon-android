@@ -68,12 +68,9 @@ class CreateChannelFragment : BaseFragment() {
 
     override fun createView(context: Context): View {
         val screenPadH = LayoutHelper.dp(16)
-        /** Space between section label and its control/card (Discord ~8dp). */
-        val labelToControl = LayoutHelper.dp(8)
-        /** Space between major blocks: after name block, after type block (Discord ~16–24dp). */
-        val blockGap = LayoutHelper.dp(24)
-        /** Padding inside type rows + private card (Discord ~12–16dp). */
-        val cardInnerPad = LayoutHelper.dp(16)
+        val sectionCaptionToFieldSpacing = LayoutHelper.dp(8)
+        val majorSectionVerticalGap = LayoutHelper.dp(24)
+        val typeAndPrivateCardInnerPadding = LayoutHelper.dp(16)
         val cardRadius = LayoutHelper.dpf(12f)
 
         saveButtonText = TextView(context).apply {
@@ -120,16 +117,15 @@ class CreateChannelFragment : BaseFragment() {
             }
         }
 
-        // Discord-like: section captions slightly muted vs body text
-        fun sectionLabel(textRes: Int): TextView = TextView(context).apply {
+        fun mutedBoldSectionCaption(textRes: Int): TextView = TextView(context).apply {
             text = getString(textRes)
             setTextColor(themeColors.onSurfaceVariant)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
             typeface = Typeface.DEFAULT_BOLD
         }
 
-        val nameHeading = sectionLabel(R.string.channel_creator_channel_name_title).apply {
-            setPadding(0, 0, 0, labelToControl)
+        val nameHeading = mutedBoldSectionCaption(R.string.channel_creator_channel_name_title).apply {
+            setPadding(0, 0, 0, sectionCaptionToFieldSpacing)
         }
 
         nameCell = InputCell(context, themeColors).apply {
@@ -144,8 +140,8 @@ class CreateChannelFragment : BaseFragment() {
                 android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
         }
 
-        val typeHeading = sectionLabel(R.string.channel_creator_channel_type_title).apply {
-            setPadding(0, 0, 0, labelToControl)
+        val typeHeading = mutedBoldSectionCaption(R.string.channel_creator_channel_type_title).apply {
+            setPadding(0, 0, 0, sectionCaptionToFieldSpacing)
         }
 
         val typeBox = LinearLayout(context).apply {
@@ -158,17 +154,17 @@ class CreateChannelFragment : BaseFragment() {
 
         addTypeOption(context, typeBox, CHANNEL_TYPE_CHANNEL, MezonIcon.channelText,
             R.string.channel_creator_type_text_title, R.string.channel_creator_type_text_desc,
-            showTopDivider = false, rowPad = cardInnerPad)
+            showTopDivider = false, rowPad = typeAndPrivateCardInnerPadding)
         addTypeOption(context, typeBox, CHANNEL_TYPE_VOICE, MezonIcon.channelVoice,
             R.string.channel_creator_type_voice_title, R.string.channel_creator_type_voice_desc,
-            showTopDivider = true, rowPad = cardInnerPad)
+            showTopDivider = true, rowPad = typeAndPrivateCardInnerPadding)
         addTypeOption(context, typeBox, CHANNEL_TYPE_STREAMING, MezonIcon.channelStream,
             R.string.channel_creator_type_stream_title, R.string.channel_creator_type_stream_desc,
-            showTopDivider = true, rowPad = cardInnerPad)
+            showTopDivider = true, rowPad = typeAndPrivateCardInnerPadding)
 
         refreshTypeRadios()
 
-        privateSectionRoot = buildPrivateChannelSection(context, cardRadius, cardInnerPad)
+        privateSectionRoot = buildPrivateChannelSection(context, cardRadius, typeAndPrivateCardInnerPadding)
 
         val body = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
@@ -178,14 +174,14 @@ class CreateChannelFragment : BaseFragment() {
             addView(
                 typeHeading,
                 LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT).apply {
-                    topMargin = blockGap
+                    topMargin = majorSectionVerticalGap
                 }
             )
             addView(typeBox, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT))
             addView(
                 privateSectionRoot,
                 LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT).apply {
-                    topMargin = blockGap
+                    topMargin = majorSectionVerticalGap
                 }
             )
             addView(Space(context), LinearLayout.LayoutParams(
@@ -290,7 +286,7 @@ class CreateChannelFragment : BaseFragment() {
         }
 
         val radio = RadioCell(context, themeColors).apply {
-            showSelectionCheckmark = false
+            drawSelectionAsCheckmark = false
         }
         rowRadioCells.add(radio)
 
