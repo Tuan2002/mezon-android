@@ -197,6 +197,7 @@ class CallController @Inject constructor(
                         put("callerAvatar", callerAvatar)
                         put("callerId", userController.userIdStr)
                         put("channelId", channelId.toString())
+                        put("sentAt", System.currentTimeMillis().toString())
                     }.toString()
 
                     Log.d(TAG, "startCall: sending offer to peer=$peerId")
@@ -1033,6 +1034,7 @@ class CallController @Inject constructor(
             put("callerAvatar", callerAvatar)
             put("callerId", userController.userIdStr)
             put("channelId", callInfo.channelId.toString())
+            put("sentAt", System.currentTimeMillis().toString())
         }.toString()
         appScope.launch(ioDispatcher) {
             try {
