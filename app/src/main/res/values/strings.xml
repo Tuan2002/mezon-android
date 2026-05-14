@@ -707,7 +707,7 @@
     <string name="phone_link_error_bad_request">Invalid phone number. Check and retry.</string>
     <string name="phone_link_error_session">Session expired. Sign in again.</string>
     <string name="phone_link_error_forbidden">Can\'t link this phone number.</string>
-    <string name="phone_link_error_not_found">SMS unavailable. Try again later.</string>
+    <string name="phone_link_error_not_found">Phone number not found. Check and try again.</string>
 
     <!-- OTP Verify -->
     <string name="verify_email_title">Verify Your Email</string>

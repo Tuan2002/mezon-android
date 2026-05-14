@@ -174,8 +174,9 @@ class AccountController @Inject constructor(
         }
         when (e) {
             is java.net.UnknownHostException,
-            is java.net.SocketTimeoutException -> return appContext.getString(R.string.common_error_connection_failed)
-            is java.io.IOException -> return appContext.getString(R.string.common_error_connection_failed)
+            is java.net.SocketTimeoutException,
+            is java.net.ConnectException,
+            is javax.net.ssl.SSLException -> return appContext.getString(R.string.common_error_connection_failed)
         }
         val raw = e.message?.trim().orEmpty()
         if (raw.isEmpty()) return appContext.getString(R.string.phone_link_failed)
@@ -344,8 +345,9 @@ class AccountController @Inject constructor(
                 }
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
+                val errorMsg = withContext(ioDispatcher) { humanizeLinkPhoneFailure(e) }
                 withContext(kotlinx.coroutines.Dispatchers.Main) {
-                    onResult(false, "", humanizeLinkPhoneFailure(e))
+                    onResult(false, "", errorMsg)
                 }
             } finally {
                 _isLoading.value = false
