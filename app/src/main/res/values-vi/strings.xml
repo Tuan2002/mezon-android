@@ -635,7 +635,7 @@
     <string name="phone_link_error_bad_request">Số không hợp lệ. Kiểm tra và thử lại.</string>
     <string name="phone_link_error_session">Phiên hết hạn. Đăng nhập lại.</string>
     <string name="phone_link_error_forbidden">Không liên kết được số này.</string>
-    <string name="phone_link_error_not_found">SMS tạm không dùng được. Thử lại sau.</string>
+    <string name="phone_link_error_not_found">Số điện thoại không tìm thấy. Kiểm tra và thử lại.</string>
 
     <!-- OTP Verify (liên kết email / điện thoại) -->
     <string name="verify_email_title">Xác minh email</string>
