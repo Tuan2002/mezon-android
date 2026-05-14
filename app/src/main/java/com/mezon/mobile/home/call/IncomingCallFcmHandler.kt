@@ -112,15 +112,11 @@ class IncomingCallFcmHandler @Inject constructor(
             Log.d(TAG, "skip offer, callState=${callController.callState::class.simpleName}")
             return
         }
-        StartupCache.suppressHomeListApiForIncomingCallWake = true
         val callerName = parsed.optString("callerName", "Unknown")
         val callerAvatar = parsed.optString("callerAvatar", "")
         val callerId = parsed.optString("callerId", "")
         val channelId = parsed.optString("channelId", "")
-        appContext.getSharedPreferences("call_data", Context.MODE_PRIVATE).edit()
-            .putString("incoming_call", offerJson)
-            .commit()
-        Log.i(TAG, "dispatchOffer: offer filters passed (not cancel, idle, session ok) → reconnect socket for signaling")
+        Log.i(TAG, "dispatchOffer: offer filters passed (not cancel, session ok) → reconnect socket for signaling")
         connectionController.reconnectSocketForOfferSignaling()
         webRtcInfra.ensureFactoryReady()
         Log.d(TAG, "feeding offer to CallController")
@@ -131,6 +127,14 @@ class IncomingCallFcmHandler @Inject constructor(
             channelId,
             offerJson
         )
+        if (callController.callState !is CallState.Incoming) {
+            Log.d(TAG, "dispatchOffer: offer consumed without incoming UI, state=${callController.callState::class.simpleName}")
+            return
+        }
+        StartupCache.suppressHomeListApiForIncomingCallWake = true
+        appContext.getSharedPreferences("call_data", Context.MODE_PRIVATE).edit()
+            .putString("incoming_call", offerJson)
+            .commit()
         mainHandler.post {
             if (MainActivity.isResumed) {
                 return@post
