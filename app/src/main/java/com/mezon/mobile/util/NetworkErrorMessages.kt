@@ -11,10 +11,6 @@ import javax.net.ssl.SSLException
 
 
 object NetworkErrorMessages {
-
-    /**
-     * @param fallback used when [throwable] is not recognized as a typical network failure.
-     */
     fun userMessage(context: Context, throwable: Throwable?, fallback: String): String {
         if (throwable == null) return fallback
         var t: Throwable? = throwable
@@ -34,7 +30,7 @@ object NetworkErrorMessages {
             is UnknownHostException -> return context.getString(R.string.error_network_no_connection)
             is SocketTimeoutException -> return context.getString(R.string.error_network_timeout)
             is ConnectException -> return context.getString(R.string.error_network_no_connection)
-            is SSLException -> return null
+            is SSLException -> return context.getString(R.string.error_network_no_connection)
         }
         if (t !is IOException) return null
         val msg = t.message?.lowercase(Locale.US).orEmpty()
