@@ -414,7 +414,10 @@ class LoginFragment : BaseFragment() {
                 .onFailure { err ->
                     Log.e(TAG, "SMS OTP failed: ${err.javaClass.simpleName}")
                     hideLoading()
-                    val ctx = getContext() ?: return@onFailure
+                    val ctx = context ?: run {
+                        Log.w(TAG, "SMS OTP error but fragment detached — skipping toast")
+                        return@onFailure
+                    }
                     showError(
                         NetworkErrorMessages.userMessage(
                             ctx,
@@ -454,7 +457,10 @@ class LoginFragment : BaseFragment() {
                 .onFailure { err ->
                     Log.e(TAG, "Email OTP failed: ${err.javaClass.simpleName}")
                     hideLoading()
-                    val ctx = getContext() ?: return@onFailure
+                    val ctx = context ?: run {
+                        Log.w(TAG, "Email OTP error but fragment detached — skipping toast")
+                        return@onFailure
+                    }
                     showError(
                         NetworkErrorMessages.userMessage(
                             ctx,
