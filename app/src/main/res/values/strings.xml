@@ -47,6 +47,8 @@
     <string name="common_is_typing"> is typing…</string>
     <string name="common_several_people_typing">Several people are typing…</string>
     <string name="common_poor_connection">You are currently offline.</string>
+    <string name="error_network_no_connection">No internet connection. Please turn on Wi‑Fi or mobile data and try again.</string>
+    <string name="error_network_timeout">The connection timed out. Check your network and try again.</string>
 
     <!-- qr -->
     <string name="qr_my_code">My QR Code</string>
@@ -971,6 +973,64 @@
     <string name="channel_creator_private_description">By making a private channel, only select members and roles will be able to view this channel</string>
     <string name="category_menu_create_channel">Create channel</string>
     <string name="category_menu_create_channel_unavailable">Create channel isn’t available for this category right now.</string>
+
+    <!-- Channel / thread settings (ChannelSetting RN port) -->
+    <string name="channel_settings_title_channel">Channel settings</string>
+    <string name="channel_settings_title_thread">Thread settings</string>
+    <string name="channel_settings_thread_name_title">Thread name</string>
+    <string name="channel_settings_topic_title">Topic</string>
+    <string name="channel_settings_name_duplicate_channel">That channel name is already in use in this clan.</string>
+    <string name="channel_settings_name_duplicate_thread">That thread name is already in use in this clan.</string>
+    <string name="channel_settings_name_invalid_channel">Enter a valid channel name (1–64 characters).</string>
+    <string name="channel_settings_name_invalid_thread">Enter a valid thread name (1–64 characters).</string>
+    <string name="channel_settings_updated">Updated</string>
+    <string name="channel_settings_menu_change_category">Change category</string>
+    <string name="channel_settings_menu_channel_permission">Channel permissions</string>
+    <string name="channel_settings_menu_channel_permission_desc">Control who can read and post in this channel.</string>
+    <string name="channel_settings_menu_quick_action">Quick actions</string>
+    <string name="channel_settings_menu_add_members">Add members or roles</string>
+    <string name="channel_settings_menu_stream_banner">Stream banner</string>
+    <string name="channel_settings_menu_ban_list">Banned users</string>
+    <string name="channel_settings_menu_webhook">Webhooks</string>
+    <string name="channel_settings_menu_delete_channel">Delete channel</string>
+    <string name="channel_settings_menu_delete_thread">Delete thread</string>
+    <string name="channel_settings_menu_leave_channel">Leave channel</string>
+    <string name="channel_settings_menu_leave_thread">Leave thread</string>
+    <string name="channel_settings_delete_confirm_channel_title">Delete channel?</string>
+    <string name="channel_settings_delete_confirm_thread_title">Delete thread?</string>
+    <string name="channel_settings_delete_confirm_message">This will permanently delete \"%s\". This cannot be undone.</string>
+    <string name="channel_settings_leave_confirm_title">Leave thread?</string>
+    <string name="channel_settings_leave_confirm_message">You will no longer see \"%s\" in this clan.</string>
+    <string name="channel_settings_delete_system_channel">This channel is used for system messages and cannot be deleted.</string>
+    <string name="channel_settings_delete_failed">Could not delete: %s</string>
+    <string name="channel_settings_leave_failed">Could not leave: %s</string>
+
+    <!-- Channel permission (Basic / Advanced) -->
+    <string name="channel_permission_title">Channel permissions</string>
+    <string name="channel_permission_tab_basic">Basic</string>
+    <string name="channel_permission_tab_advanced">Advanced</string>
+    <string name="channel_permission_private_channel">Private channel</string>
+    <string name="channel_permission_private_desc">Only invited members and roles can access this channel.</string>
+    <string name="channel_permission_who_can_access">Who can access</string>
+    <string name="channel_permission_add_members_roles">Add members and roles</string>
+    <string name="channel_permission_advanced_need_private">Turn on private channel to edit per-member or per-role overrides.</string>
+    <string name="channel_permission_members_heading">Members</string>
+    <string name="channel_permission_roles_heading">Roles</string>
+    <string name="channel_permission_remove">Remove</string>
+    <string name="channel_permission_private_updated">Channel visibility updated</string>
+    <string name="channel_permission_private_failed">Could not update visibility</string>
+    <string name="channel_permission_member_removed">Member removed</string>
+    <string name="channel_permission_role_removed">Role removed</string>
+    <string name="channel_permission_add_pick_members">Add members</string>
+    <string name="channel_permission_add_pick_roles">Add roles</string>
+    <string name="channel_permission_add_none_available">No items to add</string>
+    <string name="channel_permission_overrides_title">Permission overrides</string>
+    <string name="channel_permission_allow">Allow</string>
+    <string name="channel_permission_deny">Deny</string>
+    <string name="channel_permission_none">None</string>
+    <string name="channel_permission_saved">Permissions saved</string>
+    <string name="channel_permission_save_failed">Could not save permissions</string>
+    <string name="channel_permission_load_failed">Could not load permissions</string>
 
     <!-- Poll messages -->
     <string name="poll_select_one">Select one answer</string>

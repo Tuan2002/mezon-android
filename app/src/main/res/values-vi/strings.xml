@@ -52,6 +52,8 @@
     <string name="common_is_typing"> đang nhập…</string>
     <string name="common_several_people_typing">Một số người đang nhập…</string>
     <string name="common_poor_connection">Bạn đang ngoại tuyến.</string>
+    <string name="error_network_no_connection">Không có kết nối mạng. Vui lòng bật Wi‑Fi hoặc dữ liệu di động rồi thử lại.</string>
+    <string name="error_network_timeout">Kết nối quá lâu. Kiểm tra mạng và thử lại.</string>
 
     <!-- qr -->
     <string name="qr_my_code">Mã QR của tôi</string>
@@ -839,6 +841,79 @@
     <string name="channel_files_search_placeholder">Tìm kiếm tệp</string>
     <string name="channel_files_media_empty_description">Chúng tôi đã tìm kiếm rất xa. Thật không may, không có kết quả được tìm thấy</string>
     <string name="channel_files_shared_by">Được chia sẻ bởi %1$s</string>
+
+    <string name="channel_creator_action_create">Tạo</string>
+    <string name="channel_creator_channel_name_title">Tên kênh</string>
+    <string name="channel_creator_channel_name_placeholder">new-channel</string>
+    <string name="channel_creator_channel_name_error">Vui lòng nhập tên kênh (tối đa 64 ký tự, chỉ chữ, số, _ hoặc -).</string>
+    <string name="channel_creator_channel_type_title">Loại kênh</string>
+    <string name="channel_creator_type_text_title">Văn bản</string>
+    <string name="channel_creator_type_text_desc">Đăng ảnh, GIF, nhãn dán, ý kiến và câu đùa</string>
+    <string name="channel_creator_type_voice_title">Thoại</string>
+    <string name="channel_creator_type_voice_desc">Trò chuyện bằng thoại, video và chia sẻ màn hình</string>
+    <string name="channel_creator_type_stream_title">Phát trực tiếp</string>
+    <string name="channel_creator_type_stream_desc">Chia sẻ sở thích và hoạt động</string>
+    <string name="channel_creator_private_title">Kênh riêng</string>
+    <string name="channel_creator_private_description">Khi bật kênh riêng, chỉ thành viên và vai trò được chọn mới xem được kênh này</string>
+    <string name="category_menu_create_channel">Tạo kênh</string>
+
+    <!-- Channel / thread settings (ChannelSetting RN port) -->
+    <string name="channel_settings_title_channel">Cài đặt kênh</string>
+    <string name="channel_settings_title_thread">Cài đặt thread</string>
+    <string name="channel_settings_thread_name_title">Tên thread</string>
+    <string name="channel_settings_topic_title">Chủ đề</string>
+    <string name="channel_settings_name_duplicate_channel">Tên kênh này đã được dùng trong clan.</string>
+    <string name="channel_settings_name_duplicate_thread">Tên thread này đã được dùng trong clan.</string>
+    <string name="channel_settings_name_invalid_channel">Nhập tên kênh hợp lệ (1–64 ký tự).</string>
+    <string name="channel_settings_name_invalid_thread">Nhập tên thread hợp lệ (1–64 ký tự).</string>
+    <string name="channel_settings_updated">Đã cập nhật</string>
+    <string name="channel_settings_menu_change_category">Đổi danh mục</string>
+    <string name="channel_settings_menu_channel_permission">Quyền kênh</string>
+    <string name="channel_settings_menu_channel_permission_desc">Kiểm soát ai có thể đọc và đăng trong kênh này.</string>
+    <string name="channel_settings_menu_quick_action">Thao tác nhanh</string>
+    <string name="channel_settings_menu_add_members">Thêm thành viên hoặc vai trò</string>
+    <string name="channel_settings_menu_stream_banner">Ảnh bìa phát trực tiếp</string>
+    <string name="channel_settings_menu_ban_list">Người dùng bị cấm</string>
+    <string name="channel_settings_menu_webhook">Webhook</string>
+    <string name="channel_settings_menu_delete_channel">Xóa kênh</string>
+    <string name="channel_settings_menu_delete_thread">Xóa thread</string>
+    <string name="channel_settings_menu_leave_channel">Rời kênh</string>
+    <string name="channel_settings_menu_leave_thread">Rời thread</string>
+    <string name="channel_settings_delete_confirm_channel_title">Xóa kênh?</string>
+    <string name="channel_settings_delete_confirm_thread_title">Xóa thread?</string>
+    <string name="channel_settings_delete_confirm_message">Thao tác này sẽ xóa vĩnh viễn \"%s\". Không thể hoàn tác.</string>
+    <string name="channel_settings_leave_confirm_title">Rời thread?</string>
+    <string name="channel_settings_leave_confirm_message">Bạn sẽ không còn thấy \"%s\" trong clan này.</string>
+    <string name="channel_settings_delete_system_channel">Kênh này dùng cho tin nhắn hệ thống và không thể xóa.</string>
+    <string name="channel_settings_delete_failed">Không xóa được: %s</string>
+    <string name="channel_settings_leave_failed">Không rời được: %s</string>
+
+    <!-- Channel permission (Basic / Advanced) -->
+    <string name="channel_permission_title">Quyền kênh</string>
+    <string name="channel_permission_tab_basic">Cơ bản</string>
+    <string name="channel_permission_tab_advanced">Nâng cao</string>
+    <string name="channel_permission_private_channel">Kênh riêng</string>
+    <string name="channel_permission_private_desc">Chỉ thành viên và vai trò được mời mới truy cập được kênh này.</string>
+    <string name="channel_permission_who_can_access">Ai có thể truy cập</string>
+    <string name="channel_permission_add_members_roles">Thêm thành viên và vai trò</string>
+    <string name="channel_permission_advanced_need_private">Bật kênh riêng để chỉnh ghi đè theo từng thành viên hoặc vai trò.</string>
+    <string name="channel_permission_members_heading">Thành viên</string>
+    <string name="channel_permission_roles_heading">Vai trò</string>
+    <string name="channel_permission_remove">Gỡ</string>
+    <string name="channel_permission_private_updated">Đã cập nhật hiển thị kênh</string>
+    <string name="channel_permission_private_failed">Không cập nhật được hiển thị</string>
+    <string name="channel_permission_member_removed">Đã gỡ thành viên</string>
+    <string name="channel_permission_role_removed">Đã gỡ vai trò</string>
+    <string name="channel_permission_add_pick_members">Thêm thành viên</string>
+    <string name="channel_permission_add_pick_roles">Thêm vai trò</string>
+    <string name="channel_permission_add_none_available">Không có mục để thêm</string>
+    <string name="channel_permission_overrides_title">Ghi đè quyền</string>
+    <string name="channel_permission_allow">Cho phép</string>
+    <string name="channel_permission_deny">Từ chối</string>
+    <string name="channel_permission_none">Không</string>
+    <string name="channel_permission_saved">Đã lưu quyền</string>
+    <string name="channel_permission_save_failed">Không lưu được quyền</string>
+    <string name="channel_permission_load_failed">Không tải được quyền</string>
 
     <!-- Poll messages -->
     <string name="poll_select_one">Chọn một đáp án</string>
