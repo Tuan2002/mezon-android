@@ -388,14 +388,16 @@ class LoginFragment : BaseFragment() {
     private fun doSmsOTP() {
         val phone = phoneCell.getText().trim()
         if (!isValidPhone(phone)) {
-            showError(getString(R.string.common_login_invalid_phone))
+            val ctx = getContext() ?: return
+            showToast(ctx, getString(R.string.common_login_invalid_phone))
             return
         }
 
         val fullPhone = selectedCountry.prefix + normalizePhone(phone)
         val cooldownRemaining = checkCooldown(fullPhone)
         if (cooldownRemaining > 0) {
-            showError(getString(R.string.common_login_login_too_fast, cooldownRemaining))
+            val ctx = getContext() ?: return
+            showToast(ctx, getString(R.string.common_login_login_too_fast, cooldownRemaining))
             return
         }
 
@@ -414,11 +416,12 @@ class LoginFragment : BaseFragment() {
                 .onFailure { err ->
                     Log.e(TAG, "SMS OTP failed: ${err.javaClass.simpleName}")
                     hideLoading()
-                    val ctx = context ?: run {
+                    val ctx = getContext() ?: run {
                         Log.w(TAG, "SMS OTP error but fragment detached — skipping toast")
                         return@onFailure
                     }
-                    showError(
+                    showToast(
+                        ctx,
                         NetworkErrorMessages.userMessage(
                             ctx,
                             err,
@@ -432,13 +435,15 @@ class LoginFragment : BaseFragment() {
     private fun doEmailOTP() {
         val email = emailCell.getText().trim()
         if (!isValidEmail(email)) {
-            showError(getString(R.string.common_login_invalid_email))
+            val ctx = getContext() ?: return
+            showToast(ctx, getString(R.string.common_login_invalid_email))
             return
         }
 
         val cooldownRemaining = checkCooldown(email)
         if (cooldownRemaining > 0) {
-            showError(getString(R.string.common_login_login_too_fast, cooldownRemaining))
+            val ctx = getContext() ?: return
+            showToast(ctx, getString(R.string.common_login_login_too_fast, cooldownRemaining))
             return
         }
 
@@ -457,11 +462,12 @@ class LoginFragment : BaseFragment() {
                 .onFailure { err ->
                     Log.e(TAG, "Email OTP failed: ${err.javaClass.simpleName}")
                     hideLoading()
-                    val ctx = context ?: run {
+                    val ctx = getContext() ?: run {
                         Log.w(TAG, "Email OTP error but fragment detached — skipping toast")
                         return@onFailure
                     }
-                    showError(
+                    showToast(
+                        ctx,
                         NetworkErrorMessages.userMessage(
                             ctx,
                             err,
@@ -477,7 +483,8 @@ class LoginFragment : BaseFragment() {
         val password = passwordCell.getText()
 
         if (email.isBlank() || password.isBlank()) {
-            showError(getString(R.string.common_login_invalid_credentials))
+            val ctx = getContext() ?: return
+            showToast(ctx, getString(R.string.common_login_invalid_credentials))
             return
         }
 
@@ -501,7 +508,8 @@ class LoginFragment : BaseFragment() {
                     Log.e(TAG, "Password login failed: ${err.message}", err)
                     hideLoading()
                     val ctx = getContext() ?: return@onFailure
-                    showError(
+                    showToast(
+                        ctx,
                         NetworkErrorMessages.userMessage(
                             ctx,
                             err,
@@ -578,12 +586,8 @@ class LoginFragment : BaseFragment() {
         progressBar.visibility = View.GONE
     }
 
-    private fun showError(message: String) {
-        submitButton.isEnabled = false
-        submitButton.visibility = View.VISIBLE
-        progressBar.visibility = View.GONE
-        errorText.visibility = View.VISIBLE
-        errorText.text = message
+    private fun showToast(ctx: Context, message: String) {
+        android.widget.Toast.makeText(ctx, message, android.widget.Toast.LENGTH_SHORT).show()
     }
 
     companion object {
