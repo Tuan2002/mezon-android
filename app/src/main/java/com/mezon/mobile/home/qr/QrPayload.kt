@@ -84,7 +84,6 @@ object QrPayloadParser {
     private fun parseLoginId(raw: String?): Long? {
         val value = raw?.trim().orEmpty()
         if (value.isEmpty()) return null
-        if (value.length !in 10..22) return null
         if (!value.all { it.isDigit() }) return null
         return runCatching { value.toLong() }.getOrNull()
     }

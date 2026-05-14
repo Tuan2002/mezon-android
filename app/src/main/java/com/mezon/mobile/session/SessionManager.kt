@@ -92,6 +92,7 @@ class SessionManager @Inject constructor(
     val sessionExpired: SharedFlow<Unit> = _sessionExpired.asSharedFlow()
 
     private val refreshMutex = Mutex()
+    private val sessionPersistMutex = Mutex()
     private var activeRefresh: Deferred<StoredSession>? = null
     private var lastRefreshToken: String = ""
     private var failCount: Int = 0
@@ -217,19 +218,21 @@ class SessionManager @Inject constructor(
     }
 
     suspend fun saveSession(session: StoredSession) {
-        StartupCache.hasSession = true
-        StartupCache.userId = session.userId
-        val encryptedToken = encryptSecret(session.token)
-        val encryptedRefresh = encryptSecret(session.refreshToken)
-        val encryptedIdToken = encryptSecret(session.idToken)
-        dataStore.edit { prefs ->
-            prefs[SessionKeys.TOKEN] = encryptedToken
-            prefs[SessionKeys.REFRESH_TOKEN] = encryptedRefresh
-            prefs[SessionKeys.API_URL] = session.apiUrl
-            prefs[SessionKeys.WS_URL] = session.wsUrl
-            prefs[SessionKeys.USER_ID] = session.userId
-            prefs[SessionKeys.ID_TOKEN] = encryptedIdToken
-            prefs[SessionKeys.IS_REMEMBER] = session.isRemember
+        sessionPersistMutex.withLock {
+            StartupCache.hasSession = true
+            StartupCache.userId = session.userId
+            val encryptedToken = encryptSecret(session.token)
+            val encryptedRefresh = encryptSecret(session.refreshToken)
+            val encryptedIdToken = encryptSecret(session.idToken)
+            dataStore.edit { prefs ->
+                prefs[SessionKeys.TOKEN] = encryptedToken
+                prefs[SessionKeys.REFRESH_TOKEN] = encryptedRefresh
+                prefs[SessionKeys.API_URL] = session.apiUrl
+                prefs[SessionKeys.WS_URL] = session.wsUrl
+                prefs[SessionKeys.USER_ID] = session.userId
+                prefs[SessionKeys.ID_TOKEN] = encryptedIdToken
+                prefs[SessionKeys.IS_REMEMBER] = session.isRemember
+            }
         }
     }
 
@@ -253,15 +256,17 @@ class SessionManager @Inject constructor(
     }
 
     suspend fun clearSession() {
-        StartupCache.hasSession = false
-        StartupCache.needsUsernameSetup = false
-        StartupCache.userId = ""
-        StartupCache.clearAccountProfileScratch()
-        PollVotePersistence.clearAll()
-        lastRefreshToken = ""
-        failCount = 0
-        dataStore.edit { prefs -> prefs.removeAllSessionData() }
-        secretStorage.deleteKey(SESSION_SECRET_ALIAS)
+        sessionPersistMutex.withLock {
+            StartupCache.hasSession = false
+            StartupCache.needsUsernameSetup = false
+            StartupCache.userId = ""
+            StartupCache.clearAccountProfileScratch()
+            PollVotePersistence.clearAll()
+            lastRefreshToken = ""
+            failCount = 0
+            dataStore.edit { prefs -> prefs.removeAllSessionData() }
+            secretStorage.deleteKey(SESSION_SECRET_ALIAS)
+        }
     }
 
     private fun MutablePreferences.removeAllSessionData() {
