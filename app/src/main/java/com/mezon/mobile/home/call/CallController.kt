@@ -616,6 +616,9 @@ class CallController @Inject constructor(
         cancelRemoteVideoRevealRefresh()
 
         val snapState = callState
+        if (reason == CallEndReason.CANCELLED || reason == CallEndReason.CLEAR_CALL) {
+            Log.d(TAG, "endCall: reason=$reason snapState=${snapState::class.simpleName}")
+        }
         val wasConnected = snapState is CallState.Connected
         val durationMs = when (snapState) {
             is CallState.Connected -> SystemClock.elapsedRealtime() - snapState.connectedTime
@@ -1009,6 +1012,32 @@ class CallController @Inject constructor(
 
     fun getPeerConnection(): PeerConnectionWrapper? = peerConnection
 
+    fun shouldIgnoreCancelCallFcmAnsweredElsewhere(): Boolean {
+        return when (callState) {
+            is CallState.Connecting, is CallState.Connected -> true
+            else -> false
+        }
+    }
+
+    fun clearIdleIncomingArtifactsAfterAnsweredElsewhere() {
+        StartupCache.suppressHomeListApiForIncomingCallWake = false
+        try {
+            CallForegroundService.stop(appContext)
+        } catch (_: Exception) {
+        }
+        try {
+            val notifier = CallNotificationManager(appContext)
+            notifier.dismissIncomingNotification()
+            notifier.dismissOngoingNotification()
+        } catch (_: Exception) {
+        }
+        try {
+            appContext.getSharedPreferences("call_data", android.content.Context.MODE_PRIVATE)
+                .edit().remove("incoming_call").apply()
+        } catch (_: Exception) {
+        }
+    }
+
     private fun startTimeout() {
         cancelTimeout()
         timeoutJob = appScope.launch(Dispatchers.Main) {
@@ -1029,6 +1058,7 @@ class CallController @Inject constructor(
         val callerAvatar = userController.avatarUrl.orEmpty()
         val fcmPayload = JSONObject().apply {
             put("offer", "CANCEL_CALL")
+            put("isConnected", false)
             put("isVideo", callInfo.isVideo)
             put("callerName", callerName)
             put("callerAvatar", callerAvatar)
