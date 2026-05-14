@@ -204,6 +204,7 @@ class CallController @Inject constructor(
                         put("callerAvatar", callerAvatar)
                         put("callerId", userController.userIdStr)
                         put("channelId", channelId.toString())
+                        put("sentAt", System.currentTimeMillis().toString())
                     }.toString()
 
                     Log.d(TAG, "startCall: sending offer to peer=$peerId")
@@ -637,6 +638,9 @@ class CallController @Inject constructor(
         cancelRemoteVideoRevealRefresh()
 
         val snapState = callState
+        if (reason == CallEndReason.CANCELLED || reason == CallEndReason.CLEAR_CALL) {
+            Log.d(TAG, "endCall: reason=$reason snapState=${snapState::class.simpleName}")
+        }
         val wasConnected = snapState is CallState.Connected
         val durationMs = when (snapState) {
             is CallState.Connected -> SystemClock.elapsedRealtime() - snapState.connectedTime
@@ -1162,6 +1166,7 @@ class CallController @Inject constructor(
             put("callerAvatar", callerAvatar)
             put("callerId", userController.userIdStr)
             put("channelId", callInfo.channelId.toString())
+            put("sentAt", System.currentTimeMillis().toString())
         }.toString()
         appScope.launch(ioDispatcher) {
             try {

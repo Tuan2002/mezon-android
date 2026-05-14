@@ -955,10 +955,11 @@
     <string name="discover_list_load_error">Could not load communities. Pull down to try again.</string>
     <string name="discover_list_empty_search">No matching communities.</string>
 
+    <string name="channel_creator_screen_title">Create Channel</string>
     <string name="channel_creator_action_create">Create</string>
     <string name="channel_creator_channel_name_title">Channel Name</string>
     <string name="channel_creator_channel_name_placeholder">new-channel</string>
-    <string name="channel_creator_channel_name_error">Please enter a channel name (max 64 characters, only words, numbers, _ or -).</string>
+    <string name="channel_creator_channel_name_error">Please enter a valid channel name (max 64 characters, only words, numbers, _ or -).</string>
     <string name="channel_creator_channel_type_title">Channel Type</string>
     <string name="channel_creator_type_text_title">Text</string>
     <string name="channel_creator_type_text_desc">Post images, GIFs, stickers, opinions and puns</string>
@@ -969,6 +970,7 @@
     <string name="channel_creator_private_title">Private Channel</string>
     <string name="channel_creator_private_description">By making a private channel, only select members and roles will be able to view this channel</string>
     <string name="category_menu_create_channel">Create channel</string>
+    <string name="category_menu_create_channel_unavailable">Create channel isn’t available for this category right now.</string>
 
     <!-- Poll messages -->
     <string name="poll_select_one">Select one answer</string>
