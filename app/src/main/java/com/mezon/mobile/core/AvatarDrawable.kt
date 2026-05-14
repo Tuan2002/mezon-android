@@ -18,10 +18,27 @@ class AvatarDrawable : Drawable() {
 
     companion object {
         private val avatarColors = intArrayOf(
-            0xFFE57373.toInt(), 0xFF81C784.toInt(), 0xFF64B5F6.toInt(),
-            0xFFFFB74D.toInt(), 0xFFBA68C8.toInt(), 0xFF4DB6AC.toInt(),
-            0xFFFF8A65.toInt(), 0xFFA1887F.toInt(), 0xFF90A4AE.toInt()
+            0xFFade603.toInt(), 
+            0xFF00b2cc.toInt(), 
+            0xFFfda63c.toInt(), 
+            0xFFe16dcc.toInt(), 
+            0xFFe8467b.toInt(), 
+            0xFF9c7cfd.toInt(), 
+            0xFF22e2b3.toInt() 
         )
+
+        fun getColorForName(name: String): Int {
+            if (name.isNullOrEmpty()) return avatarColors[0]
+            val firstChar = name.trim().firstOrNull()?.uppercaseChar() ?: return avatarColors[0]
+            val index = (firstChar.code % avatarColors.size).toInt()
+            return avatarColors[index]
+        }
+
+        fun getColorIndexForName(name: String): Int {
+            if (name.isNullOrEmpty()) return 0
+            val firstChar = name.trim().firstOrNull()?.uppercaseChar() ?: return 0
+            return (firstChar.code % avatarColors.size).toInt()
+        }
 
         fun getColorForId(id: Long): Int {
             if (id == 0L) return 0xFFBDBDBD.toInt()
@@ -74,7 +91,8 @@ class AvatarDrawable : Drawable() {
             return
         }
         currentUserId = id
-        bgColor = getColorForId(id)
+        val displayName = if (!firstName.isNullOrEmpty()) firstName else (lastName ?: "")
+        bgColor = getColorForName(displayName)
         bgColor2 = bgColor
         hasGradient = false
         initial = getAvatarSymbols(firstName, lastName)
