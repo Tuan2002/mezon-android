@@ -319,7 +319,7 @@ class ToastOverlay(context: Context, private val theme: ThemeColors) : FrameLayo
             titleLayout = StaticLayout.Builder
                 .obtain(title, 0, title.length, titlePaint, textWidth)
                 .setAlignment(Layout.Alignment.ALIGN_NORMAL)
-                .setMaxLines(1)
+                .setMaxLines(if (description.isNullOrEmpty()) 4 else 1)
                 .setEllipsize(TextUtils.TruncateAt.END)
                 .build()
 

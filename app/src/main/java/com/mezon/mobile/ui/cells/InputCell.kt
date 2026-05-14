@@ -165,6 +165,11 @@ class InputCell(context: Context, private val theme: ThemeColors) : LinearLayout
         maxCharacter = max
     }
 
+    fun setInputContainerMinHeightDp(heightDp: Int) {
+        inputContainer.minimumHeight = LayoutHelper.dp(heightDp)
+        requestLayout()
+    }
+
 
     fun setError(message: String?) {
         if (message != null) {
@@ -212,6 +217,20 @@ class InputCell(context: Context, private val theme: ThemeColors) : LinearLayout
         editText.setTextColor(text)
         editText.setHintTextColor(hint)
         clearButton.setColorFilter(clearIcon)
+    }
+
+    fun refreshThemeColors() {
+        labelView.setTextColor(theme.onSurfaceVariant)
+        requiredMark.setTextColor(theme.error)
+        bgDrawable.setColor(theme.surfaceVariant)
+        val stroke = if (errorView.visibility == View.VISIBLE) theme.error else (strokeWhenValid ?: theme.outlineVariant)
+        bgDrawable.setStroke(LayoutHelper.dp(1), stroke)
+        editText.setTextColor(theme.onSurface)
+        editText.setHintTextColor(theme.onSurfaceVariant and 0x80FFFFFF.toInt())
+        clearButton.setColorFilter(theme.onSurfaceVariant)
+        charCountView.setTextColor(theme.onSurfaceVariant)
+        errorView.setTextColor(theme.error)
+        invalidate()
     }
 
     override fun setEnabled(enabled: Boolean) {
