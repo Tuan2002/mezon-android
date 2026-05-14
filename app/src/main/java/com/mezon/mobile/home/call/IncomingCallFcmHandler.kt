@@ -74,13 +74,38 @@ class IncomingCallFcmHandler @Inject constructor(
             }
         }
         if (innerOffer == "CANCEL_CALL") {
+            val answeredElsewhere = parsed.optBoolean("isConnected", false)
+            val ctrl = CallController.instance
+            val stateLabel = ctrl?.callState?.let { it::class.simpleName } ?: "null"
+            Log.d(
+                TAG,
+                "CANCEL_CALL FCM: answeredElsewhere=$answeredElsewhere controller=${ctrl != null} callState=$stateLabel"
+            )
             CallNotificationManager(appContext).dismissIncomingNotification()
+            if (answeredElsewhere && ctrl?.shouldIgnoreCancelCallFcmAnsweredElsewhere() == true) {
+                Log.i(
+                    TAG,
+                    "CANCEL_CALL FCM: ignored — local session active ($stateLabel), do not endCall"
+                )
+                return
+            }
             MezonCallConnection.activeConnection?.let {
                 it.setDisconnected(DisconnectCause(DisconnectCause.CANCELED))
                 it.destroy()
                 MezonCallConnection.activeConnection = null
             }
-            CallController.instance?.endCall(CallEndReason.CANCELLED)
+            if (answeredElsewhere) {
+                if (ctrl?.callState is CallState.Idle) {
+                    ctrl.clearIdleIncomingArtifactsAfterAnsweredElsewhere()
+                    Log.d(TAG, "CANCEL_CALL FCM: answeredElsewhere + Idle → cleared stale incoming artifacts")
+                } else {
+                    ctrl?.endCall(CallEndReason.CLEAR_CALL)
+                    Log.d(TAG, "CANCEL_CALL FCM: answeredElsewhere → endCall(CLEAR_CALL)")
+                }
+            } else {
+                ctrl?.endCall(CallEndReason.CANCELLED)
+                Log.d(TAG, "CANCEL_CALL FCM: real cancel → endCall(CANCELLED)")
+            }
             return
         }
         if (callController.callState !is CallState.Idle) {
