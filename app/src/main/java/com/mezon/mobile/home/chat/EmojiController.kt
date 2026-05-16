@@ -147,6 +147,14 @@ class EmojiController @Inject constructor(
         }
     }
 
+    fun invalidateEmojiCacheAndReload() {
+        cacheTracker.invalidate("emojis_by_user")
+        synchronized(this) {
+            emojisLoaded = false
+        }
+        loadEmojis()
+    }
+
     fun loadEmojis() {
         if (emojisLoaded && cacheTracker.shouldCall("emojis_by_user") == ApiCacheTracker.ShouldCall.SKIP) return
         appScope.launch(ioDispatcher) {
