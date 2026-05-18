@@ -407,9 +407,10 @@ class MezonApi @Inject constructor(
         apiUrl: String,
         token: String,
         method: String,
-        body: ByteArray
+        body: ByteArray,
+        preferHttp: Boolean = false
     ): ByteArray {
-        if (method in HTTP_ONLY_API_NAMES || method !in SOCKET_RPC_API_NAMES) {
+        if (preferHttp || method in HTTP_ONLY_API_NAMES || method !in SOCKET_RPC_API_NAMES) {
             return rpcOverHttp(apiUrl, token, method, body)
         }
         return try {
@@ -1373,7 +1374,8 @@ class MezonApi @Inject constructor(
         clanId: Long = 0L,
         messageId: Long = 0L,
         direction: Int = 0,
-        limit: Int = 50
+        limit: Int = 50,
+        preferHttp: Boolean = false
     ): ChannelMessageList {
         val request = listChannelMessagesRequest {
             this.channelId = channelId
@@ -1382,7 +1384,13 @@ class MezonApi @Inject constructor(
             if (direction != 0) this.direction = direction
             this.limit = limit
         }
-        val bytes = rpc(apiUrl, token, "ListChannelMessages", request.toByteArray())
+        val bytes = rpc(
+            apiUrl,
+            token,
+            "ListChannelMessages",
+            request.toByteArray(),
+            preferHttp = preferHttp
+        )
         val result = ChannelMessageList.parseFrom(bytes)
         return result
     }
