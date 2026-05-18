@@ -725,7 +725,7 @@ class MezonSocket @Inject constructor(
             } else {
                 val msg = if (merged.isNotEmpty()) String(merged, Charsets.UTF_8) else ""
                 deferred.completeExceptionally(
-                    RuntimeException("Server error code=$responseCode msg='$msg'")
+                    SocketRpcServerException("Server error code=$responseCode msg='$msg'", responseCode)
                 )
             }
         } else {
@@ -752,8 +752,9 @@ class MezonSocket @Inject constructor(
             if (apiDeferred != null) {
                 apiResponseStreams.remove(cid)
                 if (envelope.messageCase == Envelope.MessageCase.ERROR) {
+                    val error = envelope.error
                     apiDeferred.completeExceptionally(
-                        RuntimeException("Server error: ${envelope.error.message}")
+                        SocketRpcServerException("Server error: ${error.message}", error.code)
                     )
                 } else {
                     apiDeferred.complete(ByteArray(0))
