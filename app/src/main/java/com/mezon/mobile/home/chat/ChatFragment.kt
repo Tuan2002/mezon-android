@@ -3176,7 +3176,8 @@ class ChatFragment : BaseFragment() {
             val emojiMarkers = buildEmojiMarkers(cleanedText)
             chatController.editMessage(
                 channelId, clanId, channelType, isPrivate, editMsg.id,
-                cleanedText, mentions, emojiMarkers, mdMarkers, hashtags
+                cleanedText, mentions, emojiMarkers, mdMarkers, hashtags,
+                existingMessage = editMsg
             )
             clearEditState()
             return

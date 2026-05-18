@@ -104,6 +104,7 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
     private var editedLayout: StaticLayout? = null
     private var fileNameLayout: StaticLayout? = null
     private var fileSizeLayout: StaticLayout? = null
+    private var extraFileLayouts: List<Pair<StaticLayout?, StaticLayout?>> = emptyList()
     private var ephemeralLayout: StaticLayout? = null
     private var errorLayout: StaticLayout? = null
     private var hasReply = false
@@ -287,6 +288,7 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
         editedLayout = null
         fileNameLayout = null
         fileSizeLayout = null
+        extraFileLayouts = emptyList()
         ephemeralLayout = null
         errorLayout = null
         ogpTitleLayout = null
@@ -375,10 +377,10 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
             if (newMsg != null) messageEntity = newMsg
             parsedContent = parseContentText(msg.content)
             timeText = formatRelativeTime(msg.timestampSeconds)
-            drawPhotoImage = msg.hasMedia
-            val isAudioAtt = msg.isAudioAttachment && !msg.hasMedia
+            drawPhotoImage = msg.hasAnyMedia
+            val isAudioAtt = msg.isAudioAttachment && !msg.hasAnyMedia
             drawAudioAttachment = isAudioAtt
-            drawFileAttachment = msg.isFileAttachment && !msg.hasMedia && !isAudioAtt
+            drawFileAttachment = msg.hasFileAttachments && !isAudioAtt
             audioIsPlaying = false
             audioIsLoading = false
             audioPositionMs = 0L
@@ -462,7 +464,17 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
         }
 
         if ((mask and NotificationCenter.UPDATE_MASK_REACTIONS) != 0) {
-            rebuildLayout = true
+            val m = newMsg ?: messageEntity ?: return false
+            if (newMsg != null) messageEntity = newMsg
+            Log.d(TAG, "REACTION update id=${m.id} extraAtt=${m.extraAttachmentsJson.length} drawFile=$drawFileAttachment hasFile=${m.hasFileAttachments}")
+            val oldReactionH = reactionRowHeight
+            buildReactionLayouts(m, cachedInnerWidth)
+            if (oldReactionH != reactionRowHeight) {
+                measuredCellHeight = computeHeight(m)
+                requestLayout()
+            }
+            invalidate()
+            return true
         }
 
         if (newMsg != null) messageEntity = newMsg
@@ -470,10 +482,10 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
         if (rebuildLayout) {
             val m = messageEntity ?: return false
             timeText = formatRelativeTime(m.timestampSeconds)
-            drawPhotoImage = m.hasMedia
-            val isAudioAtt = m.isAudioAttachment && !m.hasMedia
+            drawPhotoImage = m.hasAnyMedia
+            val isAudioAtt = m.isAudioAttachment && !m.hasAnyMedia
             drawAudioAttachment = isAudioAtt
-            drawFileAttachment = m.isFileAttachment && !m.hasMedia && !isAudioAtt
+            drawFileAttachment = m.hasFileAttachments && !isAudioAtt
             drawForwardHeader = m.isForwarded
             drawEdited = m.isEdited && !m.hideEditted
             drawEphemeral = m.isEphemeral
@@ -509,8 +521,9 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
         val maxW = if (isInPinMode) rawMaxW.coerceAtMost(maxBubbleWidth(width)) else rawMaxW
         val maxH = maxW + LayoutHelper.dp(100)
 
-        var imgW = msg.attachmentWidth
-        var imgH = msg.attachmentHeight
+        val firstMedia = msg.allImageAttachments.firstOrNull()
+        var imgW = firstMedia?.width ?: msg.attachmentWidth
+        var imgH = firstMedia?.height ?: msg.attachmentHeight
         if (imgW <= 0 || imgH <= 0) {
             if (isStickerMsg) {
                 imgW = LayoutHelper.dp(120)
@@ -1166,9 +1179,13 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
         }
 
         if (drawFileAttachment) {
-            val textH = (fileNameLayout?.height ?: 0) + (fileSizeLayout?.height ?: 0)
-            val innerH = maxOf(FILE_ICON_SIZE, textH)
-            h += FILE_ROW_V_PAD * 2 + maxOf(innerH, FILE_ROW_MIN_HEIGHT - FILE_ROW_V_PAD * 2) + GAP_V_INNER
+            fun fileCardH(nameL: StaticLayout?, sizeL: StaticLayout?): Int {
+                val textH = (nameL?.height ?: 0) + (sizeL?.height ?: 0)
+                val innerH = maxOf(FILE_ICON_SIZE, textH)
+                return FILE_ROW_V_PAD * 2 + maxOf(innerH, FILE_ROW_MIN_HEIGHT - FILE_ROW_V_PAD * 2) + GAP_V_INNER
+            }
+            h += fileCardH(fileNameLayout, fileSizeLayout)
+            for ((nl, sl) in extraFileLayouts) h += fileCardH(nl, sl)
         }
 
         if (drawAudioAttachment) {
@@ -1198,25 +1215,41 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
         if (!drawFileAttachment) {
             fileNameLayout = null
             fileSizeLayout = null
+            extraFileLayouts = emptyList()
             fileIconDrawable = null
             fileRowWidth = 0
             return
         }
         val cardInnerW = ((textWidth * 0.8f).toInt()).coerceAtLeast(FILE_ICON_SIZE + FILE_ICON_GAP + 1)
         val fileTextW = (cardInnerW - FILE_ROW_H_PAD * 2 - FILE_ICON_SIZE - FILE_ICON_GAP).coerceAtLeast(1)
-        val name = msg.attachmentFilename.ifEmpty { "File" }
+
+        val files = msg.allFileAttachments
+        val first = files.firstOrNull()
+        val name = first?.filename?.ifEmpty { "File" } ?: msg.attachmentFilename.ifEmpty { "File" }
         fileNameLayout = StaticLayout.Builder.obtain(name, 0, name.length, theme.chatFileNamePaint, fileTextW)
             .setMaxLines(2)
             .setEllipsize(TextUtils.TruncateAt.END)
             .build()
 
-        val sizeText = FileUtils.formatFileSize(msg.attachmentSize.toLong())
+        val sizeBytes = first?.size?.toLong() ?: msg.attachmentSize.toLong()
+        val sizeText = FileUtils.formatFileSize(sizeBytes)
         fileSizeLayout = StaticLayout.Builder.obtain(sizeText, 0, sizeText.length, currentTimePaint, fileTextW)
             .setMaxLines(1)
             .build()
 
-        fileRowWidth = cardInnerW
+        extraFileLayouts = if (files.size > 1) {
+            files.drop(1).map { att ->
+                val n = att.filename.ifEmpty { "File" }
+                val nl = StaticLayout.Builder.obtain(n, 0, n.length, theme.chatFileNamePaint, fileTextW)
+                    .setMaxLines(2).setEllipsize(TextUtils.TruncateAt.END).build()
+                val s = FileUtils.formatFileSize(att.size.toLong())
+                val sl = StaticLayout.Builder.obtain(s, 0, s.length, currentTimePaint, fileTextW)
+                    .setMaxLines(1).build()
+                Pair<StaticLayout?, StaticLayout?>(nl, sl)
+            }
+        } else emptyList()
 
+        fileRowWidth = cardInnerW
         fileIconDrawable = MezonIcon.fileIconNew.getDrawable(context)
     }
 
@@ -1875,7 +1908,15 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
                         val imgH = if (mediaGridCount > 1) mediaGridTotalH else photoHeight
                         reacBaseY += imgH + GAP_V_INNER
                     }
-                    if (drawFileAttachment) reacBaseY += FILE_ICON_SIZE + GAP_V_INNER
+                    if (drawFileAttachment) {
+                        fun fileCardH2(nl: StaticLayout?, sl: StaticLayout?): Int {
+                            val th = (nl?.height ?: 0) + (sl?.height ?: 0)
+                            val ih = maxOf(FILE_ICON_SIZE, th)
+                            return FILE_ROW_V_PAD * 2 + maxOf(ih, FILE_ROW_MIN_HEIGHT - FILE_ROW_V_PAD * 2) + GAP_V_INNER
+                        }
+                        reacBaseY += fileCardH2(fileNameLayout, fileSizeLayout).toFloat()
+                        for ((nl, sl) in extraFileLayouts) reacBaseY += fileCardH2(nl, sl).toFloat()
+                    }
                     if (drawAudioAttachment) reacBaseY += AUDIO_PILL_HEIGHT + GAP_V_INNER
                     if (embedData != null) reacBaseY += computeEmbedHeight()
                     if (drawEphemeral) ephemeralLayout?.let { reacBaseY += it.height + GAP_V_INNER }
@@ -2371,15 +2412,29 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
 
     private fun drawFileBlock(canvas: Canvas, x: Float, y: Float): Float {
         val iconD = fileIconDrawable ?: return y
+        var yOff = y
+        yOff = drawSingleFileCard(canvas, x, yOff, iconD, fileNameLayout, fileSizeLayout, isFirst = true)
+        for ((nl, sl) in extraFileLayouts) {
+            yOff = drawSingleFileCard(canvas, x, yOff, iconD, nl, sl, isFirst = false)
+        }
+        return yOff
+    }
+
+    private fun drawSingleFileCard(
+        canvas: Canvas, x: Float, y: Float, iconD: Drawable,
+        nameLayout: StaticLayout?, sizeLayout: StaticLayout?, isFirst: Boolean
+    ): Float {
         val cardW = fileRowWidth.toFloat()
-        val textH = (fileNameLayout?.height ?: 0) + (fileSizeLayout?.height ?: 0)
+        val textH = (nameLayout?.height ?: 0) + (sizeLayout?.height ?: 0)
         val innerH = maxOf(FILE_ICON_SIZE, textH)
         val cardH = (FILE_ROW_V_PAD * 2 + maxOf(innerH, FILE_ROW_MIN_HEIGHT - FILE_ROW_V_PAD * 2)).toFloat()
 
-        fileBlockLeft = x
-        fileBlockTop = y
-        fileBlockRight = x + cardW
-        fileBlockBottom = y + cardH
+        if (isFirst) {
+            fileBlockLeft = x
+            fileBlockTop = y
+            fileBlockRight = x + cardW
+            fileBlockBottom = y + cardH
+        }
 
         EMBED_BG_PAINT.color = theme.secondaryLight
         fileRoundRect.set(x, y, x + cardW, y + cardH)
@@ -2397,14 +2452,14 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
         val textX = innerX + FILE_ICON_SIZE + FILE_ICON_GAP
         val totalTextH = textH.toFloat()
         var textY = innerY + (cardH - FILE_ROW_V_PAD * 2 - totalTextH) / 2f
-        fileNameLayout?.let {
+        nameLayout?.let {
             canvas.save()
             canvas.translate(textX, textY)
             it.draw(canvas)
             canvas.restore()
             textY += it.height
         }
-        fileSizeLayout?.let {
+        sizeLayout?.let {
             canvas.save()
             canvas.translate(textX, textY)
             it.draw(canvas)
