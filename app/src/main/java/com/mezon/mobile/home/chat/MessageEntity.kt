@@ -214,6 +214,23 @@ data class MessageEntity(
             } catch (_: Exception) { emptyList() }
         }
 
+    val allFileAttachments: List<AttachmentInfo>
+        get() {
+            val isMedia = { ft: String, url: String ->
+                ft.startsWith("image/") || ft.startsWith("video/") ||
+                    ft.startsWith("audio/") || ft.contains("gif", true) ||
+                    url.contains("tenor.com", true)
+            }
+            val first = if (attachmentUrl.isNotEmpty() && !isMedia(attachmentFiletype, attachmentUrl))
+                listOf(AttachmentInfo(attachmentUrl, attachmentThumb, attachmentWidth, attachmentHeight,
+                    attachmentFilename, attachmentFiletype, attachmentSize, attachmentDuration))
+            else emptyList()
+            return first + extraAttachments.filter { !isMedia(it.filetype, it.url) }
+        }
+
+    val hasFileAttachments: Boolean
+        get() = allFileAttachments.isNotEmpty()
+
     val allImageAttachments: List<AttachmentInfo>
         get() {
             val first = if (attachmentUrl.isNotEmpty() && hasMedia)
