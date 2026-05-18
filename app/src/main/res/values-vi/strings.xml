@@ -69,6 +69,10 @@
     <string name="qr_share_message">Quét QR để trò chuyện với tôi trên Mezon</string>
     <string name="qr_code_not_valid">Mã QR không hợp lệ</string>
     <string name="qr_select_photo_with_qr">Vui lòng chọn ảnh có mã QR</string>
+    <string name="qr_external_link_title">Mở liên kết?</string>
+    <string name="qr_external_link_message">Mã QR này chứa liên kết chưa được xử lý trong Mezon.</string>
+    <string name="qr_external_link_open">Mở liên kết</string>
+    <string name="qr_external_link_open_failed">Không thể mở liên kết</string>
     <string name="qr_login_title">Đăng nhập trên thiết bị mới</string>
     <string name="qr_login_message">Bạn có muốn xác nhận đăng nhập bằng QR này?</string>
     <string name="qr_login_confirm">Đăng nhập</string>
