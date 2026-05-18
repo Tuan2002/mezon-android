@@ -4858,8 +4858,9 @@ class ChatFragment : BaseFragment() {
             messageRefId = target.id
             refType = 0
             messageSenderId = target.senderId
-            messageSenderUsername = target.senderName
+            messageSenderUsername = target.senderUsername.ifBlank { target.senderName }
             messageSenderAvatar = target.senderAvatar
+            messageSenderClanNick = if (clanId != 0L) target.senderName else ""
             messageSenderDisplayName = target.senderName
             content = target.content
             hasAttachment = target.hasMedia || target.isFileAttachment
