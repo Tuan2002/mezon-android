@@ -109,6 +109,17 @@ data class MessageEntity(
     val hasMedia: Boolean
         get() = messageType == TYPE_PHOTO || messageType == TYPE_VIDEO || messageType == TYPE_GIF
 
+    val hasAnyMedia: Boolean
+        get() {
+            if (hasMedia) return true
+            val isMediaFt = { ft: String, url: String ->
+                ft.startsWith("image/") || ft.startsWith("video/") ||
+                    ft.contains("gif", true) || url.contains("tenor.com", true)
+            }
+            if (attachmentUrl.isNotEmpty() && isMediaFt(attachmentFiletype, attachmentUrl)) return true
+            return extraAttachments.any { isMediaFt(it.filetype, it.url) }
+        }
+
     val isWelcomeMessage: Boolean
         get() = code == CODE_FIRST_MESSAGE || (
             code == CODE_WELCOME &&
@@ -214,6 +225,15 @@ data class MessageEntity(
             } catch (_: Exception) { emptyList() }
         }
 
+    val allAttachmentsInfo: List<AttachmentInfo>
+        get() {
+            val first = if (attachmentUrl.isNotEmpty())
+                listOf(AttachmentInfo(attachmentUrl, attachmentThumb, attachmentWidth, attachmentHeight,
+                    attachmentFilename, attachmentFiletype, attachmentSize, attachmentDuration))
+            else emptyList()
+            return first + extraAttachments
+        }
+
     val allFileAttachments: List<AttachmentInfo>
         get() {
             val isMedia = { ft: String, url: String ->
@@ -233,14 +253,15 @@ data class MessageEntity(
 
     val allImageAttachments: List<AttachmentInfo>
         get() {
-            val first = if (attachmentUrl.isNotEmpty() && hasMedia)
+            val isMediaFt = { ft: String, url: String ->
+                ft.startsWith("image/") || ft.startsWith("video/") ||
+                    ft.contains("gif", true) || url.contains("tenor.com", true)
+            }
+            val first = if (attachmentUrl.isNotEmpty() && isMediaFt(attachmentFiletype, attachmentUrl))
                 listOf(AttachmentInfo(attachmentUrl, attachmentThumb, attachmentWidth, attachmentHeight,
                     attachmentFilename, attachmentFiletype, attachmentSize, attachmentDuration))
             else emptyList()
-            return first + extraAttachments.filter {
-                it.filetype.startsWith("image/") || it.filetype.startsWith("video/") ||
-                    it.filetype.contains("gif", true) || it.url.contains("tenor.com", true)
-            }
+            return first + extraAttachments.filter { isMediaFt(it.filetype, it.url) }
         }
 
     fun buildAttachmentJson(): String {

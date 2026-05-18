@@ -377,8 +377,8 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
             if (newMsg != null) messageEntity = newMsg
             parsedContent = parseContentText(msg.content)
             timeText = formatRelativeTime(msg.timestampSeconds)
-            drawPhotoImage = msg.hasMedia
-            val isAudioAtt = msg.isAudioAttachment && !msg.hasMedia
+            drawPhotoImage = msg.hasAnyMedia
+            val isAudioAtt = msg.isAudioAttachment && !msg.hasAnyMedia
             drawAudioAttachment = isAudioAtt
             drawFileAttachment = msg.hasFileAttachments && !isAudioAtt
             audioIsPlaying = false
@@ -464,7 +464,17 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
         }
 
         if ((mask and NotificationCenter.UPDATE_MASK_REACTIONS) != 0) {
-            rebuildLayout = true
+            val m = newMsg ?: messageEntity ?: return false
+            if (newMsg != null) messageEntity = newMsg
+            Log.d(TAG, "REACTION update id=${m.id} extraAtt=${m.extraAttachmentsJson.length} drawFile=$drawFileAttachment hasFile=${m.hasFileAttachments}")
+            val oldReactionH = reactionRowHeight
+            buildReactionLayouts(m, cachedInnerWidth)
+            if (oldReactionH != reactionRowHeight) {
+                measuredCellHeight = computeHeight(m)
+                requestLayout()
+            }
+            invalidate()
+            return true
         }
 
         if (newMsg != null) messageEntity = newMsg
@@ -472,10 +482,10 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
         if (rebuildLayout) {
             val m = messageEntity ?: return false
             timeText = formatRelativeTime(m.timestampSeconds)
-            drawPhotoImage = m.hasMedia
-            val isAudioAtt = m.isAudioAttachment && !m.hasMedia
+            drawPhotoImage = m.hasAnyMedia
+            val isAudioAtt = m.isAudioAttachment && !m.hasAnyMedia
             drawAudioAttachment = isAudioAtt
-            drawFileAttachment = m.isFileAttachment && !m.hasMedia && !isAudioAtt
+            drawFileAttachment = m.hasFileAttachments && !isAudioAtt
             drawForwardHeader = m.isForwarded
             drawEdited = m.isEdited && !m.hideEditted
             drawEphemeral = m.isEphemeral
@@ -511,8 +521,9 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
         val maxW = if (isInPinMode) rawMaxW.coerceAtMost(maxBubbleWidth(width)) else rawMaxW
         val maxH = maxW + LayoutHelper.dp(100)
 
-        var imgW = msg.attachmentWidth
-        var imgH = msg.attachmentHeight
+        val firstMedia = msg.allImageAttachments.firstOrNull()
+        var imgW = firstMedia?.width ?: msg.attachmentWidth
+        var imgH = firstMedia?.height ?: msg.attachmentHeight
         if (imgW <= 0 || imgH <= 0) {
             if (isStickerMsg) {
                 imgW = LayoutHelper.dp(120)
