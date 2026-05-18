@@ -1272,7 +1272,8 @@ class ChatController @Inject constructor(
         mentions: List<MentionData>? = null,
         emojiMarkers: List<EmojiMarker>? = null,
         markdownMarkers: List<MarkdownMarker>? = null,
-        hashtags: List<com.mezon.mobile.util.HashtagData>? = null
+        hashtags: List<com.mezon.mobile.util.HashtagData>? = null,
+        existingMessage: MessageEntity? = null
     ) {
         val mode = channelTypeToStreamMode(channelType)
         val isPublic = !isChannelPrivate
@@ -1292,12 +1293,24 @@ class ChatController @Inject constructor(
                 e = m.endOffset
             }
         }
+        val protoAttachments = existingMessage?.allAttachmentsInfo?.map { att ->
+            messageAttachment {
+                filename = att.filename
+                size = att.size
+                url = att.url
+                filetype = att.filetype
+                width = att.width
+                height = att.height
+                thumbnail = att.thumb
+            }
+        }
         val request = channelMessageUpdate {
             this.clanId = clanId
             this.channelId = channelId
             this.messageId = messageId
             this.content = content
             protoMentions?.let { this.mentions.addAll(it) }
+            protoAttachments?.let { this.attachments.addAll(it) }
             this.mode = mode
             this.isPublic = isPublic
         }
@@ -1365,11 +1378,12 @@ class ChatController @Inject constructor(
                             entity.channelId, entity.id, entity.content,
                             entity.updateTimeSeconds, entity.hideEditted, entity.code
                         )
+                        val merged = messageDao.getById(entity.channelId, entity.id) ?: entity
+                        notificationCenter.postNotificationOnMainThread(
+                            NotificationCenter.messageDidUpdate, merged.channelId, merged,
+                            NotificationCenter.UPDATE_MASK_MESSAGE_TEXT
+                        )
                     }
-                    notificationCenter.postNotificationOnMainThread(
-                        NotificationCenter.messageDidUpdate, entity.channelId, entity,
-                        NotificationCenter.UPDATE_MASK_MESSAGE_TEXT
-                    )
                 }
                 CODE_CHAT_REMOVE -> {
                     appScope.launch { messageDao.delete(msg.channelId, msg.messageId) }

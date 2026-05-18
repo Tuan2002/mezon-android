@@ -861,7 +861,6 @@
     <string name="channel_creator_type_stream_desc">Chia sẻ sở thích và hoạt động</string>
     <string name="channel_creator_private_title">Kênh riêng</string>
     <string name="channel_creator_private_description">Khi bật kênh riêng, chỉ thành viên và vai trò được chọn mới xem được kênh này</string>
-    <string name="category_menu_create_channel">Tạo kênh</string>
 
     <!-- Channel / thread settings (ChannelSetting RN port) -->
     <string name="channel_settings_title_channel">Cài đặt kênh</string>
@@ -973,4 +972,6 @@
     <string name="call_full_screen_intent_open_settings">Bật trong cài đặt</string>
     <string name="call_full_screen_intent_start_call_anyway">Vẫn gọi</string>
     <string name="call_full_screen_intent_incoming_hint">Đang tắt toàn màn hình khi khóa — chạm để bật</string>
+    <string name="call_busy_status">Bận</string>
+    <string name="call_busy_peer_status">%1$s đang bận</string>
 </resources>
