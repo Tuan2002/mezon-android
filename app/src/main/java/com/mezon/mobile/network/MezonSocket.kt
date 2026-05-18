@@ -811,7 +811,7 @@ class MezonSocket @Inject constructor(
             reconnectJob = scope.launch {
                 if (!networkMonitor.isOnline.value) {
                     Log.d(TAG, "Offline — waiting for network before reconnect")
-                    networkMonitor.onlineEvents.first { it }
+                    networkMonitor.isOnline.first { it }
                     Log.d(TAG, "Network restored — proceeding with reconnect")
                     synchronized(connectLock) {
                         reconnectFailCount = 1
