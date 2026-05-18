@@ -46,7 +46,7 @@ class UnreadDmCell(
 
     fun setData(dm: DirectMessage) {
         directMessage = dm
-        avatar.setInfo(dm.channelId, dm.displayName.ifEmpty { dm.label })
+        avatar.setInfo(dm.channelId, dm.username)
         badgeText = when {
             dm.unreadCount <= 0 -> ""
             dm.unreadCount > 99 -> "99+"

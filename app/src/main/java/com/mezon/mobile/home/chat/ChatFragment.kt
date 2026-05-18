@@ -1546,7 +1546,7 @@ class ChatFragment : BaseFragment() {
                     "callLogCallback tap msgId=${msg.id} channelId=$channelId clanId=$clanId " +
                         "senderId=${msg.senderId} isMe=${msg.isMe} parsedType=${parsed?.callLogType}"
                 )
-                val triple = resolveDmCallPeerForCallback(msg) ?: run {
+                val peer = resolveDmCallPeerForCallback(msg) ?: run {
                     if (channelType == CHANNEL_TYPE_DM && clanId == 0L) {
                         dialogsController.loadDmParticipants(channelId)
                         MezonToast.show(
@@ -1563,20 +1563,21 @@ class ChatFragment : BaseFragment() {
                     }
                     return
                 }
-                Log.d(TAG, "callLogCallback resolved peerId=${triple.first} msgId=${msg.id}")
+                Log.d(TAG, "callLogCallback resolved peerId=${peer.userId} msgId=${msg.id}")
                 requestCallPermissions(needsCamera = false, reason = "callLogCallback") {
-                    Log.d(TAG, "callLogCallback permissions ok startCall peerId=${triple.first} msgId=${msg.id}")
+                    Log.d(TAG, "callLogCallback permissions ok startCall peerId=${peer.userId} msgId=${msg.id}")
                     runOutgoingCallAfterFullScreenIntentPrompt(
                         {
                             callController.startCall(
-                                triple.first,
-                                triple.second,
-                                triple.third,
+                                peer.userId,
+                                peer.displayName,
+                                peer.avatarUrl,
                                 channelId,
                                 clanId,
                                 channelType,
                                 resolveChannelPrivate(),
-                                isVideo = false
+                                isVideo = false,
+                                peerUsername = peer.username
                             )
                             presentFragment(com.mezon.mobile.home.call.CallFragment())
                         }
@@ -2869,18 +2870,30 @@ class ChatFragment : BaseFragment() {
         }
     }
 
-    private fun resolveDmCallPeerForCallback(msg: MessageEntity): Triple<Long, String, String?>? {
+    private data class CallPeer(
+        val userId: Long,
+        val displayName: String,
+        val username: String,
+        val avatarUrl: String?
+    )
+
+    private fun resolveDmCallPeerForCallback(msg: MessageEntity): CallPeer? {
         val myId = chatController.getCurrentUserId()
         val parts = dialogsController.getParticipants(channelId)
         val o = parts.firstOrNull { it.userId != myId }
         if (o != null) {
             val name = o.displayName.ifBlank { o.username.ifBlank { "User" } }
             Log.d(TAG, "resolveDmCallPeerForCallback peer=participants userId=${o.userId} msgId=${msg.id}")
-            return Triple(o.userId, name, o.avatarUrl.ifBlank { null })
+            return CallPeer(o.userId, name, o.username, o.avatarUrl.ifBlank { null })
         }
         if (msg.senderId != myId) {
             Log.d(TAG, "resolveDmCallPeerForCallback peer=senderId userId=${msg.senderId} msgId=${msg.id}")
-            return Triple(msg.senderId, msg.senderName.ifBlank { "User" }, msg.senderAvatar.ifBlank { null })
+            return CallPeer(
+                msg.senderId,
+                msg.senderName.ifBlank { "User" },
+                msg.senderUsername,
+                msg.senderAvatar.ifBlank { null }
+            )
         }
         val dm = dialogsController.getDialog(channelId)
         if (dm != null && dm.otherUserId != 0L && dm.otherUserId != myId) {
@@ -2889,7 +2902,7 @@ class ChatFragment : BaseFragment() {
                 TAG,
                 "resolveDmCallPeerForCallback peer=dialog otherUserId=${dm.otherUserId} msgId=${msg.id}"
             )
-            return Triple(dm.otherUserId, name, dm.avatarUrl.ifBlank { null })
+            return CallPeer(dm.otherUserId, name, dm.username, dm.avatarUrl.ifBlank { null })
         }
         Log.w(
             TAG,
@@ -2920,17 +2933,17 @@ class ChatFragment : BaseFragment() {
         return null
     }
 
-    private fun resolveDmCallPeerForHeader(): Triple<Long, String, String?>? {
+    private fun resolveDmCallPeerForHeader(): CallPeer? {
         val myId = chatController.getCurrentUserId()
         val o = dialogsController.getParticipants(channelId).firstOrNull { it.userId != myId }
         if (o != null) {
             val name = o.displayName.ifBlank { o.username.ifBlank { "User" } }
-            return Triple(o.userId, name, o.avatarUrl.ifBlank { null })
+            return CallPeer(o.userId, name, o.username, o.avatarUrl.ifBlank { null })
         }
         val dm = dialogsController.getDialog(channelId) ?: return null
         if (dm.otherUserId == 0L || dm.otherUserId == myId) return null
         val name = dm.displayName.ifBlank { dm.label.ifBlank { "User" } }
-        return Triple(dm.otherUserId, name, dm.avatarUrl.ifBlank { null })
+        return CallPeer(dm.otherUserId, name, dm.username, dm.avatarUrl.ifBlank { null })
     }
 
     private fun setupDmHeaderCallMenu(chatActionBar: ActionBarView) {
@@ -2967,7 +2980,7 @@ class ChatFragment : BaseFragment() {
                         }
                     }
                     MENU_DM_VOICE_CALL -> {
-                        val triple = resolveDmCallPeerForHeader() ?: run {
+                        val peer = resolveDmCallPeerForHeader() ?: run {
                             dialogsController.loadDmParticipants(channelId)
                             MezonToast.show(this@ChatFragment, ToastOverlay.ToastType.INFO, getString(R.string.common_loading_data))
                             return
@@ -2976,14 +2989,15 @@ class ChatFragment : BaseFragment() {
                             runOutgoingCallAfterFullScreenIntentPrompt(
                                 {
                                     callController.startCall(
-                                        triple.first,
-                                        triple.second,
-                                        triple.third,
+                                        peer.userId,
+                                        peer.displayName,
+                                        peer.avatarUrl,
                                         channelId,
                                         clanId,
                                         channelType,
                                         resolveChannelPrivate(),
-                                        isVideo = false
+                                        isVideo = false,
+                                        peerUsername = peer.username
                                     )
                                     presentFragment(com.mezon.mobile.home.call.CallFragment())
                                 }
@@ -4293,7 +4307,8 @@ class ChatFragment : BaseFragment() {
                                     clanId,
                                     channelType,
                                     resolveChannelPrivate(),
-                                    isVideo = false
+                                    isVideo = false,
+                                    peerUsername = msg.senderUsername
                                 )
                                 presentFragment(com.mezon.mobile.home.call.CallFragment())
                             }
@@ -5164,8 +5179,9 @@ class ChatFragment : BaseFragment() {
         val displays = memberIds.map { uid ->
             val m = memberMap[uid]
             val name = m?.clanNick?.ifEmpty { null } ?: m?.displayName?.ifEmpty { null } ?: m?.username ?: "User"
+            val username = m?.username.orEmpty()
             val avatar = m?.clanAvatar?.ifEmpty { null } ?: m?.avatarUrl
-            VoiceMemberDisplay(uid, name, avatar)
+            VoiceMemberDisplay(uid, name, username, avatar)
         }
         val sheet = JoinVoiceBottomSheet(
             activity,
