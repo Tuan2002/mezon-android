@@ -620,6 +620,9 @@
     <string name="channel_apps_title_mezon">Mezon</string>
     <string name="channel_apps_title_subtitle"> Ứng dụng kênh</string>
     <string name="channel_apps_empty">Không có ứng dụng kênh nào</string>
+    <string name="channel_app_launch">Khởi chạy ứng dụng</string>
+    <string name="channel_app_help">Trợ giúp</string>
+    <string name="channel_app_launch_unavailable">Không mở được ứng dụng. Hãy thử lại.</string>
     <string name="channel_gallery_empty">Chưa có ảnh hoặc video được chia sẻ.</string>
     <string name="channel_gallery_load_error">Không tải được nội dung media. Hãy thử lại.</string>
     <!-- Edit Profile -->

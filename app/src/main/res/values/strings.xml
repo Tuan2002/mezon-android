@@ -711,6 +711,9 @@
     <string name="channel_apps_title_mezon">Mezon</string>
     <string name="channel_apps_title_subtitle"> Channel apps</string>
     <string name="channel_apps_empty">No channel apps available</string>
+    <string name="channel_app_launch">Launch App</string>
+    <string name="channel_app_help">Help</string>
+    <string name="channel_app_launch_unavailable">Couldn\'t open this app. Try again.</string>
 
     <!-- Profile -->
     <string name="profile_account_settings">Account Settings</string>
