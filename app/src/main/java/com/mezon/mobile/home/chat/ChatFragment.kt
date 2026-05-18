@@ -151,6 +151,7 @@ class ChatFragment : BaseFragment() {
         private const val ARG_PARENT_ID = "parentId"
         private const val ARG_MESSAGE_ID = "message_id"
         private const val ARG_FORCE_LATEST = "force_latest"
+        private const val ARG_OPENED_FROM_NOTIFICATION = "opened_from_notification"
         private const val VIEWPORT_LIMIT = 300
         private const val PAGE_DOWN_SCROLL_THRESHOLD = 2
         private const val REQUEST_CODE_LOCATION_PERMISSION = 1002
@@ -179,7 +180,8 @@ class ChatFragment : BaseFragment() {
             messageId: Long = 0L,
             forceLatest: Boolean = false,
             isChannelPrivate: Boolean = false,
-            parentId: Long = 0L
+            parentId: Long = 0L,
+            openedFromNotification: Boolean = false
         ): ChatFragment = ChatFragment().apply {
             arguments = Bundle().apply {
                 putLong(ARG_CHANNEL_ID, channelId)
@@ -190,6 +192,7 @@ class ChatFragment : BaseFragment() {
                 if (parentId != 0L) putLong(ARG_PARENT_ID, parentId)
                 if (messageId != 0L) putLong(ARG_MESSAGE_ID, messageId)
                 if (forceLatest) putBoolean(ARG_FORCE_LATEST, true)
+                if (openedFromNotification) putBoolean(ARG_OPENED_FROM_NOTIFICATION, true)
             }
         }
     }
@@ -255,6 +258,7 @@ class ChatFragment : BaseFragment() {
     private var routeChannelPrivate = false
     private var routeParentId = 0L
     private var forceLatest = false
+    private var openedFromNotification = false
     private var startLoadFromMessageId = 0L
     private var startLoadFromMessageOffset = Int.MAX_VALUE
     private var pausedOnLastMessage = false
@@ -372,6 +376,7 @@ class ChatFragment : BaseFragment() {
         routeChannelPrivate = arguments?.getBoolean(ARG_CHANNEL_PRIVATE) ?: false
         routeParentId = arguments?.getLong(ARG_PARENT_ID) ?: 0L
         forceLatest = arguments?.getBoolean(ARG_FORCE_LATEST) ?: false
+        openedFromNotification = arguments?.getBoolean(ARG_OPENED_FROM_NOTIFICATION) ?: false
         startLoadFromMessageId = 0L
         startLoadFromMessageOffset = Int.MAX_VALUE
         needScrollRestore = false
@@ -963,7 +968,7 @@ class ChatFragment : BaseFragment() {
         observe(NotificationCenter.appDidReconnect) { _, _, _ ->
             if (isPaused) return@observe
             Log.d(TAG, "appDidReconnect: reloading messages for channel $channelId")
-            chatController.loadMessages(channelId, clanId, forceRefresh = true)
+            chatController.loadMessages(channelId, clanId, forceRefresh = true, preferHttp = false)
         }
 
         observe(NotificationCenter.scrollToBottomChat) { _, _, args ->
@@ -1030,11 +1035,7 @@ class ChatFragment : BaseFragment() {
         notificationCenter.addPostponeNotificationsCallback(postponeNewMessagesCallback)
 
         isLoading = true
-        if (forceLatest) {
-            chatController.loadMessages(channelId, clanId, forceRefresh = true)
-        } else {
-            chatController.loadMessages(channelId, clanId, forceRefresh = true)
-        }
+        chatController.loadMessages(channelId, clanId, forceRefresh = true, preferHttp = openedFromNotification)
         return true
     }
 
@@ -1901,7 +1902,7 @@ class ChatFragment : BaseFragment() {
         } else if (!isLoading) {
             isLoading = true
             showLoading()
-            chatController.loadMessages(channelId, clanId, forceRefresh = true)
+            chatController.loadMessages(channelId, clanId, forceRefresh = true, preferHttp = openedFromNotification)
         }
         mainHandler.post { refreshPollSnapshotsForStoredVotes() }
         startVisiblePollTallyRefreshLoop()
@@ -2461,7 +2462,7 @@ class ChatFragment : BaseFragment() {
             recyclerView.visibility = View.INVISIBLE
             firstLoad = true
             Log.d(TAG, "jumpToPresent: cleared list, calling loadMessages forceRefresh=true")
-            chatController.loadMessages(channelId, clanId, forceRefresh = true)
+            chatController.loadMessages(channelId, clanId, forceRefresh = true, preferHttp = false)
         }
     }
 
@@ -4863,7 +4864,13 @@ class ChatFragment : BaseFragment() {
         } else {
             Log.d(TAG, "Reply message $messageId not in list, calling loadMessagesAround")
             pendingHighlightMessageId = messageId
-            chatController.loadMessagesAround(channelId, clanId, messageId, requireExactAnchor = true)
+            chatController.loadMessagesAround(
+                channelId,
+                clanId,
+                messageId,
+                requireExactAnchor = true,
+                preferHttp = openedFromNotification
+            )
         }
     }
 
