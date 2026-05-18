@@ -1006,6 +1006,14 @@ class ChatFragment : BaseFragment() {
             }
         }
 
+        observe(NotificationCenter.clanMembersDidLoad) { _, _, args ->
+            if (isPaused) return@observe
+            val loadedClanId = args.firstOrNull() as? Long ?: return@observe
+            if (loadedClanId == clanId) {
+                checkSuggestionTrigger()
+            }
+        }
+
         observe(NotificationCenter.searchChannelsDidLoad) { _, _, _ ->
             if (isPaused) return@observe
             if (currentTrigger.mode == InputSuggestionsController.Mode.HASHTAG) {
