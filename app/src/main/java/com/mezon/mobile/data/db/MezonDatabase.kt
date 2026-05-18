@@ -19,7 +19,7 @@ import androidx.room.RoomDatabase
         FavoriteChannelEntity::class,
         ChannelAppEntity::class
     ],
-    version = 26,
+    version = 28,
     exportSchema = false
 )
 abstract class MezonDatabase : RoomDatabase() {

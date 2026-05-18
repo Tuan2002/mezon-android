@@ -403,8 +403,8 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
             buildLayouts(msg)
             if (!isCombined) {
                 val isAnon = msg.senderId == ANONYMOUS_USER_ID
-                val displayName = if (isAnon) "Anonymous" else msg.senderName
-                avatarDrawable.setInfo(msg.senderId, displayName)
+                val avatarUsername = if (isAnon) "Anonymous" else msg.senderUsername
+                avatarDrawable.setInfo(msg.senderId, avatarUsername)
                 if (isAnon) loadAnonymousAvatar() else loadAvatar(msg.senderAvatar)
             }
             if (drawPhotoImage) loadPhotoImage(msg) else clearPhotoReceivers()
@@ -449,13 +449,17 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
             if (messageEntity?.senderName != msg.senderName) {
                 rebuildLayout = true
             }
+            val isAnon = msg.senderId == ANONYMOUS_USER_ID
+            val avatarUsername = if (isAnon) "Anonymous" else msg.senderUsername
+            avatarDrawable.setInfo(msg.senderId, avatarUsername)
+            needInvalidate = true
         }
 
         if ((mask and NotificationCenter.UPDATE_MASK_AVATAR) != 0) {
             if (!isCombined && messageEntity?.senderAvatar != msg.senderAvatar) {
                 val isAnon = msg.senderId == ANONYMOUS_USER_ID
-                val displayName = if (isAnon) "Anonymous" else msg.senderName
-                avatarDrawable.setInfo(msg.senderId, displayName)
+                val avatarUsername = if (isAnon) "Anonymous" else msg.senderUsername
+                avatarDrawable.setInfo(msg.senderId, avatarUsername)
                 if (isAnon) loadAnonymousAvatar() else loadAvatar(msg.senderAvatar)
                 needInvalidate = true
             }
@@ -1466,6 +1470,7 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
 
             if (replyIsDeleted) {
                 replySenderName = ""
+                replySenderUsername = ""
                 replyContent = ""
                 replySenderId = 0L
                 replyHasAttachment = false
@@ -1476,6 +1481,10 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
             val refContentMatch = REFERENCE_CONTENT_REGEX.find(content)
             replySenderName = refMatch?.groupValues?.getOrNull(1)
                 ?.replace("\\\"", "\"") ?: ""
+            replySenderUsername = REFERENCE_SENDER_USERNAME_REGEX.find(content)
+                ?.groupValues?.getOrNull(1)
+                ?.replace("\\\"", "\"")
+                ?: ""
             val rawRefContent = refContentMatch?.groupValues?.getOrNull(1)
                 ?.replace("\\n", " ")
                 ?.replace("\\\"", "\"")
@@ -1489,7 +1498,7 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
             val avatarMatch = REFERENCE_AVATAR_REGEX.find(content)
             replySenderAvatarUrl = avatarMatch?.groupValues?.getOrNull(1)?.replace("\\/", "/")
 
-            replyAvatarDrawable.setInfo(replySenderId, replySenderName)
+            replyAvatarDrawable.setInfo(replySenderId, replySenderUsername)
             loadReplyAvatar(replySenderAvatarUrl ?: "")
             replySenderName.isNotEmpty() || replyContent.isNotEmpty()
         } catch (_: Exception) {
@@ -1498,6 +1507,7 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
     }
 
     private var replySenderName = ""
+    private var replySenderUsername = ""
     private var replyContent = ""
     private var replyRefMessageId = 0L
     private var replySenderId = 0L
@@ -3208,6 +3218,7 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
         private const val ERROR_TEXT = "Unable to send message"
 
         private val REFERENCE_SENDER_REGEX = Regex("\"message_sender_display_name\"\\s*:\\s*\"([^\"]*?)\"")
+        private val REFERENCE_SENDER_USERNAME_REGEX = Regex("\"message_sender_username\"\\s*:\\s*\"([^\"]*?)\"")
         private val REFERENCE_CONTENT_REGEX = Regex("\"references\".*?\"content\"\\s*:\\s*\"(.*?)(?<!\\\\)\"")
         private val REFERENCE_REF_ID_REGEX = Regex("\"message_ref_id\"\\s*:\\s*\"?(\\d+)\"?")
         private val REFERENCE_SENDER_ID_REGEX = Regex("\"message_sender_id\"\\s*:\\s*\"?(\\d+)\"?")
