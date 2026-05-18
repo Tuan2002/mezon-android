@@ -833,7 +833,8 @@ class MainActivity : BasePermissionsActivity(),
             channelType = routeMeta.channelType,
             messageId = messageId,
             isChannelPrivate = routeMeta.isPrivate,
-            parentId = routeMeta.parentId
+            parentId = routeMeta.parentId,
+            openedFromNotification = fromNotification
         )
         val params = INavigationLayout.NavigationParams(fragment)
             .setNoAnimation(noAnimation)
