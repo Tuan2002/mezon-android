@@ -197,7 +197,12 @@ class ChatController @Inject constructor(
         }
     }
 
-    fun loadMessages(channelId: Long, clanId: Long, forceRefresh: Boolean = false) {
+    fun loadMessages(
+        channelId: Long,
+        clanId: Long,
+        forceRefresh: Boolean = false,
+        preferHttp: Boolean = false
+    ) {
         appScope.launch(ioDispatcher) {
             try {
                 val cacheKey = apiCacheKey("fetchMessages", clanId, channelId)
@@ -221,7 +226,12 @@ class ChatController @Inject constructor(
                 sessionManager.withAutoRefresh { session ->
                     val currentUserId = session.userId.toLongOrNull() ?: 0L
                     val response = api.listChannelMessages(
-                        session.apiUrl, session.token, channelId, clanId, limit = PAGE_SIZE
+                        session.apiUrl,
+                        session.token,
+                        channelId,
+                        clanId,
+                        limit = PAGE_SIZE,
+                        preferHttp = preferHttp
                     )
                     val allMessages = response.messagesList.map { it.toMessageEntity(currentUserId) }
                     val firstMessageReached = allMessages.any { it.code == MessageEntity.CODE_FIRST_MESSAGE }
@@ -257,7 +267,13 @@ class ChatController @Inject constructor(
         }
     }
 
-    fun loadMessagesAround(channelId: Long, clanId: Long, anchorMessageId: Long, requireExactAnchor: Boolean = false) {
+    fun loadMessagesAround(
+        channelId: Long,
+        clanId: Long,
+        anchorMessageId: Long,
+        requireExactAnchor: Boolean = false,
+        preferHttp: Boolean = false
+    ) {
         appScope.launch(ioDispatcher) {
             try {
                 val cacheKey = apiCacheKey("fetchMessages", clanId, channelId)
@@ -303,8 +319,14 @@ class ChatController @Inject constructor(
                 sessionManager.withAutoRefresh { session ->
                     val currentUserId = session.userId.toLongOrNull() ?: 0L
                     val response = api.listChannelMessages(
-                        session.apiUrl, session.token, channelId, clanId,
-                        anchorMessageId, DIRECTION_AROUND, PAGE_SIZE
+                        session.apiUrl,
+                        session.token,
+                        channelId,
+                        clanId,
+                        anchorMessageId,
+                        DIRECTION_AROUND,
+                        PAGE_SIZE,
+                        preferHttp = preferHttp
                     )
                     val allMsgs = response.messagesList.map { it.toMessageEntity(currentUserId) }
                     val firstMessageReached = allMsgs.any { it.code == MessageEntity.CODE_FIRST_MESSAGE }
