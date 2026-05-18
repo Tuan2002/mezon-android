@@ -217,6 +217,7 @@ class ChatFragment : BaseFragment() {
     private lateinit var adapter: ChatAdapter
     private lateinit var rootView: FrameLayout
     private lateinit var inputBar: LinearLayout
+    private var channelAppHotbar: LinearLayout? = null
     private lateinit var inputWrapper: FrameLayout
     private lateinit var pageDownButton: PageDownButton
     private lateinit var unreadDecoration: UnreadDividerDecoration
@@ -1285,6 +1286,51 @@ class ChatFragment : BaseFragment() {
         ).also { it.gravity = android.view.Gravity.CENTER_VERTICAL })
 
         innerLayout.addView(editBar, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT))
+
+        channelAppHotbar = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(LayoutHelper.dp(10f), LayoutHelper.dp(6f), LayoutHelper.dp(10f), LayoutHelper.dp(6f))
+            setBackgroundColor(Color.TRANSPARENT)
+            visibility = if (channelType == CHANNEL_TYPE_APP) View.VISIBLE else View.GONE
+            fun channelAppHotbarButton(label: String, onClick: (View) -> Unit): TextView {
+                val pillBg = android.graphics.drawable.GradientDrawable().apply {
+                    setColor(themeColors.tertiary)
+                    cornerRadius = LayoutHelper.dp(10f).toFloat()
+                }
+                val rippleMask = android.graphics.drawable.GradientDrawable().apply {
+                    setColor(0xFFFFFFFF.toInt())
+                    cornerRadius = LayoutHelper.dp(10f).toFloat()
+                }
+                val rippleColor = android.content.res.ColorStateList.valueOf(themeColors.onSurface and 0x1AFFFFFF)
+                return TextView(context).apply {
+                    text = label
+                    gravity = Gravity.CENTER
+                    setTextColor(themeColors.onSurface)
+                    textSize = 14f
+                    background = android.graphics.drawable.RippleDrawable(rippleColor, pillBg, rippleMask)
+                    setPadding(0, LayoutHelper.dp(10f), 0, LayoutHelper.dp(10f))
+                    isClickable = true
+                    isFocusable = true
+                    setOnClickListener(onClick)
+                }
+            }
+            val gapBetween = LayoutHelper.dp(10f)
+            addView(
+                channelAppHotbarButton(getString(R.string.channel_app_launch)) { openChannelAppFromHotbar() },
+                LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
+                    bottomMargin = LayoutHelper.dp(6f)
+                    marginEnd = gapBetween
+                }
+            )
+            addView(
+                channelAppHotbarButton(getString(R.string.channel_app_help)) { },
+                LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
+                    bottomMargin = LayoutHelper.dp(6f)
+                }
+            )
+        }
+        innerLayout.addView(channelAppHotbar, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT))
 
         inputBar = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -5120,6 +5166,34 @@ class ChatFragment : BaseFragment() {
             return
         }
         openChannelEntity(entity)
+    }
+
+    private fun openChannelAppFromHotbar() {
+        hideEmojiView()
+        AndroidUtilities.hideKeyboard(inputField)
+        appScope.launch(ioDispatcher) {
+            val app = channelAppController.ensureAppLoaded(channelId, clanId)
+            withContext(mainDispatcher) {
+                if (isPaused) return@withContext
+                if (app == null) {
+                    MezonToast.show(
+                        this@ChatFragment,
+                        ToastOverlay.ToastType.INFO,
+                        getString(R.string.channel_app_launch_unavailable)
+                    )
+                    return@withContext
+                }
+                presentFragment(
+                    ChannelAppFragment.newInstance(
+                        channelId = app.channelId,
+                        clanId = if (app.clanId != 0L) app.clanId else clanId,
+                        appId = app.appId,
+                        appUrl = app.appUrl,
+                        appName = app.appName
+                    )
+                )
+            }
+        }
     }
 
     private fun openChannelEntity(entity: ClanChannelEntity) {
