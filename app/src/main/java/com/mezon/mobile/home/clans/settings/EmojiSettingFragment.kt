@@ -6,7 +6,9 @@ import android.content.Intent
 import android.content.res.ColorStateList
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.ImageDecoder
 import android.graphics.Typeface
+import android.os.Build
 import android.net.Uri
 import android.content.DialogInterface
 import android.os.Bundle
@@ -24,6 +26,7 @@ import android.widget.CheckBox
 import android.widget.TextView
 import android.view.inputmethod.EditorInfo
 import androidx.core.widget.CompoundButtonCompat
+import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.mezon.mobile.BuildConfig
@@ -53,11 +56,14 @@ import com.mezon.mobile.ui.cells.ToastOverlay
 import com.mezon.mobile.home.UserClanController
 import com.mezon.mobile.util.isClanEmojiNameValid
 import com.mezon.mobile.util.getEmojiUrl
+import com.mezon.mobile.util.CLAN_EMOJI_NAME_MAX_LENGTH
+import com.mezon.mobile.util.CLAN_EMOJI_NAME_MIN_LENGTH
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileOutputStream
+import java.nio.ByteBuffer
 import java.util.concurrent.ThreadLocalRandom
 
 class EmojiSettingFragment : BaseFragment() {
@@ -67,8 +73,6 @@ class EmojiSettingFragment : BaseFragment() {
         private const val REQUEST_PICK_EMOJI = 4021
         private const val MAX_CLAN_EMOJI_SLOTS = 250
         private const val MAX_UPLOAD_BYTES = 256 * 1024
-        private const val MIN_NAME_INNER = 3
-        private const val MAX_NAME_INNER = 62
 
         fun newInstance(clanId: Long): EmojiSettingFragment =
             EmojiSettingFragment().apply {
@@ -92,6 +96,7 @@ class EmojiSettingFragment : BaseFragment() {
     private lateinit var mainDispatcher: CoroutineDispatcher
 
     private var permState: ClanSettingsPermissionState? = null
+    private var emojiListBindEpoch = 0
 
     private lateinit var recycler: RecyclerView
     private lateinit var adapter: EmojiSettingAdapter
@@ -115,6 +120,7 @@ class EmojiSettingFragment : BaseFragment() {
         if (clanId == 0L) return false
 
         observe(NotificationCenter.emojisNeedReload) { _, _, _ ->
+            if (isPaused) return@observe
             reloadListUi()
         }
         observe(NotificationCenter.clanEmojiCropExportReady) { _, _, args ->
@@ -123,7 +129,9 @@ class EmojiSettingFragment : BaseFragment() {
             val path = args.getOrNull(1) as? String ?: return@observe
             AndroidUtilities.runOnUIThread {
                 if (isFinished) return@runOnUIThread
-                showUploadPreviewDialog(File(path), isGif = false)
+                whenFullyVisible(Runnable {
+                    if (!isFinished) showUploadPreviewDialog(File(path), isGif = false)
+                })
             }
         }
         observe(NotificationCenter.clanMembersDidLoad) { _, _, args ->
@@ -141,7 +149,7 @@ class EmojiSettingFragment : BaseFragment() {
             roleController.loadRolesForClan(clanId, force = false)
             userClanController.loadClanMembers(clanId)
         }
-        emojiController.invalidateEmojiCacheAndReload()
+        emojiController.loadEmojis()
         return true
     }
 
@@ -152,7 +160,7 @@ class EmojiSettingFragment : BaseFragment() {
             userClanController.loadClanMembers(clanId)
         }
         refreshPermissionsAndList()
-        emojiController.invalidateEmojiCacheAndReload()
+        emojiController.loadEmojis()
     }
 
     override fun createView(context: Context): View {
@@ -237,6 +245,7 @@ class EmojiSettingFragment : BaseFragment() {
             roles,
             clan?.creatorId ?: 0L,
         )
+        emojiListBindEpoch++
         reloadListUi()
     }
 
@@ -370,10 +379,6 @@ class EmojiSettingFragment : BaseFragment() {
         val previewIv = ImageView(ctx).apply {
             scaleType = ImageView.ScaleType.FIT_CENTER
         }
-        val bmp = BitmapFactory.decodeFile(file.absolutePath)
-        if (bmp != null) {
-            previewIv.setImageBitmap(bmp)
-        }
         val previewFrame = FrameLayout(ctx).apply {
             layoutParams = LinearLayout.LayoutParams(
                 LayoutHelper.WRAP_CONTENT,
@@ -398,7 +403,7 @@ class EmojiSettingFragment : BaseFragment() {
             setLabel(getString(R.string.clan_emoji_name_label))
             setHint(getString(R.string.clan_emoji_name_hint))
             setText("emoji_${System.currentTimeMillis()}")
-            setMaxCharacter(MAX_NAME_INNER)
+            setMaxCharacter(CLAN_EMOJI_NAME_MAX_LENGTH)
             onTextChanged = { setError(null) }
         }
         body.addView(
@@ -457,9 +462,9 @@ class EmojiSettingFragment : BaseFragment() {
         dialog.setOnShowListener {
             dialog.getButton(DialogInterface.BUTTON_POSITIVE)?.setOnClickListener {
                 val inner = nameCell.getText().trim()
-                if (inner.length !in MIN_NAME_INNER..MAX_NAME_INNER || !isClanEmojiNameValid(inner)) {
+                if (inner.length !in CLAN_EMOJI_NAME_MIN_LENGTH..CLAN_EMOJI_NAME_MAX_LENGTH || !isClanEmojiNameValid(inner)) {
                     nameCell.setError(
-                        getString(R.string.clan_emoji_validate_name, MIN_NAME_INNER, MAX_NAME_INNER),
+                        getString(R.string.clan_emoji_validate_name, CLAN_EMOJI_NAME_MIN_LENGTH, CLAN_EMOJI_NAME_MAX_LENGTH),
                     )
                     return@setOnClickListener
                 }
@@ -469,6 +474,18 @@ class EmojiSettingFragment : BaseFragment() {
             }
         }
         dialog.show()
+        fragmentScope.launch {
+            val bmp = withContext(ioDispatcher) {
+                decodePreviewBitmap(file, previewSide, isGif)
+            } ?: return@launch
+            withContext(mainDispatcher) {
+                if (!isFinished && previewIv.isAttachedToWindow) {
+                    previewIv.setImageBitmap(bmp)
+                } else {
+                    bmp.recycle()
+                }
+            }
+        }
     }
 
     private fun runUploadFlow(file: File, isGif: Boolean, innerName: String, isForSale: Boolean) {
@@ -499,10 +516,14 @@ class EmojiSettingFragment : BaseFragment() {
                 val primaryUrl = uploadBytes(bytes, primaryFilename, mime, w, h)
 
                 val emojiRecordId = if (isForSale) {
-                    val thumbBmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-                        ?: throw IllegalStateException("decode thumb")
-                    val scaled = Bitmap.createScaledBitmap(thumbBmp, 35, 35, true)
-                    if (scaled !== thumbBmp) thumbBmp.recycle()
+                    val thumbBmp = decodeSaleThumbBytes(bytes, w, h, isGif)
+                    val scaled = if (thumbBmp.width == 35 && thumbBmp.height == 35) {
+                        thumbBmp
+                    } else {
+                        Bitmap.createScaledBitmap(thumbBmp, 35, 35, true).also {
+                            if (it !== thumbBmp) thumbBmp.recycle()
+                        }
+                    }
                     val thumbId = newEmojiNumericId()
                     val thumbBytes = encodeTinyJpeg(scaled)
                     scaled.recycle()
@@ -561,6 +582,52 @@ class EmojiSettingFragment : BaseFragment() {
         }
     }
 
+    private fun decodePreviewBitmap(file: File, maxPx: Int, isGif: Boolean): Bitmap? {
+        if (isGif && Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            return try {
+                val source = ImageDecoder.createSource(file)
+                ImageDecoder.decodeBitmap(source) { decoder, _, _ ->
+                    decoder.setTargetSize(maxPx, maxPx)
+                }
+            } catch (_: Exception) {
+                null
+            }
+        }
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeFile(file.absolutePath, bounds)
+        val srcW = bounds.outWidth
+        val srcH = bounds.outHeight
+        if (srcW <= 0 || srcH <= 0) return null
+        var sample = 1
+        while (srcW / (sample * 2) >= maxPx && srcH / (sample * 2) >= maxPx) {
+            sample *= 2
+        }
+        return BitmapFactory.decodeFile(
+            file.absolutePath,
+            BitmapFactory.Options().apply { inSampleSize = sample },
+        )
+    }
+
+    private fun decodeSaleThumbBytes(bytes: ByteArray, srcW: Int, srcH: Int, isGif: Boolean): Bitmap {
+        val targetPx = 35
+        if (isGif && Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            val source = ImageDecoder.createSource(ByteBuffer.wrap(bytes))
+            return ImageDecoder.decodeBitmap(source) { decoder, _, _ ->
+                decoder.setTargetSize(targetPx, targetPx)
+            }
+        }
+        var sample = 1
+        while (srcW / (sample * 2) >= targetPx && srcH / (sample * 2) >= targetPx) {
+            sample *= 2
+        }
+        return BitmapFactory.decodeByteArray(
+            bytes,
+            0,
+            bytes.size,
+            BitmapFactory.Options().apply { inSampleSize = sample },
+        ) ?: throw IllegalStateException("Decode thumbnail failed")
+    }
+
     private fun encodeTinyJpeg(bitmap: Bitmap): ByteArray {
         var quality = 35
         while (quality >= 10) {
@@ -598,13 +665,13 @@ class EmojiSettingFragment : BaseFragment() {
     }
 
     private fun commitEmojiRename(item: EmojiItem, inner: String) {
-        val trimmed = inner.trim()
-        if (trimmed.length !in MIN_NAME_INNER..MAX_NAME_INNER || !isClanEmojiNameValid(trimmed)) {
-            MezonToast.show(this, ToastOverlay.ToastType.ERROR, getString(R.string.clan_emoji_validate_name, MIN_NAME_INNER, MAX_NAME_INNER))
+        val trimmedName = inner.trim()
+        if (trimmedName.length !in CLAN_EMOJI_NAME_MIN_LENGTH..CLAN_EMOJI_NAME_MAX_LENGTH || !isClanEmojiNameValid(trimmedName)) {
+            MezonToast.show(this, ToastOverlay.ToastType.ERROR, getString(R.string.clan_emoji_validate_name, CLAN_EMOJI_NAME_MIN_LENGTH, CLAN_EMOJI_NAME_MAX_LENGTH))
             reloadListUi()
             return
         }
-        val shortname = ":$trimmed:"
+        val shortname = ":$trimmedName:"
         if (shortname == item.shortname) return
         val emojiId = item.id.toLongOrNull() ?: return
         fragmentScope.launch(ioDispatcher) {
@@ -666,10 +733,42 @@ class EmojiSettingFragment : BaseFragment() {
         private val viewTypeRow = 2
 
         private var rows: List<EmojiItem> = emptyList()
+        private var appliedBindEpoch = 0
+
+        init {
+            setHasStableIds(true)
+        }
 
         fun submit(newRows: List<EmojiItem>) {
+            val oldRows = rows
+            if (oldRows === newRows) return
+            val oldEpoch = appliedBindEpoch
+            val newEpoch = emojiListBindEpoch
+            val result = DiffUtil.calculateDiff(object : DiffUtil.Callback() {
+                override fun getOldListSize() = 1 + oldRows.size
+                override fun getNewListSize() = 1 + newRows.size
+                override fun areItemsTheSame(oldPos: Int, newPos: Int): Boolean {
+                    if (oldPos == 0 && newPos == 0) return true
+                    if (oldPos == 0 || newPos == 0) return false
+                    return oldRows[oldPos - 1].id == newRows[newPos - 1].id
+                }
+                override fun areContentsTheSame(oldPos: Int, newPos: Int): Boolean {
+                    if (oldPos == 0 && newPos == 0) return true
+                    if (oldPos == 0 || newPos == 0) return false
+                    if (oldEpoch != newEpoch) return false
+                    return oldRows[oldPos - 1] == newRows[newPos - 1]
+                }
+            })
             rows = newRows
-            notifyDataSetChanged()
+            appliedBindEpoch = newEpoch
+            result.dispatchUpdatesTo(this)
+        }
+
+        override fun getItemId(position: Int): Long {
+            if (position == 0) return 0L
+            val rowIndex = position - 1
+            if (rowIndex !in rows.indices) return RecyclerView.NO_ID
+            return rows[rowIndex].id.toLongOrNull() ?: rows[rowIndex].id.hashCode().toLong()
         }
 
         override fun getItemCount(): Int = 1 + rows.size
