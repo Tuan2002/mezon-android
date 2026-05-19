@@ -10,6 +10,7 @@ private val CLAN_OVERVIEW_NAME_PATTERN = Pattern.compile(
 fun isClanNameValid(name: String): Boolean =
     CLAN_OVERVIEW_NAME_PATTERN.matcher(name.trim()).matches()
 
+const val CLAN_EMOJI_NAME_MIN_LENGTH = 3
 const val CLAN_EMOJI_NAME_MAX_LENGTH = 24
 private val CLAN_EMOJI_NAME_PATTERN = Pattern.compile(
     "^[a-zA-Z0-9_-]+$",
