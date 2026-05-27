@@ -378,6 +378,7 @@ class MainActivity : BasePermissionsActivity(),
     @Deprecated("Deprecated in Java")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         actionBarLayout.onActivityResult(requestCode, resultCode, data)
+        super.onActivityResult(requestCode, resultCode, data)
     }
 
     override fun onRequestPermissionsResult(
