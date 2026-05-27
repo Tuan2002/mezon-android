@@ -287,8 +287,6 @@ open class ChatFragment : BaseFragment() {
     private var lastWelcomePlaceholderKey = ""
     private var lastWelcomePeerUsername = ""
     private var lastWelcomeChannelName = ""
-    private var updateInterfacesChatNameTriggerCount = 0
-    private var refreshClanHeaderFromChannelCallCount = 0
     private var clanId = 0L
     private var chatCachedCreatorId: Long? = null
     private var displayRoleCacheRefreshJob: Job? = null
@@ -1050,17 +1048,10 @@ open class ChatFragment : BaseFragment() {
                 !isTopicMode &&
                 (mask and NotificationCenter.UPDATE_MASK_CHAT_NAME) != 0
             ) {
-                updateInterfacesChatNameTriggerCount++
                 val targetChannelId = args.getOrNull(1) as? Long
                 val targetClanId = args.getOrNull(2) as? Long
                 val sameChannel = targetChannelId == null || targetChannelId == 0L || targetChannelId == channelId
                 val sameClan = targetClanId == null || targetClanId == 0L || targetClanId == clanId
-                Log.d(
-                    TAG,
-                    "updateInterfaces CHAT_NAME count=$updateInterfacesChatNameTriggerCount " +
-                        "mask=$mask targetChannelId=$targetChannelId targetClanId=$targetClanId " +
-                        "currentChannelId=$channelId currentClanId=$clanId sameChannel=$sameChannel sameClan=$sameClan"
-                )
                 if (sameChannel && sameClan) {
                     refreshClanHeaderFromChannel()
                 }
@@ -3615,15 +3606,9 @@ open class ChatFragment : BaseFragment() {
 
     private fun refreshClanHeaderFromChannel() {
         if (clanId == 0L || isTopicMode) return
-        refreshClanHeaderFromChannelCallCount++
         val entity = channelController.findChannelById(channelId, clanId)
             ?: channelController.findChannelById(channelId)
         val nextName = entity?.channelLabel?.ifBlank { channelName } ?: channelName
-        Log.d(
-            TAG,
-            "refreshClanHeaderFromChannel count=$refreshClanHeaderFromChannelCallCount " +
-                "channelId=$channelId clanId=$clanId currentName='$channelName' nextName='$nextName'"
-        )
         if (nextName.isBlank()) return
         val channelNameChanged = nextName != channelName
         if (channelNameChanged) {

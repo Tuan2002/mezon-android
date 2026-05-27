@@ -1,6 +1,5 @@
 package com.mezon.mobile.home.clans
 
-import android.util.Log
 import com.mezon.mobile.core.NotificationCenter
 import com.mezon.mobile.core.StartupCache
 import com.mezon.mobile.data.db.ClanChannelDao
@@ -47,7 +46,6 @@ import javax.inject.Singleton
 private const val NOTIFICATION_CODE_USER_MENTIONED = -9
 private const val NOTIFICATION_CODE_USER_REPLIED = -11
 private const val MAX_BADGE_CACHE = 500
-private const val MENTION_DEBUG_TAG = "MentionBadgeDbg"
 
 const val FAVORITE_CATEGORY_ID = -1L
 const val FAVORITE_CATEGORY_NAME = "Favorites"
@@ -877,19 +875,14 @@ class ChannelController @Inject constructor(
         pendingBadgeRefreshJobs[clanId] = appScope.launch {
             delay(800)
             try {
-                Log.d(MENTION_DEBUG_TAG, "scheduleBadgeRefresh start clanId=$clanId (force refresh)")
                 val cacheKey = apiCacheKey("listChannelsByClan", clanId.toString())
                 cacheTracker.invalidate(cacheKey)
                 loadChannelsForClanNow(clanId, force = true)
-                val newChannels = _channelsByClan.value[clanId].orEmpty()
-                val withUnread = newChannels.filter { it.unreadCount > 0 || it.hasUnread }
-                Log.d(MENTION_DEBUG_TAG, "scheduleBadgeRefresh done clanId=$clanId total=${newChannels.size} withUnread=${withUnread.size} sample=${withUnread.take(5).map { "${it.channelId}(label=${it.channelLabel} u=${it.unreadCount})" }}")
                 clansController.get().reconcileClanBadgeFromChannels(clanId)
                 notificationCenter.postNotificationOnMainThread(
                     NotificationCenter.updateInterfaces, NotificationCenter.UPDATE_MASK_BADGE
                 )
-            } catch (e: Exception) {
-                Log.d(MENTION_DEBUG_TAG, "scheduleBadgeRefresh clanId=$clanId failed: ${e.message}")
+            } catch (_: Exception) {
             } finally {
                 pendingBadgeRefreshJobs.remove(clanId)
             }
@@ -901,23 +894,13 @@ class ChannelController @Inject constructor(
         pendingMentionsByChannel.compute(channelId) { _, set ->
             (set ?: ConcurrentHashMap.newKeySet()).also { it.add(messageId) }
         }
-        val size = pendingMentionsByChannel[channelId]?.size ?: 0
-        Log.d(MENTION_DEBUG_TAG, "trackPendingMention channelId=$channelId messageId=$messageId pendingSize=$size")
     }
 
     private fun flushPendingMentionsInto(channelId: Long): Int {
         val pending = pendingMentionsByChannel.remove(channelId)
-        if (pending == null) {
-            Log.d(MENTION_DEBUG_TAG, "flushPendingMentionsInto channelId=$channelId noPending")
-            return 0
-        }
-        if (pending.isEmpty()) {
-            Log.d(MENTION_DEBUG_TAG, "flushPendingMentionsInto channelId=$channelId emptySet")
-            return 0
-        }
-        val applied = adjustChannelUnread(channelId, pending.size, updateClanBadge = false)
-        val newCount = _channelsByClan.value.values.flatten().firstOrNull { it.channelId == channelId }?.unreadCount
-        Log.d(MENTION_DEBUG_TAG, "flushPendingMentionsInto channelId=$channelId pendingSize=${pending.size} adjustFound=$applied newUnread=$newCount")
+        if (pending == null) return 0
+        if (pending.isEmpty()) return 0
+        adjustChannelUnread(channelId, pending.size, updateClanBadge = false)
         return pending.size
     }
 
@@ -925,12 +908,10 @@ class ChannelController @Inject constructor(
         type == CHANNEL_TYPE_DM || type == CHANNEL_TYPE_GROUP
 
     private fun applyUserChannelAdded(event: UserChannelAdded, currentUserId: Long) {
-        Log.d(MENTION_DEBUG_TAG, "applyUserChannelAdded clanId=${event.clanId} channelId=${event.channelDesc.channelId} type=${event.channelDesc.type} hasDesc=${event.hasChannelDesc()}")
         if (!event.hasChannelDesc()) return
         val desc = event.channelDesc
         if (isDirectChannelType(desc.type)) return
         if (event.usersList.none { it.userId == currentUserId }) {
-            Log.d(MENTION_DEBUG_TAG, "applyUserChannelAdded skipped (current user not in list) channelId=${desc.channelId}")
             return
         }
         val clanId = event.clanId.takeIf { it != 0L } ?: desc.clanId
@@ -952,7 +933,6 @@ class ChannelController @Inject constructor(
         }
         updateCache(clanId, sortChannels(existing.filter { it.channelId != merged.channelId } + merged))
         appScope.launch(ioDispatcher) { clanChannelDao.upsert(merged) }
-        Log.d(MENTION_DEBUG_TAG, "applyUserChannelAdded added channelId=${merged.channelId} clanId=$clanId apiUnread=${incoming.unreadCount} mergedUnread=${merged.unreadCount} (existingPresent=${existingRow != null}), flushing pending")
         flushPendingMentionsInto(merged.channelId)
         scheduleBadgeRefreshForClan(clanId)
         notificationCenter.postNotificationOnMainThread(NotificationCenter.channelsDidLoad, clanId)
@@ -1035,7 +1015,6 @@ class ChannelController @Inject constructor(
             if (updateClanBadge) {
                 clansController.get().updateClanBadgeCount(topicClanId, delta)
             }
-            Log.d(MENTION_DEBUG_TAG, "adjustChannelUnread topic channelId=$channelId delta=$delta")
             return true
         }
         for ((clanId, channels) in _channelsByClan.value) {
@@ -1056,11 +1035,9 @@ class ChannelController @Inject constructor(
                 if (updateClanBadge) {
                     clansController.get().updateClanBadgeCount(clanId, delta)
                 }
-                Log.d(MENTION_DEBUG_TAG, "adjustChannelUnread channelId=$channelId clanId=$clanId delta=$delta oldUnread=$oldUnread newUnread=$newUnread updateClanBadge=$updateClanBadge")
                 return true
             }
         }
-        Log.d(MENTION_DEBUG_TAG, "adjustChannelUnread NOT FOUND channelId=$channelId delta=$delta")
         return false
     }
 
@@ -1332,11 +1309,9 @@ class ChannelController @Inject constructor(
     private fun observeSocketEvents() {
         appScope.launch {
             dispatcher.channelCreatedEvents.collect { event ->
-                Log.d(MENTION_DEBUG_TAG, "channelCreatedEvent clanId=${event.clanId} channelId=${event.channelId} parentId=${event.parentId} type=${event.channelType}")
                 val clanId = event.clanId
                 if (clanId == 0L) return@collect
                 if (isDirectChannelType(event.channelType)) {
-                    Log.d(MENTION_DEBUG_TAG, "channelCreatedEvent skipped (direct type) channelId=${event.channelId}")
                     return@collect
                 }
                 val newChannel = ClanChannelEntity(
@@ -1354,7 +1329,6 @@ class ChannelController @Inject constructor(
                 )
                 val existing = _channelsByClan.value[clanId] ?: emptyList()
                 if (existing.any { it.channelId == newChannel.channelId }) {
-                    Log.d(MENTION_DEBUG_TAG, "channelCreatedEvent dedup (already in cache) channelId=${event.channelId}")
                     return@collect
                 }
                 val inheritedOrder = existing.firstOrNull {
@@ -1363,7 +1337,6 @@ class ChannelController @Inject constructor(
                 val placed = if (inheritedOrder != 0) newChannel.copy(categoryOrder = inheritedOrder) else newChannel
                 updateCache(clanId, sortChannels(existing + placed))
                 appScope.launch(ioDispatcher) { clanChannelDao.upsert(placed) }
-                Log.d(MENTION_DEBUG_TAG, "channelCreatedEvent added channelId=${placed.channelId} clanId=$clanId, flushing pending mentions")
                 flushPendingMentionsInto(placed.channelId)
                 scheduleBadgeRefreshForClan(clanId)
                 notificationCenter.postNotificationOnMainThread(NotificationCenter.channelsDidLoad, clanId)
@@ -1432,25 +1405,20 @@ class ChannelController @Inject constructor(
         appScope.launch {
             dispatcher.notifications.collect { notification ->
                 val code = notification.code
-                Log.d(MENTION_DEBUG_TAG, "notification received code=$code clanId=${notification.clanId} channelId=${notification.channelId} topicId=${notification.topicId}")
                 if (code != NOTIFICATION_CODE_USER_MENTIONED && code != NOTIFICATION_CODE_USER_REPLIED) {
-                    Log.d(MENTION_DEBUG_TAG, "notification skipped (not mention/reply) code=$code")
                     return@collect
                 }
                 val clanId = notification.clanId
                 val channelId = notification.channelId
                 if (clanId == 0L || channelId == 0L) {
-                    Log.d(MENTION_DEBUG_TAG, "notification skipped (zero id) clanId=$clanId channelId=$channelId")
                     return@collect
                 }
                 val topicId = resolveNotificationTopicId(notification)
                 if (topicId != 0L) {
                     if (currentOpenTopicId == topicId) {
-                        Log.d(MENTION_DEBUG_TAG, "notification skipped (open topic) topicId=$topicId")
                         return@collect
                     }
                 } else if (channelId == currentOpenChannelId) {
-                    Log.d(MENTION_DEBUG_TAG, "notification skipped (open channel) channelId=$channelId")
                     return@collect
                 }
 
@@ -1470,10 +1438,8 @@ class ChannelController @Inject constructor(
                     if (topicChannel != null && topicChannel.lastSeenMessageTs > 0L &&
                         msgTime > 0L && msgTime <= topicChannel.lastSeenMessageTs
                     ) {
-                        Log.d(MENTION_DEBUG_TAG, "notification topic skipped (already seen) topicId=$topicId msgTime=$msgTime lastSeenTs=${topicChannel.lastSeenMessageTs}")
                         return@collect
                     }
-                    Log.d(MENTION_DEBUG_TAG, "notification topic increment topicId=$topicId messageId=$messageId")
                     topicBadgeTracker.get().tryIncrementFromNotification(
                         clanId,
                         channelId,
@@ -1483,15 +1449,11 @@ class ChannelController @Inject constructor(
                 } else {
                     val alreadyProcessed = isBadgeProcessed(channelId, messageId)
                     if (alreadyProcessed) {
-                        Log.d(MENTION_DEBUG_TAG, "notification skipped (already processed) channelId=$channelId messageId=$messageId")
                         return@collect
                     }
                     val channelInCache = _channelsByClan.value[clanId]?.any { it.channelId == channelId } == true
-                    Log.d(MENTION_DEBUG_TAG, "notification mention clanId=$clanId channelId=$channelId messageId=$messageId channelInCache=$channelInCache")
                     if (channelInCache) {
                         incrementUnread(channelId, messageId)
-                        val u = _channelsByClan.value[clanId]?.firstOrNull { it.channelId == channelId }?.unreadCount
-                        Log.d(MENTION_DEBUG_TAG, "notification incrementUnread channelId=$channelId newUnread=$u")
                     } else {
                         trackPendingMention(channelId, messageId)
                         clansController.get().updateClanBadgeCount(clanId, 1)

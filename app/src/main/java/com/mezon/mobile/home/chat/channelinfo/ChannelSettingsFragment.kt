@@ -459,9 +459,9 @@ class ChannelSettingsFragment : BaseFragment() {
 
     private fun showChangeCategory(): Boolean = !isRestrictedChannelType()
     private fun showPermissions(): Boolean = !isThread && !isRestrictedChannelType()
-    private fun showQuickAction(): Boolean = channelType != CHANNEL_TYPE_VOICE && channelType != CHANNEL_TYPE_STREAMING && channelType != CHANNEL_TYPE_APP
-    private fun showBanList(): Boolean = !isRestrictedChannelType()
-    private fun showWebhooks(): Boolean = channelType != CHANNEL_TYPE_VOICE && channelType != CHANNEL_TYPE_STREAMING
+    private fun showQuickAction(): Boolean = !isThread && channelType != CHANNEL_TYPE_VOICE && channelType != CHANNEL_TYPE_STREAMING && channelType != CHANNEL_TYPE_APP
+    private fun showBanList(): Boolean = !isThread && !isRestrictedChannelType()
+    private fun showWebhooks(): Boolean = !isThread && channelType != CHANNEL_TYPE_VOICE && channelType != CHANNEL_TYPE_STREAMING
     private fun showPermissionDescription(): Boolean = showPermissions()
     private fun isRestrictedChannelType(): Boolean =
         channelType == CHANNEL_TYPE_VOICE || channelType == CHANNEL_TYPE_STREAMING || channelType == CHANNEL_TYPE_APP

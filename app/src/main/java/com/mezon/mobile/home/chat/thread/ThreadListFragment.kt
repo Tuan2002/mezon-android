@@ -134,12 +134,6 @@ class ThreadListFragment : BaseFragment() {
                 NotificationCenter.UPDATE_MASK_CHAT
             if ((mask and interestedMask) != 0) {
                 refreshCachedThreadList(animateChanges = false)
-                val refetchMask = NotificationCenter.UPDATE_MASK_NEW_MESSAGE or
-                    NotificationCenter.UPDATE_MASK_MESSAGE_TEXT or
-                    NotificationCenter.UPDATE_MASK_CHAT
-                if ((mask and refetchMask) != 0 && !isSearchMode) {
-                    fetchThreads(currentPage)
-                }
             }
         }
         return true
