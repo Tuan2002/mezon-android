@@ -819,6 +819,15 @@ class ChannelInfoFragment : BaseFragment() {
         }
     }
 
+    override fun onFragmentDestroy() {
+        editGroupSheet?.let { sheet ->
+            sheet.setOnHideListener { _ -> }
+            try { sheet.dismiss() } catch (_: Throwable) {}
+        }
+        editGroupSheet = null
+        super.onFragmentDestroy()
+    }
+
     private fun openSearch() {
         val fragment = GlobalSearchFragment.newInstance(channelId, channelName, clanId, channelType)
         fragment.onOpenChat = { chId, chName, clId, chType ->

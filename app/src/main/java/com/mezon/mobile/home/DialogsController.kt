@@ -598,8 +598,6 @@ class DialogsController @Inject constructor(
             val ext = when {
                 normalized.mimeType.contains("png", ignoreCase = true) -> "png"
                 normalized.mimeType.contains("webp", ignoreCase = true) -> "webp"
-                normalized.mimeType.contains("heic", ignoreCase = true) -> "heic"
-                normalized.mimeType.contains("heif", ignoreCase = true) -> "heif"
                 else -> "jpg"
             }
             val filename = "${System.currentTimeMillis() / 1000}_dm_group.$ext"
@@ -627,7 +625,7 @@ class DialogsController @Inject constructor(
         }
     }
 
-    private data class DmGroupAvatarUploadPayload(
+    private class DmGroupAvatarUploadPayload(
         val bytes: ByteArray,
         val mimeType: String
     )
@@ -652,16 +650,17 @@ class DialogsController @Inject constructor(
         uri: Uri,
         maxBytes: Int
     ): ByteArray? {
+        val sourceBytes = contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: return null
+        if (sourceBytes.isEmpty()) return null
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        contentResolver.openInputStream(uri)?.use { stream ->
-            BitmapFactory.decodeStream(stream, null, bounds)
-        } ?: return null
+        BitmapFactory.decodeByteArray(sourceBytes, 0, sourceBytes.size, bounds)
         if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
         val sampleSize = calculateSampleSize(bounds.outWidth, bounds.outHeight, 1024)
-        val options = BitmapFactory.Options().apply { inSampleSize = sampleSize }
-        val bitmap = contentResolver.openInputStream(uri)?.use { stream ->
-            BitmapFactory.decodeStream(stream, null, options)
-        } ?: return null
+        val options = BitmapFactory.Options().apply {
+            inSampleSize = sampleSize
+            inPreferredConfig = Bitmap.Config.RGB_565
+        }
+        val bitmap = BitmapFactory.decodeByteArray(sourceBytes, 0, sourceBytes.size, options) ?: return null
         return bitmap.useCompressedJpeg(maxBytes)
     }
 
@@ -674,12 +673,13 @@ class DialogsController @Inject constructor(
     }
 
     private fun Bitmap.useCompressedJpeg(maxBytes: Int): ByteArray? {
-        var quality = 92
-        while (quality >= 50) {
-            val output = ByteArrayOutputStream()
+        val output = ByteArrayOutputStream(64 * 1024)
+        var quality = 80
+        while (quality >= 40) {
+            output.reset()
             compress(Bitmap.CompressFormat.JPEG, quality, output)
-            val bytes = output.toByteArray()
-            if (bytes.size in 1..maxBytes) {
+            if (output.size() in 1..maxBytes) {
+                val bytes = output.toByteArray()
                 recycle()
                 return bytes
             }
