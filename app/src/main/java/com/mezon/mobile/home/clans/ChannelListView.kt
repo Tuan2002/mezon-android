@@ -7,6 +7,7 @@ import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.mezon.mobile.core.LayoutHelper
+import com.mezon.mobile.core.NotificationCenter
 import com.mezon.mobile.core.RecyclerListView
 import com.mezon.mobile.core.ThemeColors
 import com.mezon.mobile.home.clans.channelapp.ChannelAppUiModel
@@ -192,6 +193,42 @@ class ChannelListView(
     fun updateVisibleRows(mask: Int, freshChannels: Map<Long, ClanChannelEntity>? = null) {
         if (freshChannels != null) {
             adapter.updateRowData(freshChannels)
+        }
+        val visibilityMask = NotificationCenter.UPDATE_MASK_NEW_MESSAGE or
+            NotificationCenter.UPDATE_MASK_READ_DIALOG_MESSAGE or
+            NotificationCenter.UPDATE_MASK_BADGE
+        if (freshChannels != null &&
+            !allExpanded &&
+            currentSections.isNotEmpty() &&
+            (mask and visibilityMask) != 0
+        ) {
+            var anyCollapsedChannelChanged = false
+            for (section in currentSections) {
+                if (section.categoryName.isEmpty()) continue
+                if (section.categoryId == FAVORITE_CATEGORY_ID) continue
+                if (section.categoryId in expandedCategories) continue
+                for (oldCh in section.channels) {
+                    val fresh = freshChannels[oldCh.channelId] ?: continue
+                    if (fresh.unreadCount != oldCh.unreadCount || fresh.hasUnread != oldCh.hasUnread) {
+                        anyCollapsedChannelChanged = true
+                        break
+                    }
+                }
+                if (anyCollapsedChannelChanged) break
+            }
+            if (anyCollapsedChannelChanged) {
+                currentSections = currentSections.map { section ->
+                    if (section.categoryId == FAVORITE_CATEGORY_ID) {
+                        section
+                    } else {
+                        section.copy(channels = section.channels.map { freshChannels[it.channelId] ?: it })
+                    }
+                }
+                val newRows = buildRows(currentSections)
+                if (!adapter.rowsEqual(newRows)) {
+                    adapter.submitRows(newRows)
+                }
+            }
         }
         val count = recyclerView.childCount
         for (i in 0 until count) {
