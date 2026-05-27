@@ -15,6 +15,7 @@ import android.graphics.drawable.Drawable
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
+import android.util.Log
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
@@ -25,6 +26,7 @@ import android.view.WindowManager
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
+import android.widget.ProgressBar
 import android.widget.Toast
 import androidx.core.content.ContextCompat
 import androidx.recyclerview.widget.RecyclerView
@@ -38,6 +40,8 @@ import dagger.hilt.android.EntryPointAccessors
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.Locale
+
+private const val TAG = "PhotoViewer"
 
 class PhotoViewer(context: Context) : Dialog(context, android.R.style.Theme_Black_NoTitleBar_Fullscreen) {
 
@@ -164,6 +168,8 @@ class PhotoViewer(context: Context) : Dialog(context, android.R.style.Theme_Blac
         urls = if (gallery.isEmpty()) listOf(url) else gallery
         currentIndex = if (index in urls.indices) index else 0
         preferDrawableLoaderForSingle = preferDrawableLoader && urls.size == 1
+        val dm = context.resources.displayMetrics
+        Log.d(TAG, "show() url=$url gallerySize=${gallery.size} index=$index thumb=${thumbBitmap?.let { "${it.width}x${it.height}" } ?: "null"} preferDrawable=$preferDrawableLoader screen=${dm.widthPixels}x${dm.heightPixels} density=${dm.density}")
 
         val single = urls.size == 1
         val thumbUrl = urls[0]
@@ -227,7 +233,11 @@ class PhotoViewer(context: Context) : Dialog(context, android.R.style.Theme_Blac
         private val initialThumb: Bitmap?
     ) : RecyclerView.Adapter<PhotoPagerAdapter.ViewHolder>() {
 
-        inner class ViewHolder(val photoView: PhotoView) : RecyclerView.ViewHolder(photoView) {
+        inner class ViewHolder(
+            val container: FrameLayout,
+            val photoView: PhotoView,
+            val progressBar: ProgressBar
+        ) : RecyclerView.ViewHolder(container) {
             var pendingLoad: MezonImageLoader.Cancellable? = null
             var bindGeneration: Long = 0L
         }
@@ -274,10 +284,11 @@ class PhotoViewer(context: Context) : Dialog(context, android.R.style.Theme_Blac
         }
 
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ViewHolder {
-            val photoView = PhotoView(parent.context).apply {
-                layoutParams = ViewGroup.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    ViewGroup.LayoutParams.MATCH_PARENT
+            val ctx = parent.context
+            val photoView = PhotoView(ctx).apply {
+                layoutParams = FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.MATCH_PARENT,
+                    FrameLayout.LayoutParams.MATCH_PARENT
                 )
                 setBackgroundColor(Color.BLACK)
                 maximumScale = 4f
@@ -295,7 +306,23 @@ class PhotoViewer(context: Context) : Dialog(context, android.R.style.Theme_Blac
                 setOnPhotoTapListener { _, _, _ -> toggleToolbar() }
                 setOnOutsidePhotoTapListener { toggleToolbar() }
             }
-            return ViewHolder(photoView)
+            val progress = ProgressBar(ctx).apply {
+                isIndeterminate = true
+                indeterminateTintList = android.content.res.ColorStateList.valueOf(Color.WHITE)
+                val size = LayoutHelper.dp(48)
+                layoutParams = FrameLayout.LayoutParams(size, size, Gravity.CENTER)
+                visibility = View.GONE
+            }
+            val container = FrameLayout(ctx).apply {
+                layoutParams = ViewGroup.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT
+                )
+                setBackgroundColor(Color.BLACK)
+                addView(photoView)
+                addView(progress)
+            }
+            return ViewHolder(container, photoView, progress)
         }
 
         override fun onViewRecycled(holder: ViewHolder) {
@@ -303,6 +330,7 @@ class PhotoViewer(context: Context) : Dialog(context, android.R.style.Theme_Blac
             holder.pendingLoad?.cancel()
             holder.pendingLoad = null
             holder.bindGeneration++
+            holder.progressBar.visibility = View.GONE
             stopAndClearPhotoView(holder.photoView)
         }
 
@@ -316,17 +344,15 @@ class PhotoViewer(context: Context) : Dialog(context, android.R.style.Theme_Blac
             val bindGen = holder.bindGeneration
             stopAndClearPhotoView(photoView)
 
-            if (position == currentIndex && initialThumb != null) {
+            val hasThumb = position == currentIndex && initialThumb != null
+            if (hasThumb) {
                 photoView.setImageBitmap(initialThumb)
                 photoView.getAttacher().update()
                 photoView.setScale(1f, false)
             }
+            holder.progressBar.visibility = if (hasThumb) View.GONE else View.VISIBLE
 
-            val screenW = context.resources.displayMetrics.widthPixels
-            val screenH = context.resources.displayMetrics.heightPixels
-            val proxyMaxEdge = maxOf(screenW, screenH).coerceAtMost(2560)
             val loader = MezonImageLoader.getInstance(context)
-
             val drawableLoader = urlNeedsAnimatedDrawable(url) ||
                 (preferDrawableLoaderForSingle && urls.size == 1)
             if (drawableLoader) {
@@ -334,24 +360,43 @@ class PhotoViewer(context: Context) : Dialog(context, android.R.style.Theme_Blac
                     holder.pendingLoad = loader.loadDrawable(url, 0, 0,
                         onSuccess = { drawable ->
                             if (holder.bindGeneration != bindGen) return@loadDrawable
+                            holder.progressBar.visibility = View.GONE
                             applyLoadedDrawable(holder, position, url, drawable)
+                        },
+                        onError = {
+                            if (holder.bindGeneration != bindGen) return@loadDrawable
+                            holder.progressBar.visibility = View.GONE
                         }
                     )
                 } else {
                     holder.pendingLoad = loader.load(url, 0, 0,
                         onSuccess = { bmp ->
                             if (holder.bindGeneration != bindGen) return@load
+                            holder.progressBar.visibility = View.GONE
                             applyLoadedBitmap(holder, position, url, bmp)
+                        },
+                        onError = {
+                            if (holder.bindGeneration != bindGen) return@load
+                            holder.progressBar.visibility = View.GONE
                         }
                     )
                 }
             } else {
+                val screenW = context.resources.displayMetrics.widthPixels
+                val screenH = context.resources.displayMetrics.heightPixels
+                val proxyMaxEdge = maxOf(screenW, screenH).coerceAtMost(2560)
                 val loadUrl = createImgproxyUrl(url, screenW, screenH, "fit", proxyMaxEdge)
                 holder.pendingLoad = loader.load(loadUrl, screenW, screenH,
                     onSuccess = { bmp ->
                         if (holder.bindGeneration != bindGen) return@load
+                        holder.progressBar.visibility = View.GONE
                         applyLoadedBitmap(holder, position, url, bmp)
-                    }
+                    },
+                    onError = {
+                        if (holder.bindGeneration != bindGen) return@load
+                        holder.progressBar.visibility = View.GONE
+                    },
+                    noCache = true
                 )
             }
         }
