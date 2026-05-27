@@ -868,13 +868,24 @@ class ChannelController @Inject constructor(
 
     private val pendingMentionsByChannel = ConcurrentHashMap<Long, MutableSet<Long>>()
     private val pendingBadgeRefreshJobs = ConcurrentHashMap<Long, Job>()
+    private val pendingNewChannelsByClan = ConcurrentHashMap<Long, MutableSet<Long>>()
 
-    private fun scheduleBadgeRefreshForClan(clanId: Long) {
+    private fun scheduleBadgeRefreshForClan(clanId: Long, channelId: Long) {
         if (clanId == 0L) return
+        if (channelId != 0L) {
+            pendingNewChannelsByClan.computeIfAbsent(clanId) { ConcurrentHashMap.newKeySet() }.add(channelId)
+        }
         pendingBadgeRefreshJobs[clanId]?.cancel()
         pendingBadgeRefreshJobs[clanId] = appScope.launch {
             delay(800)
+            val newIds = pendingNewChannelsByClan.remove(clanId)
             try {
+                val channels = _channelsByClan.value[clanId].orEmpty()
+                val needsRefresh = newIds.isNullOrEmpty() || newIds.any { id ->
+                    val ch = channels.firstOrNull { it.channelId == id }
+                    ch == null || ch.unreadCount == 0
+                }
+                if (!needsRefresh) return@launch
                 val cacheKey = apiCacheKey("listChannelsByClan", clanId.toString())
                 cacheTracker.invalidate(cacheKey)
                 loadChannelsForClanNow(clanId, force = true)
@@ -934,7 +945,7 @@ class ChannelController @Inject constructor(
         updateCache(clanId, sortChannels(existing.filter { it.channelId != merged.channelId } + merged))
         appScope.launch(ioDispatcher) { clanChannelDao.upsert(merged) }
         flushPendingMentionsInto(merged.channelId)
-        scheduleBadgeRefreshForClan(clanId)
+        scheduleBadgeRefreshForClan(clanId, merged.channelId)
         notificationCenter.postNotificationOnMainThread(NotificationCenter.channelsDidLoad, clanId)
         notificationCenter.postNotificationOnMainThread(NotificationCenter.updateInterfaces, NotificationCenter.UPDATE_MASK_CHAT)
     }
@@ -1338,7 +1349,7 @@ class ChannelController @Inject constructor(
                 updateCache(clanId, sortChannels(existing + placed))
                 appScope.launch(ioDispatcher) { clanChannelDao.upsert(placed) }
                 flushPendingMentionsInto(placed.channelId)
-                scheduleBadgeRefreshForClan(clanId)
+                scheduleBadgeRefreshForClan(clanId, placed.channelId)
                 notificationCenter.postNotificationOnMainThread(NotificationCenter.channelsDidLoad, clanId)
             }
         }
