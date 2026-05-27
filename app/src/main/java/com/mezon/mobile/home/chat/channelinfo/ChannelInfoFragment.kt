@@ -1,6 +1,7 @@
 package com.mezon.mobile.home.chat.channelinfo
 
 import android.app.Activity
+import android.app.Dialog
 import android.content.Context
 import android.content.Intent
 import android.graphics.PorterDuff
@@ -218,6 +219,13 @@ class ChannelInfoFragment : BaseFragment() {
             channelPermissionController.loadChannelPermissionData(clanId, channelId, channelType)
         }
         return true
+    }
+
+    override fun dismissDialogOnPause(dialog: Dialog): Boolean {
+        if (dialog === editGroupSheet) {
+            return false
+        }
+        return super.dismissDialogOnPause(dialog)
     }
 
     override fun onInject(entryPoint: FragmentEntryPoint) {

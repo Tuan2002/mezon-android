@@ -292,7 +292,7 @@ class EmojiSettingFragment : BaseFragment() {
             val size = runCatching {
                 ctx.contentResolver.openFileDescriptor(uri, "r")?.use { it.statSize } ?: 0L
             }.getOrDefault(0L)
-            if (size > MAX_UPLOAD_BYTES) {
+            if (isGif && size > MAX_UPLOAD_BYTES) {
                 withContext(mainDispatcher) {
                     MezonToast.show(this@EmojiSettingFragment, ToastOverlay.ToastType.ERROR, getString(R.string.clan_emoji_error_size_limit))
                 }

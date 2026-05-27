@@ -1044,6 +1044,17 @@ open class ChatFragment : BaseFragment() {
             if (fragmentView == null) return@observe
             val mask = args.firstOrNull() as? Int ?: 0
             if (
+                clanId == 0L &&
+                (channelType == CHANNEL_TYPE_DM || channelType == CHANNEL_TYPE_GROUP) &&
+                (
+                    (mask and NotificationCenter.UPDATE_MASK_CHAT_NAME) != 0 ||
+                        (mask and NotificationCenter.UPDATE_MASK_CHAT_AVATAR) != 0
+                    )
+            ) {
+                refreshDmHeaderTitleFromDialog()
+                refreshWelcomeFromDialog()
+            }
+            if (
                 clanId != 0L &&
                 !isTopicMode &&
                 (mask and NotificationCenter.UPDATE_MASK_CHAT_NAME) != 0
@@ -2123,6 +2134,7 @@ open class ChatFragment : BaseFragment() {
         lastResumeTime = android.os.SystemClock.elapsedRealtime()
         if (clanId == 0L) {
             refreshDmHeaderTitleFromDialog()
+            refreshWelcomeFromDialog()
         }
     }
 
@@ -2131,6 +2143,7 @@ open class ChatFragment : BaseFragment() {
         actionBar?.post {
             if (clanId == 0L) {
                 refreshDmHeaderTitleFromDialog()
+                refreshWelcomeFromDialog()
             }
         }
         if (pendingDisplayRoleUiRefresh) {

@@ -2,6 +2,8 @@ package com.mezon.mobile.home
 
 import android.content.Context
 import android.content.ContentResolver
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.net.Uri
 import android.util.LongSparseArray
 import android.util.Log
@@ -51,6 +53,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.ByteArrayOutputStream
 import javax.inject.Inject
 import javax.inject.Singleton
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -581,20 +584,22 @@ class DialogsController @Inject constructor(
         maxBytes: Int
     ): DmGroupAvatarUploadResult {
         return try {
-            val mimeType = contentResolver.getType(uri).orEmpty().ifBlank { "image/jpeg" }
+            val sourceMimeType = contentResolver.getType(uri).orEmpty().ifBlank { "image/jpeg" }
             val size = FileUtils.getPickedFileSize(contentResolver, uri)
             if (size > maxBytes) {
                 return DmGroupAvatarUploadResult.TooLarge
             }
-            val fileBytes = withContext(ioDispatcher) {
-                FileUtils.readContentUriBytesCapped(contentResolver, uri, maxBytes)
+            val normalized = withContext(ioDispatcher) {
+                prepareDmGroupAvatarUpload(contentResolver, uri, sourceMimeType, maxBytes)
             }
-            if (fileBytes.isEmpty()) {
+            if (normalized.bytes.isEmpty()) {
                 return DmGroupAvatarUploadResult.Failed
             }
             val ext = when {
-                mimeType.contains("png", ignoreCase = true) -> "png"
-                mimeType.contains("webp", ignoreCase = true) -> "webp"
+                normalized.mimeType.contains("png", ignoreCase = true) -> "png"
+                normalized.mimeType.contains("webp", ignoreCase = true) -> "webp"
+                normalized.mimeType.contains("heic", ignoreCase = true) -> "heic"
+                normalized.mimeType.contains("heif", ignoreCase = true) -> "heif"
                 else -> "jpg"
             }
             val filename = "${System.currentTimeMillis() / 1000}_dm_group.$ext"
@@ -604,12 +609,12 @@ class DialogsController @Inject constructor(
                         session.apiUrl,
                         session.token,
                         filename,
-                        mimeType,
-                        fileBytes.size,
+                        normalized.mimeType,
+                        normalized.bytes.size,
                         512,
                         512
                     )
-                    api.putFileToPresignedUrl(presign.url, fileBytes, mimeType)
+                    api.putFileToPresignedUrl(presign.url, normalized.bytes, normalized.mimeType)
                     "${BuildConfig.MEZON_BASE_IMG_URL}/${presign.filename}"
                 }
             }
@@ -620,6 +625,68 @@ class DialogsController @Inject constructor(
             Log.e(TAG, "uploadDmGroupAvatar failed", e)
             DmGroupAvatarUploadResult.Failed
         }
+    }
+
+    private data class DmGroupAvatarUploadPayload(
+        val bytes: ByteArray,
+        val mimeType: String
+    )
+
+    private fun prepareDmGroupAvatarUpload(
+        contentResolver: ContentResolver,
+        uri: Uri,
+        sourceMimeType: String,
+        maxBytes: Int
+    ): DmGroupAvatarUploadPayload {
+        if (sourceMimeType.contains("heic", ignoreCase = true) || sourceMimeType.contains("heif", ignoreCase = true)) {
+            val jpegBytes = transcodeUriToJpeg(contentResolver, uri, maxBytes)
+                ?: throw RuntimeException("Cannot transcode image")
+            return DmGroupAvatarUploadPayload(jpegBytes, "image/jpeg")
+        }
+        val bytes = FileUtils.readContentUriBytesCapped(contentResolver, uri, maxBytes)
+        return DmGroupAvatarUploadPayload(bytes, sourceMimeType)
+    }
+
+    private fun transcodeUriToJpeg(
+        contentResolver: ContentResolver,
+        uri: Uri,
+        maxBytes: Int
+    ): ByteArray? {
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        contentResolver.openInputStream(uri)?.use { stream ->
+            BitmapFactory.decodeStream(stream, null, bounds)
+        } ?: return null
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+        val sampleSize = calculateSampleSize(bounds.outWidth, bounds.outHeight, 1024)
+        val options = BitmapFactory.Options().apply { inSampleSize = sampleSize }
+        val bitmap = contentResolver.openInputStream(uri)?.use { stream ->
+            BitmapFactory.decodeStream(stream, null, options)
+        } ?: return null
+        return bitmap.useCompressedJpeg(maxBytes)
+    }
+
+    private fun calculateSampleSize(width: Int, height: Int, maxSide: Int): Int {
+        var sampleSize = 1
+        while (width / sampleSize > maxSide || height / sampleSize > maxSide) {
+            sampleSize *= 2
+        }
+        return sampleSize
+    }
+
+    private fun Bitmap.useCompressedJpeg(maxBytes: Int): ByteArray? {
+        var quality = 92
+        while (quality >= 50) {
+            val output = ByteArrayOutputStream()
+            compress(Bitmap.CompressFormat.JPEG, quality, output)
+            val bytes = output.toByteArray()
+            if (bytes.size in 1..maxBytes) {
+                recycle()
+                return bytes
+            }
+            quality -= 10
+        }
+        recycle()
+        return null
     }
 
     suspend fun updateDmGroup(
