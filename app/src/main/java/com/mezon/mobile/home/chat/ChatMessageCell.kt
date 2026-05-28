@@ -651,6 +651,19 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
         val maxW = if (isInPinMode) rawMaxW.coerceAtMost(maxBubbleWidth(width)) else rawMaxW
         val maxH = maxW + LayoutHelper.dp(100)
 
+        // Multi-image grids (2/3/4) use a fixed grid geometry instead of the first
+        // image's aspect ratio: cells are square-ish and center-cropped, so deriving
+        // height from a single image squeezes the thumbnails (issue mezonai/mezon#13176).
+        val gridCount = msg.allImageAttachments.size.coerceAtMost(4)
+        if (gridCount > 1) {
+            val gap = LayoutHelper.dp(2)
+            val cellW = (maxW - gap) / 2
+            photoWidth = maxW
+            // 2 images -> two square cells side by side; 3/4 -> square container.
+            photoHeight = if (gridCount == 2) cellW else maxW
+            return
+        }
+
         val firstMedia = msg.allImageAttachments.firstOrNull()
         var imgW = firstMedia?.width ?: msg.attachmentWidth
         var imgH = firstMedia?.height ?: msg.attachmentHeight
@@ -768,16 +781,9 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
     }
 
     private fun computeMediaGridHeight() {
-        val gap = LayoutHelper.dp(2)
-        mediaGridTotalH = when (mediaGridCount) {
-            1 -> photoHeight
-            2 -> photoHeight
-            3, 4 -> {
-                val halfH = photoHeight / 2
-                halfH + gap + halfH
-            }
-            else -> photoHeight
-        }
+        // drawMediaGrid always lays the grid out within photoHeight for every cell
+        // count, so the measured height must match to avoid extra vertical padding.
+        mediaGridTotalH = photoHeight
     }
 
     private var spinnerAngle = 0f
