@@ -1272,7 +1272,9 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
             val ogp = ogpData!!
             val ogpTextW = (textWidth - OGP_ACCENT_W - OGP_PADDING * 2).coerceAtLeast(1)
             ogpTitlePaint.color = theme.textLink
+            ogpTitlePaint.textSize = currentContentPaint.textSize
             ogpDescPaint.color = theme.colorText
+            ogpDescPaint.textSize = theme.chatTimePaint.textSize
             val truncTitle = if (ogp.title.length > OGP_MAX_CHARS) ogp.title.substring(0, OGP_MAX_CHARS) else ogp.title
             ogpTitleLayout = StaticLayout.Builder.obtain(truncTitle, 0, truncTitle.length, ogpTitlePaint, ogpTextW)
                 .setMaxLines(2)

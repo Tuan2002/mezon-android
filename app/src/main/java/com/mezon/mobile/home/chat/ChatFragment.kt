@@ -355,6 +355,7 @@ open class ChatFragment : BaseFragment() {
     private var inputOgpUrl: String? = null
     private var inputOgpPreviewData: InputOgpPreview? = null
     private var dismissedInputOgpUrl: String? = null
+    private var failedInputOgpUrl: String? = null
     private var inputOgpFetchJob: Job? = null
     private var inputOgpImageLoad: MezonImageLoader.Cancellable = MezonImageLoader.Cancellable.EMPTY
 
@@ -1673,7 +1674,7 @@ open class ChatFragment : BaseFragment() {
             setImageDrawable(drawable)
             setBackgroundColor(Color.TRANSPARENT)
             scaleType = ImageView.ScaleType.CENTER_INSIDE
-            setPadding(LayoutHelper.dp(6f), LayoutHelper.dp(6f), LayoutHelper.dp(6f), LayoutHelper.dp(6f))
+            setPadding(LayoutHelper.dp(12f), LayoutHelper.dp(12f), LayoutHelper.dp(12f), LayoutHelper.dp(12f))
             setOnClickListener {
                 dismissedInputOgpUrl = inputOgpUrl
                 clearInputOgpPreview()
@@ -1681,7 +1682,7 @@ open class ChatFragment : BaseFragment() {
         }
         inputOgpBar?.addView(
             inputOgpClose,
-            LinearLayout.LayoutParams(LayoutHelper.dp(28f), LayoutHelper.dp(28f)).apply {
+            LinearLayout.LayoutParams(INPUT_OGP_IMAGE_SIZE, INPUT_OGP_IMAGE_SIZE).apply {
                 marginStart = LayoutHelper.dp(6f)
             }
         )
@@ -2657,6 +2658,7 @@ open class ChatFragment : BaseFragment() {
         inputOgpUrl = null
         inputOgpPreviewData = null
         dismissedInputOgpUrl = null
+        failedInputOgpUrl = null
         suggestionsPopup = null
         suggestionsAdapter = null
         EmbedFormUtil.clearAll()
@@ -4173,6 +4175,7 @@ open class ChatFragment : BaseFragment() {
         mentionTrackers.clear()
         hashtagTrackers.clear()
         dismissedInputOgpUrl = null
+        failedInputOgpUrl = null
         clearInputOgpPreview()
         clearReplyState()
     }
@@ -4692,10 +4695,14 @@ open class ChatFragment : BaseFragment() {
         if (candidate == null) {
             inputOgpUrl = null
             dismissedInputOgpUrl = null
+            failedInputOgpUrl = null
             clearInputOgpPreview()
             return
         }
         if (dismissedInputOgpUrl != null && dismissedInputOgpUrl == candidate) {
+            return
+        }
+        if (failedInputOgpUrl != null && failedInputOgpUrl == candidate) {
             return
         }
         if (candidate == inputOgpUrl && inputOgpBar?.visibility == View.VISIBLE) {
@@ -4710,6 +4717,7 @@ open class ChatFragment : BaseFragment() {
             if (!isActive) return@launch
             if (inputOgpUrl != candidate) return@launch
             if (preview == null) {
+                failedInputOgpUrl = candidate
                 clearInputOgpPreview()
                 return@launch
             }
@@ -4783,6 +4791,11 @@ open class ChatFragment : BaseFragment() {
             conn.requestMethod = "GET"
             conn.setRequestProperty("User-Agent", "Mozilla/5.0")
             conn.connect()
+            val contentType = conn.contentType
+            if (contentType != null && !contentType.contains("html", ignoreCase = true)) {
+                conn.disconnect()
+                return null
+            }
             val html = conn.inputStream.bufferedReader().use { reader ->
                 val sb = StringBuilder()
                 val buffer = CharArray(4096)
@@ -4812,7 +4825,7 @@ open class ChatFragment : BaseFragment() {
             val title = ogTitle.ifBlank { titleTag }
             val desc = ogDesc.trim()
             val image = ogImage.trim()
-            if (title.isBlank() && desc.isBlank() && image.isBlank()) return null
+            if (title.isBlank() || desc.isBlank() || image.isBlank()) return null
             InputOgpPreview(url = url, title = title, description = desc, imageUrl = image)
         } catch (_: Exception) {
             null
