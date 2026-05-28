@@ -465,7 +465,11 @@ class ClanSettingFragment : BaseFragment() {
 
     private fun openInvitePeople() {
         val ctx = getContext() ?: return
-        val clan = clansController.clans.value.firstOrNull { it.clanId == clanId } ?: return
+        val clan = clansController.clans.value.firstOrNull { it.clanId == clanId }
+        if (clan == null) {
+            MezonToast.show(this, ToastOverlay.ToastType.ERROR, getString(R.string.invite_clan_not_loaded))
+            return
+        }
         InvitePeopleBottomSheet(
             ctx,
             invitePeopleController,

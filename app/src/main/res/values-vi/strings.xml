@@ -352,6 +352,7 @@
     <string name="invite_btn_sent">Đã gửi</string>
     <string name="invite_create_link_error">Không tạo được link mời. Thử lại.</string>
     <string name="invite_send_error">Không gửi được lời mời. Thử lại.</string>
+    <string name="invite_clan_not_loaded">Chưa có thông tin clan. Thử lại.</string>
     <string name="clan_roles_description">Dùng vai trò để nhóm thành viên clan và gán quyền</string>
     <string name="clan_roles_default_role">Quyền mặc định cho mọi thành viên clan</string>
     <string name="clan_roles_header_count">Vai trò - %1$d</string>

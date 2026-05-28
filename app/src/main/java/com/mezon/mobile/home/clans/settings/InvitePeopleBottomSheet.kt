@@ -21,6 +21,7 @@ import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.TextView
 import android.widget.Toast
+import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.mezon.mobile.R
@@ -48,6 +49,10 @@ class InvitePeopleBottomSheet(
     private val clanName: String,
     private val clanLogo: String,
 ) : BottomSheet(context) {
+
+    companion object {
+        private const val PAYLOAD_ACTION = "action"
+    }
 
     private val theme = ThemeColors.instance
     private val sheetScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -355,21 +360,70 @@ class InvitePeopleBottomSheet(
         }
     }
 
-    private inner class TargetAdapter : RecyclerView.Adapter<TargetAdapter.VH>() {
+    private inner class InviteTargetViewHolder(
+        v: View,
+        val avatar: AvatarView,
+        val titleTv: TextView,
+        val subTv: TextView,
+        val actionBtn: TextView,
+    ) : RecyclerView.ViewHolder(v)
+
+    private inner class TargetAdapter : RecyclerView.Adapter<InviteTargetViewHolder>() {
         private var rows: List<InviteDmTarget> = emptyList()
         private var sentIds: Set<String> = emptySet()
         private var sendingId: String? = null
 
-        fun submit(state: InvitePeopleUiState) {
-            rows = state.dmTargets
-            sentIds = state.sentTargetIds
-            sendingId = state.sendingTargetId
-            notifyDataSetChanged()
+        init {
+            setHasStableIds(true)
         }
+
+        fun submit(state: InvitePeopleUiState) {
+            val newRows = state.dmTargets
+            val newSent = state.sentTargetIds
+            val newSending = state.sendingTargetId
+
+            val listUnchanged = rows.size == newRows.size &&
+                rows.zip(newRows).all { (old, new) -> old.rowId == new.rowId && old == new }
+
+            if (listUnchanged) {
+                val prevSent = sentIds
+                val prevSending = sendingId
+                sentIds = newSent
+                sendingId = newSending
+                if (prevSent != newSent || prevSending != newSending) {
+                    notifyActionStateChanged(prevSent, newSent, prevSending, newSending)
+                }
+                return
+            }
+
+            val diff = DiffUtil.calculateDiff(TargetDiffCallback(rows, newRows))
+            rows = newRows
+            sentIds = newSent
+            sendingId = newSending
+            diff.dispatchUpdatesTo(this)
+        }
+
+        private fun notifyActionStateChanged(
+            prevSent: Set<String>,
+            newSent: Set<String>,
+            prevSending: String?,
+            newSending: String?,
+        ) {
+            rows.forEachIndexed { index, target ->
+                val id = target.rowId
+                val sentChanged = prevSent.contains(id) != newSent.contains(id)
+                val sendingChanged = prevSending == id || newSending == id
+                if (sentChanged || sendingChanged) {
+                    notifyItemChanged(index, PAYLOAD_ACTION)
+                }
+            }
+        }
+
+        override fun getItemId(position: Int): Long = rows[position].rowId.hashCode().toLong()
 
         override fun getItemCount() = rows.size
 
-        override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VH {
+        override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): InviteTargetViewHolder {
             val row = LinearLayout(context).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
@@ -416,14 +470,19 @@ class InvitePeopleBottomSheet(
                 gravity = Gravity.CENTER_VERTICAL
             })
 
-            return VH(row, avatar, titleTv, subTv, actionBtn)
+            return InviteTargetViewHolder(row, avatar, titleTv, subTv, actionBtn)
         }
 
-        override fun onBindViewHolder(holder: VH, position: Int) {
-            val target = rows[position]
-            val sent = sentIds.contains(target.rowId)
-            val sending = sendingId == target.rowId
+        override fun onBindViewHolder(holder: InviteTargetViewHolder, position: Int, payloads: MutableList<Any>) {
+            if (payloads.contains(PAYLOAD_ACTION)) {
+                bindActionButton(holder, rows[position])
+                return
+            }
+            onBindViewHolder(holder, position)
+        }
 
+        override fun onBindViewHolder(holder: InviteTargetViewHolder, position: Int) {
+            val target = rows[position]
             holder.titleTv.text = target.title
             if (!target.subtitle.isNullOrBlank()) {
                 holder.subTv.visibility = View.VISIBLE
@@ -436,8 +495,17 @@ class InvitePeopleBottomSheet(
             holder.avatar.setInfo(avatarKey, target.title)
             if (!target.avatarUrl.isNullOrBlank()) {
                 holder.avatar.setImageUrl(target.avatarUrl)
+            } else {
+                holder.avatar.setImageUrl(null)
             }
 
+            bindActionButton(holder, target)
+        }
+
+        private fun bindActionButton(holder: InviteTargetViewHolder, target: InviteDmTarget) {
+            val sent = sentIds.contains(target.rowId)
+            val sending = sendingId == target.rowId
+            holder.actionBtn.setOnClickListener(null)
             when {
                 sent -> {
                     holder.actionBtn.text = context.getString(R.string.invite_btn_sent)
@@ -483,13 +551,19 @@ class InvitePeopleBottomSheet(
                 }
             }
         }
+    }
 
-        inner class VH(
-            v: View,
-            val avatar: AvatarView,
-            val titleTv: TextView,
-            val subTv: TextView,
-            val actionBtn: TextView,
-        ) : RecyclerView.ViewHolder(v)
+    private class TargetDiffCallback(
+        private val oldRows: List<InviteDmTarget>,
+        private val newRows: List<InviteDmTarget>,
+    ) : DiffUtil.Callback() {
+        override fun getOldListSize() = oldRows.size
+        override fun getNewListSize() = newRows.size
+
+        override fun areItemsTheSame(oldItemPosition: Int, newItemPosition: Int): Boolean =
+            oldRows[oldItemPosition].rowId == newRows[newItemPosition].rowId
+
+        override fun areContentsTheSame(oldItemPosition: Int, newItemPosition: Int): Boolean =
+            oldRows[oldItemPosition] == newRows[newItemPosition]
     }
 }
