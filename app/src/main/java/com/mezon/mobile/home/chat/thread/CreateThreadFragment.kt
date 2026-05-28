@@ -1705,7 +1705,7 @@ class CreateThreadFragment : BaseFragment() {
         } else {
             chatController.sendMessage(
                 threadChannelId, clanId, CHANNEL_TYPE_THREAD, threadPrivate, cleanedText,
-                refs, mentions, emojiMarkers, mdMarkers, hashtags
+                refs, mentions, emojiMarkers, mdMarkers, null, hashtags
             )
         }
         composerField.text?.clear()
@@ -1797,6 +1797,7 @@ class CreateThreadFragment : BaseFragment() {
                 mentions,
                 emojiMarkers,
                 mdMarkers,
+                null,
                 hashtags,
                 topicId = topicId
             )
