@@ -52,6 +52,8 @@ import com.mezon.mobile.util.buildTextContentWithEmojis
 import com.mezon.mobile.util.mergePendingMentionsIntoContent
 import com.mezon.mobile.util.mergeShareContactEmbedIntoContent
 import com.mezon.mobile.util.isShareContactMessage
+import com.mezon.mobile.util.isEmbedOrComponentsPayload
+import com.mezon.mobile.util.parseContentText
 import com.mezon.mezon.api.ChannelMessage
 import com.mezon.mezon.api.CreatePollResponse
 import com.mezon.mobile.home.chat.poll.buildPollMessageContent
@@ -321,6 +323,8 @@ class ChatController @Inject constructor(
                         session.token,
                         channelId,
                         clanId,
+                        messageId = messageId,
+                        direction = DIRECTION_AROUND,
                         limit = PAGE_SIZE
                     )
                     val entity = response.messagesList
@@ -2215,6 +2219,55 @@ class ChatController @Inject constructor(
             } finally {
                 pendingKey?.let { clearPendingApiReaction(it) }
             }
+        }
+    }
+
+    suspend fun sendThreadSeedMessage(
+        channelId: Long,
+        clanId: Long,
+        channelType: Int,
+        isChannelPrivate: Boolean,
+        seed: MessageEntity
+    ): Boolean {
+        val wire = seed.content
+        val attProtos = attachmentsFromEntity(seed)
+        val hasText = parseContentText(wire).trim().isNotEmpty() ||
+            isEmbedOrComponentsPayload(wire) ||
+            wire.contains("\"lk\"")
+        if (!hasText && attProtos.isEmpty()) return true
+        val mode = channelTypeToStreamMode(channelType)
+        val isPublic = !isChannelPrivate
+        val mentionsProto = mentionsFromForwardContent(wire).takeUnless { it.isEmpty() }
+        val mentionsData = messageMentionsToData(mentionsProto)
+        return try {
+            sessionManager.withAutoRefresh { session ->
+                ensureActiveArchivedThreadIfNeeded(session.apiUrl, session.token, channelId, clanId, channelType)
+                ensureMentionedUsersInThread(
+                    session.apiUrl,
+                    session.token,
+                    channelId,
+                    clanId,
+                    channelType,
+                    mentionsData
+                )
+                val request = channelMessageSend {
+                    this.clanId = clanId
+                    this.channelId = channelId
+                    this.mode = mode
+                    this.isPublic = isPublic
+                    this.content = wire
+                    this.code = seed.code
+                    mentionsProto?.let { if (it.isNotEmpty()) mentions.addAll(it) }
+                    if (attProtos.isNotEmpty()) attachments.addAll(attProtos)
+                    mentionEveryone = extractMentionEveryoneFromForwardContent(wire)
+                }
+                channelSend(session.apiUrl, session.token, request)
+                markForwardTargetUsed(channelId, channelType)
+            }
+            true
+        } catch (e: Exception) {
+            Log.e(TAG, "sendThreadSeedMessage failed channel=$channelId msg=${seed.id}", e)
+            false
         }
     }
 
