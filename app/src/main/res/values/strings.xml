@@ -418,7 +418,7 @@
     <string name="community_settings_vanity_hint">e.g. my-clan (lowercase, letters, numbers, hyphens)</string>
     <string name="community_settings_pick_banner">Pick Banner Image</string>
     <string name="community_settings_enabled_success">Community enabled successfully!</string>
-    <string name="community_settings_saved_success">Community settings saved!</string>
+    <string name="community_settings_saved_success">Community settings updated!</string>
     <string name="community_settings_error_required">This field is required</string>
     <string name="community_settings_error_fill_required">Please fill all required fields</string>
     <string name="community_settings_error_banner">Banner is required</string>

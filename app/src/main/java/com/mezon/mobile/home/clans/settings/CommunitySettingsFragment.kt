@@ -29,7 +29,9 @@ import com.mezon.mobile.ui.cells.ActionBarView
 import com.mezon.mobile.ui.cells.InputCell
 import com.mezon.mobile.ui.cells.MezonIcon
 import com.mezon.mobile.ui.cells.ToastOverlay
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class CommunitySettingsFragment : BaseFragment() {
 
@@ -47,13 +49,21 @@ class CommunitySettingsFragment : BaseFragment() {
     private var clanId = 0L
     private lateinit var controller: CommunitySettingsController
     private lateinit var permissionPolicy: PermissionPolicy
+    private lateinit var ioDispatcher: CoroutineDispatcher
+    private lateinit var mainDispatcher: CoroutineDispatcher
 
     private lateinit var rootContainer: FrameLayout
     private var currentContentView: View? = null
+    private var displayedMode: CommunityScreenMode? = null
+    private var loadingView: View? = null
+    private var landingView: View? = null
+    private var formHolder: FormHolder? = null
 
     override fun onInject(entryPoint: FragmentEntryPoint) {
         controller = entryPoint.communitySettingsController()
         permissionPolicy = entryPoint.permissionPolicy()
+        ioDispatcher = entryPoint.ioDispatcher()
+        mainDispatcher = entryPoint.mainDispatcher()
     }
 
     override fun onFragmentCreate(): Boolean {
@@ -76,7 +86,7 @@ class CommunitySettingsFragment : BaseFragment() {
             setCenterTitle(true)
             setMenuOnItemClick(object : ActionBarView.ActionBarMenuOnItemClick() {
                 override fun onItemClick(id: Int) {
-                    if (id == -1) finishFragment()
+                    if (id == -1) onToolbarBackPressed()
                 }
             })
         }
@@ -107,20 +117,67 @@ class CommunitySettingsFragment : BaseFragment() {
         return outerRoot
     }
 
+    private fun onToolbarBackPressed() {
+        when (controller.uiState.value.mode) {
+            CommunityScreenMode.ENABLE_FORM -> controller.onCancelEnableForm()
+            else -> finishFragment()
+        }
+    }
+
     private fun renderMode(state: CommunityUiState) {
         val ctx = getContext() ?: return
-        val newContent: View = when (state.mode) {
-            CommunityScreenMode.LOADING -> buildLoadingView(ctx)
-            CommunityScreenMode.LANDING,
-            CommunityScreenMode.ENABLE_FORM -> buildFormView(ctx, state, enableMode = true)
-            CommunityScreenMode.ENABLED_EDITOR -> buildFormView(ctx, state, enableMode = false)
+        val mode = state.mode
+        if (mode == displayedMode) {
+            when (mode) {
+                CommunityScreenMode.ENABLE_FORM,
+                CommunityScreenMode.ENABLED_EDITOR -> formHolder?.patch(state, force = false)
+                else -> Unit
+            }
+            return
+        }
+        val previousMode = displayedMode
+        displayedMode = mode
+        when (mode) {
+            CommunityScreenMode.LOADING -> showLoading(ctx)
+            CommunityScreenMode.LANDING -> showLanding(ctx, force = previousMode != CommunityScreenMode.LANDING)
+            CommunityScreenMode.ENABLE_FORM,
+            CommunityScreenMode.ENABLED_EDITOR -> showForm(ctx, state)
+        }
+    }
+
+    private fun showLoading(ctx: Context) {
+        formHolder = null
+        attachContent(loadingView ?: buildLoadingView(ctx).also { loadingView = it })
+    }
+
+    /** Hero + Enable CTA — never the enable form. */
+    private fun showLanding(ctx: Context, force: Boolean) {
+        formHolder = null
+        val landing = landingView ?: buildLandingView(ctx).also { landingView = it }
+        attachContent(landing, force)
+    }
+
+    private fun showForm(ctx: Context, state: CommunityUiState) {
+        val holder = ensureFormHolder(ctx)
+        attachContent(holder.root)
+        holder.patch(state, force = true)
+    }
+
+    private fun attachContent(view: View, force: Boolean = false) {
+        if (!force && rootContainer.childCount == 1 && rootContainer.getChildAt(0) === view) {
+            currentContentView = view
+            return
         }
         rootContainer.removeAllViews()
         rootContainer.addView(
-            newContent,
-            FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
+            view,
+            FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT),
         )
-        currentContentView = newContent
+        currentContentView = view
+    }
+
+    private fun ensureFormHolder(ctx: Context): FormHolder {
+        return formHolder ?: createFormHolder(ctx).also { formHolder = it }
     }
 
     private fun buildLoadingView(ctx: Context): View {
@@ -141,7 +198,6 @@ class CommunitySettingsFragment : BaseFragment() {
             setBackgroundColor(themeColors.background)
         }
 
-        // Banner tím với ảnh community
         val bannerFrame = FrameLayout(ctx).apply {
             background = GradientDrawable().apply {
                 shape = GradientDrawable.RECTANGLE
@@ -164,7 +220,6 @@ class CommunitySettingsFragment : BaseFragment() {
             LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT)
         )
 
-        // Phần text + button bên dưới
         val content = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
@@ -205,25 +260,20 @@ class CommunitySettingsFragment : BaseFragment() {
         return root
     }
 
-    private fun buildFormView(ctx: Context, state: CommunityUiState, enableMode: Boolean): View {
-        val outerLayout = LinearLayout(ctx).apply {
-            orientation = LinearLayout.VERTICAL
-        }
+    private fun createFormHolder(ctx: Context): FormHolder {
+        val outerLayout = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
 
         val scroll = ScrollView(ctx).apply {
             isFillViewport = true
             overScrollMode = View.OVER_SCROLL_NEVER
         }
-        val scrollContent = LinearLayout(ctx).apply {
-            orientation = LinearLayout.VERTICAL
-        }
+        val scrollContent = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
         scroll.addView(
             scrollContent,
-            LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+            LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT),
         )
         outerLayout.addView(scroll, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, 0, 1f))
 
-        // Ảnh community.png tím ở đầu trang, bo góc
         val heroFrame = FrameLayout(ctx).apply {
             clipToOutline = true
             outlineProvider = object : android.view.ViewOutlineProvider() {
@@ -245,12 +295,14 @@ class CommunitySettingsFragment : BaseFragment() {
                 scaleType = ImageView.ScaleType.CENTER_CROP
                 alpha = 0.92f
             },
-            FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, LayoutHelper.dp(180f))
+            FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, LayoutHelper.dp(180f)),
         )
         val heroPad = LayoutHelper.dp(16f)
-        scrollContent.addView(heroFrame, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, 0f, Gravity.NO_GRAVITY, heroPad.toFloat(), 16f, heroPad.toFloat(), 16f))
+        scrollContent.addView(
+            heroFrame,
+            LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, 0f, Gravity.NO_GRAVITY, heroPad.toFloat(), 16f, heroPad.toFloat(), 16f),
+        )
 
-        // Các field phía dưới có padding ngang
         val fieldsLayout = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
             val pad = LayoutHelper.dp(16)
@@ -258,149 +310,20 @@ class CommunitySettingsFragment : BaseFragment() {
         }
         scrollContent.addView(fieldsLayout, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT))
 
-        // Banner section
-        val bannerSection = buildBannerSection(ctx, state)
-        fieldsLayout.addView(bannerSection, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, 0f, Gravity.NO_GRAVITY, 0f, 0f, 0f, 16f))
-
-        if (state.fieldErrors.banner) {
-            fieldsLayout.addView(buildErrorText(ctx, getString(R.string.community_settings_error_banner)),
-                LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, 0f, Gravity.NO_GRAVITY, 0f, 0f, 0f, 8f))
+        val bannerImageView = ImageView(ctx).apply {
+            scaleType = ImageView.ScaleType.CENTER_CROP
         }
-
-        // Description field
-        val descInput = InputCell(ctx, themeColors).apply {
-            setLabel(getString(R.string.community_settings_description_label), required = true)
-            setTextarea(true, maxChars = 100)
-            editText.hint = getString(R.string.community_settings_description_hint)
-            editText.setText(state.draft.description)
-            if (state.fieldErrors.description) setError(getString(R.string.community_settings_error_required))
-            onTextChanged = { controller.onDescriptionChanged(it) }
-            editText.setOnFocusChangeListener { _, hasFocus ->
-                if (!hasFocus) controller.saveDescriptionOnBlur(clanId)
-            }
+        val bannerCameraIcon = ImageView(ctx).apply {
+            setImageDrawable(MezonIcon.cameraIcon.getDrawable(ctx, themeColors.onSurfaceVariant))
+            scaleType = ImageView.ScaleType.CENTER
         }
-        fieldsLayout.addView(descInput, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, 0f, Gravity.NO_GRAVITY, 0f, 0f, 0f, 16f))
-
-        // About field
-        val aboutInput = InputCell(ctx, themeColors).apply {
-            setLabel(getString(R.string.community_settings_about_label), required = true)
-            setTextarea(true, maxChars = 300)
-            editText.hint = getString(R.string.community_settings_about_hint)
-            editText.setText(state.draft.about)
-            if (state.fieldErrors.about) setError(getString(R.string.community_settings_error_required))
-            onTextChanged = { controller.onAboutChanged(it) }
-            editText.setOnFocusChangeListener { _, hasFocus ->
-                if (!hasFocus) controller.saveAboutOnBlur(clanId)
-            }
+        val bannerRemoveBtn = ImageView(ctx).apply {
+            setImageDrawable(MezonIcon.circleXIcon.getDrawable(ctx, themeColors.error))
+            scaleType = ImageView.ScaleType.CENTER_INSIDE
+            elevation = LayoutHelper.dpf(4f)
+            isClickable = true
+            setOnClickListener { controller.removeBanner(clanId) }
         }
-        fieldsLayout.addView(aboutInput, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, 0f, Gravity.NO_GRAVITY, 0f, 0f, 0f, 16f))
-
-        // Vanity URL field
-        val vanityHint = TextView(ctx).apply {
-            text = getString(R.string.community_settings_vanity_hint)
-            textSize = 12f
-            setTextColor(themeColors.onSurfaceVariant)
-            setPadding(0, 0, 0, LayoutHelper.dp(4f))
-        }
-        fieldsLayout.addView(vanityHint, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, 0f, Gravity.NO_GRAVITY, 0f, 0f, 0f, 4f))
-
-        val vanityInput = InputCell(ctx, themeColors).apply {
-            setLabel(getString(R.string.community_settings_vanity_label), required = true)
-            setMaxCharacter(50)
-            setShowCharacterCount(true)
-            editText.hint = "my-awesome-community"
-            editText.setText(state.draft.shortUrl)
-            if (state.fieldErrors.shortUrl) setError(getString(R.string.community_settings_error_required))
-            onTextChanged = { controller.onShortUrlChanged(it) }
-            editText.setOnFocusChangeListener { _, hasFocus ->
-                if (!hasFocus) controller.saveShortUrlOnBlur(clanId)
-            }
-        }
-        fieldsLayout.addView(vanityInput, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, 0f, Gravity.NO_GRAVITY, 0f, 0f, 0f, 24f))
-
-        // Bottom buttons
-        val bottomBar = LinearLayout(ctx).apply {
-            orientation = LinearLayout.VERTICAL
-            val pad = LayoutHelper.dp(16)
-            setPadding(pad, 0, pad, pad)
-        }
-
-        if (enableMode) {
-            bottomBar.addView(
-                buildPrimaryButton(ctx, getString(R.string.community_settings_enable_and_save)) {
-                    if (!controller.uiState.value.server.isSaving) {
-                        controller.confirmEnableAndSave(clanId) { ok, msg ->
-                            if (ok) {
-                                MezonToast.show(this@CommunitySettingsFragment, ToastOverlay.ToastType.SUCCESS, getString(R.string.community_settings_enabled_success))
-                            } else if (msg != null) {
-                                MezonToast.show(this@CommunitySettingsFragment, ToastOverlay.ToastType.ERROR, msg)
-                            } else {
-                                MezonToast.show(this@CommunitySettingsFragment, ToastOverlay.ToastType.ERROR, getString(R.string.community_settings_error_fill_required))
-                            }
-                        }
-                    }
-                },
-                LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, 52)
-            )
-        } else {
-            if (state.showSaveBar) {
-                bottomBar.addView(
-                    buildPrimaryButton(ctx, getString(R.string.common_save)) {
-                        controller.saveChanges(clanId) { ok, msg ->
-                            if (ok) {
-                                MezonToast.show(this@CommunitySettingsFragment, ToastOverlay.ToastType.SUCCESS, getString(R.string.community_settings_saved_success))
-                            } else if (msg != null) {
-                                MezonToast.show(this@CommunitySettingsFragment, ToastOverlay.ToastType.ERROR, msg)
-                            } else {
-                                MezonToast.show(this@CommunitySettingsFragment, ToastOverlay.ToastType.ERROR, getString(R.string.community_settings_error_fill_required))
-                            }
-                        }
-                    },
-                    LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, 52, 0f, Gravity.NO_GRAVITY, 0f, 0f, 0f, 8f)
-                )
-                bottomBar.addView(
-                    buildSecondaryButton(ctx, getString(R.string.common_reset)) {
-                        controller.resetDraft()
-                    },
-                    LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, 48, 0f, Gravity.NO_GRAVITY, 0f, 0f, 0f, 8f)
-                )
-            }
-            bottomBar.addView(
-                buildDestructiveButton(ctx, getString(R.string.community_settings_disable)) {
-                    if (!state.showSaveBar) {
-                        controller.disableCommunity(clanId) { ok, msg ->
-                            if (!ok && msg != null) {
-                                MezonToast.show(this@CommunitySettingsFragment, ToastOverlay.ToastType.ERROR, msg)
-                            }
-                        }
-                    }
-                },
-                LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, 48)
-            )
-        }
-
-        outerLayout.addView(bottomBar, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT))
-
-        return outerLayout
-    }
-
-    private fun buildBannerSection(ctx: Context, state: CommunityUiState): View {
-        val container = LinearLayout(ctx).apply {
-            orientation = LinearLayout.VERTICAL
-        }
-
-        container.addView(
-            TextView(ctx).apply {
-                text = getString(R.string.community_settings_banner_label)
-                textSize = 14f
-                typeface = android.graphics.Typeface.DEFAULT_BOLD
-                setTextColor(themeColors.onSurfaceVariant)
-                setPadding(0, 0, 0, LayoutHelper.dp(8f))
-            },
-            LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT)
-        )
-
-        val bannerHeight = LayoutHelper.dp(140f)
         val bannerFrame = FrameLayout(ctx).apply {
             background = GradientDrawable().apply {
                 shape = GradientDrawable.RECTANGLE
@@ -411,66 +334,239 @@ class CommunitySettingsFragment : BaseFragment() {
             isClickable = true
             isFocusable = true
             setOnClickListener { openBannerPicker() }
-        }
-
-        val bannerImageView = ImageView(ctx).apply {
-            scaleType = ImageView.ScaleType.CENTER_CROP
-            id = View.generateViewId()
-        }
-        bannerFrame.addView(
-            bannerImageView,
-            FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
-        )
-
-        val previewUrl = state.draft.bannerPreviewUrl
-        if (!previewUrl.isNullOrBlank()) {
-            MezonImageLoader.getInstance(ctx).load(previewUrl, 0, bannerHeight, onSuccess = { bitmap ->
-                bannerImageView.setImageBitmap(bitmap)
-            })
-        } else {
-            val cameraIcon = ImageView(ctx).apply {
-                setImageDrawable(MezonIcon.cameraIcon.getDrawable(ctx, themeColors.onSurfaceVariant))
-                scaleType = ImageView.ScaleType.CENTER
-            }
-            bannerFrame.addView(
-                cameraIcon,
-                FrameLayout.LayoutParams(LayoutHelper.dp(32f), LayoutHelper.dp(32f), Gravity.CENTER)
-            )
-        }
-
-        if (!previewUrl.isNullOrBlank()) {
-            val removeBtn = ImageView(ctx).apply {
-                setImageDrawable(MezonIcon.circleXIcon.getDrawable(ctx, themeColors.error))
-                scaleType = ImageView.ScaleType.CENTER_INSIDE
-                elevation = LayoutHelper.dpf(4f)
-                isClickable = true
-                setOnClickListener { controller.removeBanner(clanId) }
-            }
-            bannerFrame.addView(
-                removeBtn,
+            addView(bannerImageView, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
+            addView(bannerCameraIcon, FrameLayout.LayoutParams(LayoutHelper.dp(32f), LayoutHelper.dp(32f), Gravity.CENTER))
+            addView(
+                bannerRemoveBtn,
                 FrameLayout.LayoutParams(LayoutHelper.dp(28f), LayoutHelper.dp(28f), Gravity.TOP or Gravity.END).apply {
                     topMargin = LayoutHelper.dp(8f)
                     rightMargin = LayoutHelper.dp(8f)
-                }
+                },
             )
         }
+        val bannerErrorTv = buildErrorText(ctx, getString(R.string.community_settings_error_banner)).apply {
+            visibility = View.GONE
+        }
 
-        container.addView(
-            bannerFrame,
-            LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, 140)
+        fieldsLayout.addView(
+            LinearLayout(ctx).apply {
+                orientation = LinearLayout.VERTICAL
+                addView(
+                    TextView(ctx).apply {
+                        text = getString(R.string.community_settings_banner_label)
+                        textSize = 14f
+                        typeface = android.graphics.Typeface.DEFAULT_BOLD
+                        setTextColor(themeColors.onSurfaceVariant)
+                        setPadding(0, 0, 0, LayoutHelper.dp(8f))
+                    },
+                    LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT),
+                )
+                addView(bannerFrame, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, 140))
+                addView(bannerErrorTv, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, 0f, Gravity.NO_GRAVITY, 0f, 0f, 0f, 8f))
+                addView(
+                    TextView(ctx).apply {
+                        text = getString(R.string.community_settings_banner_hint)
+                        textSize = 12f
+                        setTextColor(themeColors.onSurfaceVariant)
+                        setPadding(0, LayoutHelper.dp(4f), 0, 0)
+                    },
+                    LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT),
+                )
+            },
+            LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, 0f, Gravity.NO_GRAVITY, 0f, 0f, 0f, 16f),
         )
 
-        container.addView(
+        val descInput = InputCell(ctx, themeColors).apply {
+            setLabel(getString(R.string.community_settings_description_label), required = true)
+            setTextarea(true, maxChars = 300)
+            editText.hint = getString(R.string.community_settings_description_hint)
+            onTextChanged = { controller.onDescriptionChanged(it) }
+            editText.setOnFocusChangeListener { _, hasFocus ->
+                if (!hasFocus) controller.saveDescriptionOnBlur(clanId)
+            }
+        }
+        fieldsLayout.addView(descInput, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, 0f, Gravity.NO_GRAVITY, 0f, 0f, 0f, 16f))
+
+        val aboutInput = InputCell(ctx, themeColors).apply {
+            setLabel(getString(R.string.community_settings_about_label), required = true)
+            setTextarea(true, maxChars = 100)
+            editText.hint = getString(R.string.community_settings_about_hint)
+            onTextChanged = { controller.onAboutChanged(it) }
+            editText.setOnFocusChangeListener { _, hasFocus ->
+                if (!hasFocus) controller.saveAboutOnBlur(clanId)
+            }
+        }
+        fieldsLayout.addView(aboutInput, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, 0f, Gravity.NO_GRAVITY, 0f, 0f, 0f, 16f))
+
+        fieldsLayout.addView(
             TextView(ctx).apply {
-                text = getString(R.string.community_settings_banner_hint)
+                text = getString(R.string.community_settings_vanity_hint)
                 textSize = 12f
                 setTextColor(themeColors.onSurfaceVariant)
-                setPadding(0, LayoutHelper.dp(4f), 0, 0)
+                setPadding(0, 0, 0, LayoutHelper.dp(4f))
             },
-            LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT)
+            LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, 0f, Gravity.NO_GRAVITY, 0f, 0f, 0f, 4f),
         )
 
-        return container
+        val vanityInput = InputCell(ctx, themeColors).apply {
+            setLabel(getString(R.string.community_settings_vanity_label), required = true)
+            setMaxCharacter(50)
+            setShowCharacterCount(true)
+            editText.hint = "my-awesome-community"
+            onTextChanged = { controller.onShortUrlChanged(it) }
+            editText.setOnFocusChangeListener { _, hasFocus ->
+                if (!hasFocus) controller.saveShortUrlOnBlur(clanId)
+            }
+        }
+        fieldsLayout.addView(vanityInput, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, 0f, Gravity.NO_GRAVITY, 0f, 0f, 0f, 24f))
+
+        val bottomBar = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            val pad = LayoutHelper.dp(16)
+            setPadding(pad, 0, pad, pad)
+        }
+        val enableBtn = buildPrimaryButton(ctx, getString(R.string.community_settings_enable_and_save)) {
+            if (!controller.uiState.value.server.isSaving) {
+                controller.confirmEnableAndSave(clanId) { ok, msg ->
+                    if (ok) {
+                        MezonToast.show(this@CommunitySettingsFragment, ToastOverlay.ToastType.SUCCESS, getString(R.string.community_settings_enabled_success))
+                    } else if (msg != null) {
+                        MezonToast.show(this@CommunitySettingsFragment, ToastOverlay.ToastType.ERROR, msg)
+                    } else {
+                        MezonToast.show(this@CommunitySettingsFragment, ToastOverlay.ToastType.ERROR, getString(R.string.community_settings_error_fill_required))
+                    }
+                }
+            }
+        }
+        val saveBtn = buildPrimaryButton(ctx, getString(R.string.common_save)) {
+            controller.saveChanges(clanId) { ok, msg ->
+                if (ok) {
+                    MezonToast.show(this@CommunitySettingsFragment, ToastOverlay.ToastType.SUCCESS, getString(R.string.community_settings_saved_success))
+                } else if (msg != null) {
+                    MezonToast.show(this@CommunitySettingsFragment, ToastOverlay.ToastType.ERROR, msg)
+                } else {
+                    MezonToast.show(this@CommunitySettingsFragment, ToastOverlay.ToastType.ERROR, getString(R.string.community_settings_error_fill_required))
+                }
+            }
+        }
+        lateinit var holderRef: FormHolder
+        val resetBtn = buildSecondaryButton(ctx, getString(R.string.common_reset)) {
+            controller.resetDraft()
+            holderRef.patch(controller.uiState.value, force = true)
+        }
+        val disableBtn = buildDestructiveButton(ctx, getString(R.string.community_settings_disable)) {
+            if (!controller.uiState.value.showSaveBar) {
+                controller.disableCommunity(clanId) { ok, msg ->
+                    if (!ok && msg != null) {
+                        MezonToast.show(this@CommunitySettingsFragment, ToastOverlay.ToastType.ERROR, msg)
+                    }
+                }
+            }
+        }
+        bottomBar.addView(enableBtn, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, 52))
+        bottomBar.addView(saveBtn, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, 52, 0f, Gravity.NO_GRAVITY, 0f, 0f, 0f, 8f))
+        bottomBar.addView(resetBtn, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, 48, 0f, Gravity.NO_GRAVITY, 0f, 0f, 0f, 8f))
+        bottomBar.addView(disableBtn, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, 48))
+        outerLayout.addView(bottomBar, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT))
+
+        holderRef = FormHolder(
+            root = outerLayout,
+            descInput = descInput,
+            aboutInput = aboutInput,
+            vanityInput = vanityInput,
+            bannerImageView = bannerImageView,
+            bannerCameraIcon = bannerCameraIcon,
+            bannerRemoveBtn = bannerRemoveBtn,
+            bannerErrorTv = bannerErrorTv,
+            enableBtn = enableBtn,
+            saveBtn = saveBtn,
+            resetBtn = resetBtn,
+            disableBtn = disableBtn,
+        )
+        return holderRef
+    }
+
+    private inner class FormHolder(
+        val root: View,
+        val descInput: InputCell,
+        val aboutInput: InputCell,
+        val vanityInput: InputCell,
+        val bannerImageView: ImageView,
+        val bannerCameraIcon: ImageView,
+        val bannerRemoveBtn: ImageView,
+        val bannerErrorTv: TextView,
+        val enableBtn: TextView,
+        val saveBtn: TextView,
+        val resetBtn: TextView,
+        val disableBtn: TextView,
+    ) {
+        private var lastBannerUrl: String? = null
+
+        fun patch(state: CommunityUiState, force: Boolean) {
+            syncInput(descInput, state.draft.description, force)
+            syncInput(aboutInput, state.draft.about, force)
+            syncInput(vanityInput, state.draft.shortUrl, force)
+
+            val required = getString(R.string.community_settings_error_required)
+            descInput.setError(if (state.fieldErrors.description) required else null)
+            aboutInput.setError(if (state.fieldErrors.about) required else null)
+            vanityInput.setError(if (state.fieldErrors.shortUrl) required else null)
+            bannerErrorTv.visibility = if (state.fieldErrors.banner) View.VISIBLE else View.GONE
+
+            patchBanner(state)
+            patchBottomBar(state)
+        }
+
+        private fun syncInput(cell: InputCell, value: String, force: Boolean) {
+            val edit = cell.editText
+            if (!force && edit.isFocused) return
+            if (edit.text.toString() != value) {
+                edit.setText(value)
+            }
+        }
+
+        fun applyLocalBannerPreview(bitmap: android.graphics.Bitmap, previewUrl: String) {
+            lastBannerUrl = previewUrl
+            bannerImageView.setImageBitmap(bitmap)
+            bannerCameraIcon.visibility = View.GONE
+            bannerRemoveBtn.visibility = View.VISIBLE
+        }
+
+        private fun patchBanner(state: CommunityUiState) {
+            val previewUrl = state.draft.bannerPreviewUrl
+            if (previewUrl == lastBannerUrl && bannerImageView.drawable != null) return
+            lastBannerUrl = previewUrl
+            val hasBanner = !previewUrl.isNullOrBlank()
+            bannerCameraIcon.visibility = if (hasBanner) View.GONE else View.VISIBLE
+            bannerRemoveBtn.visibility = if (hasBanner) View.VISIBLE else View.GONE
+            if (hasBanner) {
+                val ctx = bannerImageView.context
+                val h = LayoutHelper.dp(140f)
+                MezonImageLoader.getInstance(ctx).load(previewUrl, 0, h, onSuccess = { bitmap ->
+                    if (lastBannerUrl == previewUrl) {
+                        bannerImageView.setImageBitmap(bitmap)
+                    }
+                })
+            } else {
+                bannerImageView.setImageDrawable(null)
+            }
+        }
+
+        private fun patchBottomBar(state: CommunityUiState) {
+            val isEnableForm = state.mode == CommunityScreenMode.ENABLE_FORM
+            if (isEnableForm) {
+                enableBtn.visibility = View.VISIBLE
+                saveBtn.visibility = View.GONE
+                resetBtn.visibility = View.GONE
+                disableBtn.visibility = View.GONE
+                return
+            }
+            enableBtn.visibility = View.GONE
+            val showSave = state.showSaveBar
+            saveBtn.visibility = if (showSave) View.VISIBLE else View.GONE
+            resetBtn.visibility = if (showSave) View.VISIBLE else View.GONE
+            disableBtn.visibility = View.VISIBLE
+        }
     }
 
     private fun buildPrimaryButton(ctx: Context, label: String, onClick: () -> Unit): TextView {
@@ -557,18 +653,39 @@ class CommunitySettingsFragment : BaseFragment() {
 
     private fun handleBannerUri(uri: Uri) {
         val ctx = getContext() ?: return
-        try {
-            val inputStream = ctx.contentResolver.openInputStream(uri) ?: return
-            val bytes = inputStream.readBytes()
-            inputStream.close()
-            if (bytes.size > MAX_BANNER_BYTES) {
-                MezonToast.show(this, ToastOverlay.ToastType.ERROR, getString(R.string.community_settings_error_banner_size))
-                return
+        val previewUri = uri.toString()
+        fragmentScope.launch {
+            val result = withContext(ioDispatcher) { readBannerFromUri(ctx, uri) }
+            withContext(mainDispatcher) {
+                if (isFinished) return@withContext
+                when (result) {
+                    BannerLoadResult.TooLarge ->
+                        MezonToast.show(this@CommunitySettingsFragment, ToastOverlay.ToastType.ERROR, getString(R.string.community_settings_error_banner_size))
+                    BannerLoadResult.InvalidType ->
+                        MezonToast.show(this@CommunitySettingsFragment, ToastOverlay.ToastType.ERROR, getString(R.string.community_settings_error_banner_type))
+                    BannerLoadResult.Failed ->
+                        MezonToast.show(this@CommunitySettingsFragment, ToastOverlay.ToastType.ERROR, getString(R.string.community_settings_error_banner))
+                    is BannerLoadResult.Ok -> {
+                        controller.onBannerPicked(result.bytes, result.mimeType, result.ext, previewUri)
+                        result.bitmap?.let { bmp ->
+                            formHolder?.applyLocalBannerPreview(bmp, previewUri)
+                        }
+                    }
+                }
             }
+        }
+    }
+
+    private fun readBannerFromUri(ctx: Context, uri: Uri): BannerLoadResult {
+        return try {
             val mimeType = ctx.contentResolver.getType(uri) ?: "image/jpeg"
             if (!mimeType.startsWith("image/")) {
-                MezonToast.show(this, ToastOverlay.ToastType.ERROR, getString(R.string.community_settings_error_banner_type))
-                return
+                return BannerLoadResult.InvalidType
+            }
+            val bytes = ctx.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                ?: return BannerLoadResult.Failed
+            if (bytes.size > MAX_BANNER_BYTES) {
+                return BannerLoadResult.TooLarge
             }
             val ext = when (mimeType) {
                 "image/png" -> "png"
@@ -576,16 +693,21 @@ class CommunitySettingsFragment : BaseFragment() {
                 else -> "jpg"
             }
             val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-            controller.onBannerPicked(bytes, mimeType, ext, uri.toString())
-            if (bitmap != null) {
-                val currentView = currentContentView
-                if (currentView != null) {
-                    val bannerImg = currentView.findViewWithTag<ImageView?>("communityBannerImg")
-                    bannerImg?.setImageBitmap(bitmap)
-                }
-            }
+            BannerLoadResult.Ok(bytes, mimeType, ext, bitmap)
         } catch (_: Exception) {
-            MezonToast.show(this, ToastOverlay.ToastType.ERROR, getString(R.string.community_settings_error_banner))
+            BannerLoadResult.Failed
         }
+    }
+
+    private sealed interface BannerLoadResult {
+        data object TooLarge : BannerLoadResult
+        data object InvalidType : BannerLoadResult
+        data object Failed : BannerLoadResult
+        data class Ok(
+            val bytes: ByteArray,
+            val mimeType: String,
+            val ext: String,
+            val bitmap: android.graphics.Bitmap?,
+        ) : BannerLoadResult
     }
 }

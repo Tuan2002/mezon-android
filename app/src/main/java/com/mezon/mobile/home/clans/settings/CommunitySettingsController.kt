@@ -60,7 +60,7 @@ class CommunitySettingsController @Inject constructor(
                         mode = if (server.isCommunityEnabled)
                             CommunityScreenMode.ENABLED_EDITOR
                         else
-                            CommunityScreenMode.ENABLE_FORM,
+                            CommunityScreenMode.LANDING,
                         server = server.copy(isLoading = false),
                         draft = draft,
                         initial = draft,
@@ -82,7 +82,12 @@ class CommunitySettingsController @Inject constructor(
     }
 
     fun onCancelEnableForm() {
-        _uiState.update { it.copy(mode = CommunityScreenMode.LANDING) }
+        _uiState.update {
+            it.copy(
+                mode = CommunityScreenMode.LANDING,
+                fieldErrors = CommunityFieldErrors(),
+            )
+        }
     }
 
     fun onAboutChanged(v: String) = updateDraft { copy(about = v) }
