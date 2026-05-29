@@ -26,6 +26,7 @@ class WelcomeMessageCell(context: Context, private val theme: ThemeColors) : Vie
     var channelType = 0
     var clanId = 0L
     var isPrivate = false
+    var isAgeRestricted = false
     var avatarUrl = ""
     var avatarUserId = 0L
     var avatarPlaceholderKey = ""
@@ -78,7 +79,11 @@ class WelcomeMessageCell(context: Context, private val theme: ThemeColors) : Vie
                 MezonIcon.threadIcon.getDrawable(context)
             }
         }
-        val icon = if (isPrivate) MezonIcon.channelTextLock else MezonIcon.channelText
+        val icon = when {
+            isAgeRestricted -> MezonIcon.channelTextWarning
+            isPrivate -> MezonIcon.channelTextLock
+            else -> MezonIcon.channelText
+        }
         return icon.getDrawable(context)
     }
 
