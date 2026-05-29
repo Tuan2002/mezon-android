@@ -28,7 +28,6 @@ data class ClanChannelEntity(
     val channelLabel: String,
     val type: Int,
     val isPrivate: Boolean,
-    val isAgeRestricted: Boolean = false,
     val topic: String,
     val unreadCount: Int,
     val isMuted: Boolean,
@@ -40,7 +39,7 @@ data class ClanChannelEntity(
     val categoryOrder: Int = 0,
     val ageRestricted: Int = 0,
 ) {
-    val isAgeRestricted: Boolean get() = ageRestricted == 1
+    val isAgeRestricted: Boolean get() = ageRestricted != 0
     val isThread: Boolean get() = type == 7 && parentId != 0L
     val hasUnread: Boolean get() {
         if (unreadCount > 0) return true
@@ -61,7 +60,6 @@ fun ChannelDescription.toClanChannelEntity(): ClanChannelEntity = ClanChannelEnt
     channelLabel = channelLabel,
     type = type,
     isPrivate = channelPrivate != 0,
-    isAgeRestricted = ageRestricted != 0,
     topic = topic,
     unreadCount = countMessUnread,
     isMuted = isMute,
