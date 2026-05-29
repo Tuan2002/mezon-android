@@ -158,7 +158,10 @@ class ClansFragment : BaseFragment() {
         observe(NotificationCenter.clanMembersDidLoad) { _, _, args ->
             if (fragmentView == null || isPaused) return@observe
             val clanId = args.firstOrNull() as? Long ?: return@observe
-            if (clanId == clansController.selectedClanId.value) updateMemberCount()
+            if (clanId == clansController.selectedClanId.value) {
+                updateMemberCount()
+                syncVoiceMembersUi()
+            }
         }
         observe(NotificationCenter.dialogsNeedReload) { _, _, _ ->
             if (fragmentView == null || isPaused || listFrozen) return@observe
@@ -174,11 +177,18 @@ class ClansFragment : BaseFragment() {
             updateVisibleRows(mask)
         }
         observe(NotificationCenter.voiceChannelMembersChanged) { _, _, args ->
-            if (fragmentView == null || isPaused || listFrozen) return@observe
+            if (fragmentView == null || listFrozen) return@observe
             val clanId = args.firstOrNull() as? Long ?: return@observe
             if (clanId == clansController.selectedClanId.value) {
-                updateVoiceMembers(clanId)
+                syncVoiceMembersUi()
             }
+        }
+        observe(NotificationCenter.appDidReconnect) { _, _, _ ->
+            if (fragmentView == null || listFrozen) return@observe
+            val clanId = clansController.selectedClanId.value
+            if (clanId == 0L) return@observe
+            voiceController.fetchVoiceChannelMembers(clanId, noCache = true)
+            syncVoiceMembersUi()
         }
         observe(NotificationCenter.themeChanged) { _, _, _ ->
             if (fragmentView == null) return@observe
@@ -605,12 +615,18 @@ class ClansFragment : BaseFragment() {
         }
     }
 
+    override fun onResume() {
+        super.onResume()
+        ensureVoiceMembersLoaded()
+    }
+
     override fun onBecomeFullyVisible() {
         super.onBecomeFullyVisible()
         if (::discoverListSection.isInitialized &&
             discoverListSection.rootView.visibility == View.VISIBLE) {
             discoverListSection.onEmbeddedVisibilityChanged(true)
         }
+        ensureVoiceMembersLoaded()
         if (viewJustCreated) {
             viewJustCreated = false
             return
@@ -913,6 +929,21 @@ class ClansFragment : BaseFragment() {
         val clanId = clansController.selectedClanId.value
         if (clanId == 0L) return
         presentFragment(ChannelAppShowAllFragment.newInstance(clanId))
+    }
+
+    private fun ensureVoiceMembersLoaded() {
+        if (fragmentView == null || listFrozen || !::channelListView.isInitialized) return
+        val clanId = clansController.selectedClanId.value
+        if (clanId == 0L) return
+        voiceController.fetchVoiceChannelMembers(clanId)
+        updateVoiceMembers(clanId)
+    }
+
+    private fun syncVoiceMembersUi() {
+        if (fragmentView == null || listFrozen || !::channelListView.isInitialized) return
+        val clanId = clansController.selectedClanId.value
+        if (clanId == 0L) return
+        updateVoiceMembers(clanId)
     }
 
     private fun updateVoiceMembers(clanId: Long) {
