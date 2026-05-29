@@ -443,6 +443,7 @@ class ClanSettingFragment : BaseFragment() {
                                 return@Runnable
                             }
                             presentFragment(CommunitySettingsFragment.newInstance(clanId))
+                        })
                     R.string.clan_settings_sticker ->
                         navigationRow(ctx, row.icon, row.labelRes, Runnable {
                             presentFragment(StickerSettingsFragment.newInstance(clanId))
