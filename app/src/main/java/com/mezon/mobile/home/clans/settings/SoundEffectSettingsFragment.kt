@@ -47,6 +47,13 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileOutputStream
 
+private class SoundItemViews(
+    val playBtn: ImageView,
+    val nameTv: TextView,
+    val editBtn: ImageView,
+    val deleteBtn: ImageView,
+)
+
 class SoundEffectSettingsFragment : BaseFragment() {
 
     companion object {
@@ -75,9 +82,9 @@ class SoundEffectSettingsFragment : BaseFragment() {
     private lateinit var adapter: SoundListAdapter
     private var blockingOverlay: FrameLayout? = null
     private var mediaPlayer: MediaPlayer? = null
-    /** URL đang prepare/play — dùng để tap lần 2 là dừng thay vì tạo player mới. */
     private var activeSoundUrl: String? = null
     private var activePlayButton: ImageView? = null
+    private var pendingPickReplaceSound: StickerItem? = null
 
     override fun onInject(entryPoint: FragmentEntryPoint) {
         controller = entryPoint.soundEffectSettingsController()
@@ -247,7 +254,8 @@ class SoundEffectSettingsFragment : BaseFragment() {
         return result
     }
 
-    private fun openFilePicker() {
+    private fun openFilePicker(replaceSound: StickerItem? = null) {
+        pendingPickReplaceSound = replaceSound
         val intent = Intent(Intent.ACTION_GET_CONTENT).apply {
             type = "audio/*"
             addCategory(Intent.CATEGORY_OPENABLE)
@@ -258,9 +266,12 @@ class SoundEffectSettingsFragment : BaseFragment() {
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
-        if (resultCode != Activity.RESULT_OK || requestCode != REQUEST_PICK_SOUND) return
+        if (requestCode != REQUEST_PICK_SOUND) return
+        val replaceSound = pendingPickReplaceSound
+        pendingPickReplaceSound = null
+        if (resultCode != Activity.RESULT_OK) return
         val uri = data?.data ?: return
-        handlePickedSound(uri, existingSound = null)
+        handlePickedSound(uri, existingSound = replaceSound)
     }
 
     private fun handlePickedSound(uri: Uri, existingSound: StickerItem?) {
@@ -329,7 +340,7 @@ class SoundEffectSettingsFragment : BaseFragment() {
                 nameCell.setError(null)
                 dialog.dismiss()
                 if (isEdit && existingSound != null) {
-                    runEditFlow(existingSound, name, file)
+                    runReplaceSoundFileFlow(existingSound, name, file)
                 } else {
                     runUploadFlow(clanId, name, file)
                 }
@@ -356,9 +367,6 @@ class SoundEffectSettingsFragment : BaseFragment() {
             textSize = 13f
             setTextColor(themeColors.textLink)
             isClickable = true
-            setOnClickListener {
-                handlePickedSound(Uri.fromFile(File(sound.src)), sound)
-            }
         }
         body.addView(orPickTv, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT))
 
@@ -372,6 +380,11 @@ class SoundEffectSettingsFragment : BaseFragment() {
             .setNegativeButton(getString(R.string.common_cancel)) { d, _ -> d.dismiss() }
             .setPositiveButton(getString(R.string.sound_btn_update), null)
             .create()
+
+        orPickTv.setOnClickListener {
+            dialog.dismiss()
+            openFilePicker(replaceSound = sound)
+        }
 
         dialog.setOnShowListener {
             dialog.getButton(DialogInterface.BUTTON_POSITIVE)?.setOnClickListener {
@@ -409,12 +422,37 @@ class SoundEffectSettingsFragment : BaseFragment() {
         }
     }
 
-    private fun runEditFlow(sound: StickerItem, newName: String, file: File) {
-        file.delete()
-        controller.updateNameOnly(clanId, sound, newName) { ok, err ->
-            fragmentScope.launch(mainDispatcher) {
-                blockingOverlay?.visibility = View.GONE
-                if (!ok) MezonToast.show(this@SoundEffectSettingsFragment, ToastOverlay.ToastType.ERROR, err ?: getString(R.string.sound_edit_failed))
+    private fun runReplaceSoundFileFlow(sound: StickerItem, newName: String, file: File) {
+        fragmentScope.launch(ioDispatcher) {
+            val bytes = try {
+                file.readBytes()
+            } catch (_: Exception) {
+                byteArrayOf()
+            } finally {
+                file.delete()
+            }
+            if (bytes.isEmpty()) {
+                withContext(mainDispatcher) {
+                    MezonToast.show(
+                        this@SoundEffectSettingsFragment,
+                        ToastOverlay.ToastType.ERROR,
+                        getString(R.string.sound_edit_failed),
+                    )
+                }
+                return@launch
+            }
+            withContext(mainDispatcher) { blockingOverlay?.visibility = View.VISIBLE }
+            controller.replaceSoundFile(clanId, sound, newName, bytes) { ok, err ->
+                fragmentScope.launch(mainDispatcher) {
+                    blockingOverlay?.visibility = View.GONE
+                    if (!ok) {
+                        MezonToast.show(
+                            this@SoundEffectSettingsFragment,
+                            ToastOverlay.ToastType.ERROR,
+                            err ?: getString(R.string.sound_edit_failed),
+                        )
+                    }
+                }
             }
         }
     }
@@ -439,7 +477,6 @@ class SoundEffectSettingsFragment : BaseFragment() {
     private fun playSound(url: String, playBtn: ImageView) {
         if (url.isBlank()) return
 
-        // Cùng một sound đang prepare hoặc đang phát → tap lần 2 chỉ dừng (trước đây luôn tạo player mới nên không “tắt” được).
         if (url == activeSoundUrl && mediaPlayer != null) {
             stopCurrentPlayback()
             return
@@ -471,7 +508,6 @@ class SoundEffectSettingsFragment : BaseFragment() {
         }
     }
 
-    // ─── Adapter ─────────────────────────────────────────────────────────────
 
     sealed class SoundRow {
         object Header : SoundRow()
@@ -493,9 +529,14 @@ class SoundEffectSettingsFragment : BaseFragment() {
                 override fun getOldListSize() = old.size
                 override fun getNewListSize() = newRows.size
                 override fun areItemsTheSame(op: Int, np: Int): Boolean {
-                    val o = old[op]; val n = newRows[np]
-                    if (o is SoundRow.SoundItem && n is SoundRow.SoundItem) return o.item.id == n.item.id
-                    return o::class == n::class
+                    val o = old[op]
+                    val n = newRows[np]
+                    return when {
+                        o is SoundRow.SoundItem && n is SoundRow.SoundItem -> o.item.id == n.item.id
+                        o is SoundRow.Header && n is SoundRow.Header -> true
+                        o is SoundRow.Empty && n is SoundRow.Empty -> true
+                        else -> false
+                    }
                 }
                 override fun areContentsTheSame(op: Int, np: Int) = old[op] == newRows[np]
             })
@@ -582,69 +623,95 @@ class SoundEffectSettingsFragment : BaseFragment() {
         }
 
         private fun buildItemView(ctx: Context): LinearLayout {
-            return LinearLayout(ctx).apply {
+            val root = LinearLayout(ctx).apply {
                 orientation = LinearLayout.VERTICAL
                 setPadding(LayoutHelper.dp(16f), LayoutHelper.dp(12f), LayoutHelper.dp(16f), LayoutHelper.dp(12f))
-                tag = "sound_item_root"
             }
+
+            val topRow = LinearLayout(ctx).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+            }
+
+            val playBtn = ImageView(ctx).apply {
+                scaleType = ImageView.ScaleType.FIT_CENTER
+                isClickable = true
+            }
+            topRow.addView(playBtn, LayoutHelper.createLinear(24, 24, 0f, Gravity.CENTER_VERTICAL, 0f, 0f, 12f, 0f))
+
+            val nameTv = TextView(ctx).apply {
+                textSize = 14f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(themeColors.colorText)
+                ellipsize = TextUtils.TruncateAt.END
+                maxLines = 1
+            }
+            topRow.addView(nameTv, LinearLayout.LayoutParams(0, LayoutHelper.WRAP_CONTENT, 1f))
+
+            val editBtn = ImageView(ctx).apply {
+                setImageDrawable(MezonIcon.pencilIcon.getDrawable(ctx, themeColors.textDisabled))
+                scaleType = ImageView.ScaleType.FIT_CENTER
+                isClickable = true
+                visibility = View.GONE
+            }
+            topRow.addView(editBtn, LayoutHelper.createLinear(20, 20, 0f, Gravity.CENTER_VERTICAL, 8f, 0f, 0f, 0f))
+
+            val deleteBtn = ImageView(ctx).apply {
+                setImageDrawable(MezonIcon.trashIcon.getDrawable(ctx, themeColors.error))
+                scaleType = ImageView.ScaleType.FIT_CENTER
+                isClickable = true
+                visibility = View.GONE
+            }
+            topRow.addView(deleteBtn, LayoutHelper.createLinear(20, 20, 0f, Gravity.CENTER_VERTICAL, 8f, 0f, 0f, 0f))
+
+            root.addView(topRow, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT))
+
+            val divider = View(ctx).apply { setBackgroundColor(themeColors.borderDim) }
+            root.addView(divider, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, 1, 0f, Gravity.NO_GRAVITY, 0f, 12f, 0f, 0f))
+
+            root.tag = SoundItemViews(playBtn, nameTv, editBtn, deleteBtn)
+            return root
         }
 
         inner class HeaderVH(v: View) : RecyclerView.ViewHolder(v)
         inner class EmptyVH(v: View) : RecyclerView.ViewHolder(v)
 
-        inner class ItemVH(private val root: LinearLayout) : RecyclerView.ViewHolder(root) {
+        inner class ItemVH(tileRoot: LinearLayout) : RecyclerView.ViewHolder(tileRoot) {
+            private val root: LinearLayout = tileRoot
+            private val views = tileRoot.tag as SoundItemViews
+
             fun bind(row: SoundRow.SoundItem) {
-                root.removeAllViews()
-                val ctx = root.context
                 val sound = row.item
+                val ctx = root.context
 
-                val topRow = LinearLayout(ctx).apply {
-                    orientation = LinearLayout.HORIZONTAL
-                    gravity = Gravity.CENTER_VERTICAL
-                }
+                views.nameTv.text = sound.shortname
+                patchPlayIcon(sound.src)
 
-                val playBtn = ImageView(ctx).apply {
-                    setImageDrawable(MezonIcon.playIcon.getDrawable(ctx, themeColors.colorText))
-                    scaleType = ImageView.ScaleType.FIT_CENTER
-                    isClickable = true
-                    setOnClickListener { playSound(sound.src, this) }
-                }
-                topRow.addView(playBtn, LayoutHelper.createLinear(24, 24, 0f, Gravity.CENTER_VERTICAL, 0f, 0f, 12f, 0f))
-
-                val nameTv = TextView(ctx).apply {
-                    text = sound.shortname
-                    textSize = 14f
-                    typeface = Typeface.DEFAULT_BOLD
-                    setTextColor(themeColors.colorText)
-                    ellipsize = TextUtils.TruncateAt.END
-                    maxLines = 1
-                }
-                topRow.addView(nameTv, LinearLayout.LayoutParams(0, LayoutHelper.WRAP_CONTENT, 1f))
+                views.playBtn.setOnClickListener { playSound(sound.src, views.playBtn) }
 
                 if (row.canManage) {
-                    val editBtn = ImageView(ctx).apply {
-                        setImageDrawable(MezonIcon.pencilIcon.getDrawable(ctx, themeColors.textDisabled))
-                        scaleType = ImageView.ScaleType.FIT_CENTER
-                        isClickable = true
-                        setOnClickListener { showEditDialog(sound) }
-                    }
-                    topRow.addView(editBtn, LayoutHelper.createLinear(20, 20, 0f, Gravity.CENTER_VERTICAL, 8f, 0f, 0f, 0f))
-
-                    val deleteBtn = ImageView(ctx).apply {
-                        setImageDrawable(MezonIcon.trashIcon.getDrawable(ctx, themeColors.error))
-                        scaleType = ImageView.ScaleType.FIT_CENTER
-                        isClickable = true
-                        setOnClickListener { confirmDelete(sound) }
-                    }
-                    topRow.addView(deleteBtn, LayoutHelper.createLinear(20, 20, 0f, Gravity.CENTER_VERTICAL, 8f, 0f, 0f, 0f))
+                    views.editBtn.visibility = View.VISIBLE
+                    views.deleteBtn.visibility = View.VISIBLE
+                    views.editBtn.setOnClickListener { showEditDialog(sound) }
+                    views.deleteBtn.setOnClickListener { confirmDelete(sound) }
+                } else {
+                    views.editBtn.visibility = View.GONE
+                    views.deleteBtn.visibility = View.GONE
+                    views.editBtn.setOnClickListener(null)
+                    views.deleteBtn.setOnClickListener(null)
                 }
+            }
 
-                root.addView(topRow, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT))
-
-                val divider = View(ctx).apply {
-                    setBackgroundColor(themeColors.borderDim)
-                }
-                root.addView(divider, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, 1, 0f, Gravity.NO_GRAVITY, 0f, 12f, 0f, 0f))
+            private fun patchPlayIcon(url: String) {
+                val ctx = root.context
+                val playing = url == activeSoundUrl && mediaPlayer != null
+                views.playBtn.setImageDrawable(
+                    if (playing) {
+                        MezonIcon.pauseIcon.getDrawable(ctx, themeColors.primary)
+                    } else {
+                        MezonIcon.playIcon.getDrawable(ctx, themeColors.colorText)
+                    },
+                )
             }
         }
     }

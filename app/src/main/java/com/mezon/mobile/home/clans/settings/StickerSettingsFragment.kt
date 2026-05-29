@@ -52,6 +52,15 @@ import kotlinx.coroutines.withContext
 import java.io.ByteArrayOutputStream
 import java.io.File
 
+private class StickerTileViews(
+    val imageView: ImageView,
+    val nameTv: TextView,
+    val forSaleBadge: TextView,
+    val manageOverlay: LinearLayout,
+    val editBtn: ImageView,
+    val deleteBtn: ImageView,
+)
+
 class StickerSettingsFragment : BaseFragment() {
 
     companion object {
@@ -458,15 +467,11 @@ class StickerSettingsFragment : BaseFragment() {
         }
     }
 
-    // ─── Data ────────────────────────────────────────────────────────────────
-
     sealed class StickerRow {
         object Header : StickerRow()
         object AddButton : StickerRow()
         data class Item(val sticker: StickerItem, val canManage: Boolean) : StickerRow()
     }
-
-    // ─── Adapter ─────────────────────────────────────────────────────────────
 
     inner class StickerGridAdapter : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
         val TYPE_HEADER = 0
@@ -482,9 +487,14 @@ class StickerSettingsFragment : BaseFragment() {
                 override fun getOldListSize() = old.size
                 override fun getNewListSize() = newRows.size
                 override fun areItemsTheSame(op: Int, np: Int): Boolean {
-                    val o = old[op]; val n = newRows[np]
-                    if (o is StickerRow.Item && n is StickerRow.Item) return o.sticker.id == n.sticker.id
-                    return o::class == n::class
+                    val o = old[op]
+                    val n = newRows[np]
+                    return when {
+                        o is StickerRow.Item && n is StickerRow.Item -> o.sticker.id == n.sticker.id
+                        o is StickerRow.Header && n is StickerRow.Header -> true
+                        o is StickerRow.AddButton && n is StickerRow.AddButton -> true
+                        else -> false
+                    }
                 }
                 override fun areContentsTheSame(op: Int, np: Int) = old[op] == newRows[np]
             })
@@ -608,132 +618,154 @@ class StickerSettingsFragment : BaseFragment() {
         }
 
         private fun buildItemTile(ctx: Context): FrameLayout {
-            return FrameLayout(ctx).apply {
+            val root = FrameLayout(ctx).apply {
                 layoutParams = tileLayoutParams()
                 clipToOutline = true
                 outlineProvider = makeTileOutlineProvider()
-                tag = "sticker_tile"
-            }
-        }
-
-        inner class HeaderVH(v: View) : RecyclerView.ViewHolder(v)
-        inner class AddVH(v: View) : RecyclerView.ViewHolder(v)
-
-        inner class ItemVH(private val root: FrameLayout) : RecyclerView.ViewHolder(root) {
-            fun bind(row: StickerRow.Item) {
-                root.removeAllViews()
-                root.setOnClickListener(null)
-                val ctx = root.context
-                val sticker = row.sticker
-
-                // Background card — transparent so image fills it fully
-                root.background = android.graphics.drawable.GradientDrawable().apply {
+                background = android.graphics.drawable.GradientDrawable().apply {
                     shape = android.graphics.drawable.GradientDrawable.RECTANGLE
                     cornerRadius = LayoutHelper.dpf(12f)
                     setColor(themeColors.border)
                     setStroke(LayoutHelper.dp(1f), themeColors.borderDim)
                 }
+            }
 
-                // Image fills entire card (CENTER_CROP)
-                val imageView = ImageView(ctx).apply {
-                    scaleType = ImageView.ScaleType.CENTER_CROP
+            val imageView = ImageView(ctx).apply {
+                scaleType = ImageView.ScaleType.CENTER_CROP
+            }
+            root.addView(imageView, FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT,
+            ))
+
+            val nameBar = FrameLayout(ctx).apply {
+                background = android.graphics.drawable.GradientDrawable().apply {
+                    shape = android.graphics.drawable.GradientDrawable.RECTANGLE
+                    colors = intArrayOf(android.graphics.Color.TRANSPARENT, 0xDD000000.toInt())
+                    gradientType = android.graphics.drawable.GradientDrawable.LINEAR_GRADIENT
+                    orientation = android.graphics.drawable.GradientDrawable.Orientation.TOP_BOTTOM
                 }
-                root.addView(imageView, FrameLayout.LayoutParams(
-                    FrameLayout.LayoutParams.MATCH_PARENT,
-                    FrameLayout.LayoutParams.MATCH_PARENT
-                ))
+            }
+            val nameTv = TextView(ctx).apply {
+                textSize = 10f
+                setTextColor(0xFFFFFFFF.toInt())
+                gravity = Gravity.CENTER
+                ellipsize = TextUtils.TruncateAt.END
+                maxLines = 1
+                setPadding(LayoutHelper.dp(6f), LayoutHelper.dp(4f), LayoutHelper.dp(6f), LayoutHelper.dp(5f))
+            }
+            nameBar.addView(nameTv, FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                Gravity.CENTER,
+            ))
+            root.addView(nameBar, FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                LayoutHelper.dp(28f),
+                Gravity.BOTTOM,
+            ))
 
-                // Name label: gradient bar at the very bottom
-                val nameBar = FrameLayout(ctx).apply {
-                    background = android.graphics.drawable.GradientDrawable().apply {
-                        shape = android.graphics.drawable.GradientDrawable.RECTANGLE
-                        colors = intArrayOf(android.graphics.Color.TRANSPARENT, 0xDD000000.toInt())
-                        gradientType = android.graphics.drawable.GradientDrawable.LINEAR_GRADIENT
-                        orientation = android.graphics.drawable.GradientDrawable.Orientation.TOP_BOTTOM
-                    }
+            val forSaleBadge = TextView(ctx).apply {
+                text = "★"
+                textSize = 11f
+                setTextColor(0xFFFFD700.toInt())
+                setPadding(LayoutHelper.dp(3f), LayoutHelper.dp(1f), LayoutHelper.dp(3f), LayoutHelper.dp(1f))
+                background = android.graphics.drawable.GradientDrawable().apply {
+                    shape = android.graphics.drawable.GradientDrawable.RECTANGLE
+                    cornerRadius = LayoutHelper.dpf(4f)
+                    setColor(0x99000000.toInt())
                 }
-                nameBar.addView(TextView(ctx).apply {
-                    text = sticker.shortname
-                    textSize = 10f
-                    setTextColor(0xFFFFFFFF.toInt())
-                    gravity = Gravity.CENTER
-                    ellipsize = TextUtils.TruncateAt.END
-                    maxLines = 1
-                    setPadding(LayoutHelper.dp(6f), LayoutHelper.dp(4f), LayoutHelper.dp(6f), LayoutHelper.dp(5f))
-                }, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.CENTER))
-                root.addView(nameBar, FrameLayout.LayoutParams(
-                    FrameLayout.LayoutParams.MATCH_PARENT, LayoutHelper.dp(28f), Gravity.BOTTOM
-                ))
+                visibility = View.GONE
+            }
+            root.addView(forSaleBadge, FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                Gravity.TOP or Gravity.END,
+            ).apply {
+                setMargins(0, LayoutHelper.dp(5f), LayoutHelper.dp(5f), 0)
+            })
 
-                // Load image
+            val manageOverlay = LinearLayout(ctx).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER
+                setBackgroundColor(0xBB000000.toInt())
+                visibility = View.GONE
+            }
+            val editBtn = ImageView(ctx).apply {
+                setImageDrawable(MezonIcon.pencilIcon.getDrawable(ctx, 0xFFFFFFFF.toInt()))
+                scaleType = ImageView.ScaleType.CENTER_INSIDE
+                setPadding(LayoutHelper.dp(10f), LayoutHelper.dp(10f), LayoutHelper.dp(10f), LayoutHelper.dp(10f))
+                isClickable = true
+            }
+            val deleteBtn = ImageView(ctx).apply {
+                setImageDrawable(MezonIcon.trashIcon.getDrawable(ctx, 0xFFFF6B6B.toInt()))
+                scaleType = ImageView.ScaleType.CENTER_INSIDE
+                setPadding(LayoutHelper.dp(10f), LayoutHelper.dp(10f), LayoutHelper.dp(10f), LayoutHelper.dp(10f))
+                isClickable = true
+            }
+            manageOverlay.addView(editBtn, LinearLayout.LayoutParams(LayoutHelper.dp(44f), LayoutHelper.dp(44f)))
+            manageOverlay.addView(deleteBtn, LinearLayout.LayoutParams(LayoutHelper.dp(44f), LayoutHelper.dp(44f)).apply {
+                leftMargin = LayoutHelper.dp(12f)
+            })
+            root.addView(manageOverlay, FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                Gravity.CENTER,
+            ))
+
+            root.tag = StickerTileViews(imageView, nameTv, forSaleBadge, manageOverlay, editBtn, deleteBtn)
+            return root
+        }
+
+        inner class HeaderVH(v: View) : RecyclerView.ViewHolder(v)
+        inner class AddVH(v: View) : RecyclerView.ViewHolder(v)
+
+        inner class ItemVH(tileRoot: FrameLayout) : RecyclerView.ViewHolder(tileRoot) {
+            private val root: FrameLayout = tileRoot
+            private val views = tileRoot.tag as StickerTileViews
+
+            fun bind(row: StickerRow.Item) {
+                val ctx = root.context
+                val sticker = row.sticker
+
+                views.manageOverlay.visibility = View.GONE
+                views.nameTv.text = sticker.shortname
+                views.forSaleBadge.visibility = if (sticker.isForSale) View.VISIBLE else View.GONE
+
+                views.imageView.setImageDrawable(null)
                 val displayUrl = sticker.src.ifBlank {
                     "${BuildConfig.MEZON_BASE_IMG_URL}/stickers/${sticker.id}.webp"
                 }
                 val loadSize = LayoutHelper.dp(110f)
                 MezonImageLoader.getInstance(ctx).load(
-                    displayUrl, loadSize, loadSize,
-                    onSuccess = { bmp -> imageView.setImageBitmap(bmp) },
-                    onError = { _ -> imageView.setImageDrawable(null) },
+                    displayUrl,
+                    loadSize,
+                    loadSize,
+                    onSuccess = { bmp -> views.imageView.setImageBitmap(bmp) },
+                    onError = { _ -> views.imageView.setImageDrawable(null) },
                 )
 
-                // For sale badge top-right
-                if (sticker.isForSale) {
-                    root.addView(TextView(ctx).apply {
-                        text = "★"
-                        textSize = 11f
-                        setTextColor(0xFFFFD700.toInt())
-                        setPadding(LayoutHelper.dp(3f), LayoutHelper.dp(1f), LayoutHelper.dp(3f), LayoutHelper.dp(1f))
-                        background = android.graphics.drawable.GradientDrawable().apply {
-                            shape = android.graphics.drawable.GradientDrawable.RECTANGLE
-                            cornerRadius = LayoutHelper.dpf(4f)
-                            setColor(0x99000000.toInt())
-                        }
-                    }, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.TOP or Gravity.END).apply {
-                        setMargins(0, LayoutHelper.dp(5f), LayoutHelper.dp(5f), 0)
-                    })
-                }
-
-                // Edit/Delete overlay — GONE by default, show on tap
                 if (row.canManage) {
-                    val overlay = LinearLayout(ctx).apply {
-                        orientation = LinearLayout.HORIZONTAL
-                        gravity = Gravity.CENTER
-                        setBackgroundColor(0xBB000000.toInt())
-                        visibility = View.GONE
+                    views.editBtn.setOnClickListener {
+                        views.manageOverlay.visibility = View.GONE
+                        showRenameDialog(sticker)
                     }
-                    val editBtn = ImageView(ctx).apply {
-                        setImageDrawable(MezonIcon.pencilIcon.getDrawable(ctx, 0xFFFFFFFF.toInt()))
-                        scaleType = ImageView.ScaleType.CENTER_INSIDE
-                        setPadding(LayoutHelper.dp(10f), LayoutHelper.dp(10f), LayoutHelper.dp(10f), LayoutHelper.dp(10f))
-                        isClickable = true
-                        setOnClickListener {
-                            overlay.visibility = View.GONE
-                            showRenameDialog(sticker)
-                        }
+                    views.deleteBtn.setOnClickListener {
+                        views.manageOverlay.visibility = View.GONE
+                        confirmDelete(sticker)
                     }
-                    val deleteBtn = ImageView(ctx).apply {
-                        setImageDrawable(MezonIcon.trashIcon.getDrawable(ctx, 0xFFFF6B6B.toInt()))
-                        scaleType = ImageView.ScaleType.CENTER_INSIDE
-                        setPadding(LayoutHelper.dp(10f), LayoutHelper.dp(10f), LayoutHelper.dp(10f), LayoutHelper.dp(10f))
-                        isClickable = true
-                        setOnClickListener {
-                            overlay.visibility = View.GONE
-                            confirmDelete(sticker)
-                        }
-                    }
-                    overlay.addView(editBtn, LinearLayout.LayoutParams(LayoutHelper.dp(44f), LayoutHelper.dp(44f)))
-                    overlay.addView(deleteBtn, LinearLayout.LayoutParams(LayoutHelper.dp(44f), LayoutHelper.dp(44f)).apply {
-                        leftMargin = LayoutHelper.dp(12f)
-                    })
-                    root.addView(overlay, FrameLayout.LayoutParams(
-                        FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT, Gravity.CENTER
-                    ))
-
                     root.isClickable = true
                     root.isFocusable = true
                     root.setOnClickListener {
-                        overlay.visibility = if (overlay.visibility == View.VISIBLE) View.GONE else View.VISIBLE
+                        views.manageOverlay.visibility =
+                            if (views.manageOverlay.visibility == View.VISIBLE) View.GONE else View.VISIBLE
                     }
+                } else {
+                    views.editBtn.setOnClickListener(null)
+                    views.deleteBtn.setOnClickListener(null)
+                    root.isClickable = false
+                    root.isFocusable = false
+                    root.setOnClickListener(null)
                 }
             }
         }

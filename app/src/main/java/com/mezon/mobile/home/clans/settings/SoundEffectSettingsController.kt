@@ -74,6 +74,37 @@ class SoundEffectSettingsController @Inject constructor(
         }
     }
 
+    fun replaceSoundFile(
+        clanId: Long,
+        sound: StickerItem,
+        displayName: String,
+        wavBytes: ByteArray,
+        onDone: (success: Boolean, error: String?) -> Unit,
+    ) {
+        scope.launch(io) {
+            try {
+                val recordId = sound.id.toLongOrNull()
+                    ?: java.util.concurrent.ThreadLocalRandom.current().nextLong(10_000_000_000_000L, Long.MAX_VALUE / 4)
+                val url = uploadSoundBytes(wavBytes, recordId)
+                sessionManager.withAutoRefresh { s ->
+                    api.updateClanStickerById(
+                        s.apiUrl, s.token,
+                        id = sound.id.toLong(),
+                        clanId = clanId,
+                        source = url,
+                        shortname = displayName.trim(),
+                        category = sound.category.ifBlank { SOUND_CATEGORY },
+                    )
+                }
+                emojiController.invalidateStickerCacheAndReload()
+                load(clanId)
+                onDone(true, null)
+            } catch (e: Exception) {
+                onDone(false, e.message)
+            }
+        }
+    }
+
     fun updateNameOnly(
         clanId: Long,
         sound: StickerItem,
