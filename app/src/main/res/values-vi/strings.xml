@@ -337,6 +337,8 @@
     <string name="clan_settings_sticker">Nhãn dán</string>
     <string name="clan_settings_sound">Hiệu ứng âm thanh</string>
     <string name="clan_settings_enable_community">Kích hoạt cộng đồng</string>
+    <string name="community_settings_enabled_success">Đã bật cộng đồng thành công!</string>
+    <string name="community_settings_saved_success">Đã cập nhật cài đặt cộng đồng!</string>
     <string name="clan_settings_members">Thành viên</string>
     <string name="clan_settings_roles">Vai trò</string>
     <string name="clan_settings_invites">Lời mời</string>
