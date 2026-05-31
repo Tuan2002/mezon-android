@@ -35,12 +35,12 @@ class AvatarDrawable : Drawable() {
 
         fun getColorForName(name: String): Int {
             val upper = avatarPlaceholderChar(name) ?: return avatarColors[0]
-            return avatarColors[upper.uppercaseChar().code % avatarColors.size]
+            return avatarColors[upper.code % avatarColors.size]
         }
 
         fun getColorIndexForName(name: String): Int {
             val upper = avatarPlaceholderChar(name) ?: return 0
-            return upper.uppercaseChar().code % avatarColors.size
+            return upper.code % avatarColors.size
         }
 
         fun getColorForId(id: Long): Int {

@@ -174,6 +174,7 @@ open class ChatFragment : BaseFragment() {
         internal const val ARG_CLAN_ID = "clanId"
         internal const val ARG_CHANNEL_TYPE = "channelType"
         internal const val ARG_CHANNEL_PRIVATE = "channelPrivate"
+        internal const val ARG_CHANNEL_AGE_RESTRICTED = "channelAgeRestricted"
         internal const val ARG_TOPIC_ID = "topicId"
         internal const val ARG_ROOT_MESSAGE_ID = "rootMessageId"
         private const val ARG_PARENT_ID = "parentId"
@@ -212,6 +213,7 @@ open class ChatFragment : BaseFragment() {
             messageId: Long = 0L,
             forceLatest: Boolean = false,
             isChannelPrivate: Boolean = false,
+            isChannelAgeRestricted: Boolean = false,
             parentId: Long = 0L,
             openedFromNotification: Boolean = false
         ): ChatFragment = ChatFragment().apply {
@@ -221,6 +223,7 @@ open class ChatFragment : BaseFragment() {
                 putLong(ARG_CLAN_ID, clanId)
                 putInt(ARG_CHANNEL_TYPE, channelType)
                 if (isChannelPrivate) putBoolean(ARG_CHANNEL_PRIVATE, true)
+                if (isChannelAgeRestricted) putBoolean(ARG_CHANNEL_AGE_RESTRICTED, true)
                 if (parentId != 0L) putLong(ARG_PARENT_ID, parentId)
                 if (messageId != 0L) putLong(ARG_MESSAGE_ID, messageId)
                 if (forceLatest) putBoolean(ARG_FORCE_LATEST, true)
@@ -304,6 +307,7 @@ open class ChatFragment : BaseFragment() {
     private var pendingDisplayRoleUiRefresh = false
     private var channelType = 0
     private var routeChannelPrivate = false
+    private var routeChannelAgeRestricted = false
     private var routeParentId = 0L
     private var forceLatest = false
     private var openedFromNotification = false
@@ -440,6 +444,7 @@ open class ChatFragment : BaseFragment() {
         chatCachedCreatorId = null
         channelType = arguments?.getInt(ARG_CHANNEL_TYPE) ?: 0
         routeChannelPrivate = arguments?.getBoolean(ARG_CHANNEL_PRIVATE) ?: false
+        routeChannelAgeRestricted = arguments?.getBoolean(ARG_CHANNEL_AGE_RESTRICTED) ?: false
         routeParentId = arguments?.getLong(ARG_PARENT_ID) ?: 0L
         forceLatest = arguments?.getBoolean(ARG_FORCE_LATEST) ?: false
         openedFromNotification = arguments?.getBoolean(ARG_OPENED_FROM_NOTIFICATION) ?: false
@@ -4010,7 +4015,7 @@ open class ChatFragment : BaseFragment() {
 
     private fun resolveChannelAgeRestricted(): Boolean {
         if (clanId != 0L) {
-            return channelController.findChannelById(channelId)?.isAgeRestricted ?: false
+            return channelController.findChannelById(channelId)?.isAgeRestricted ?: routeChannelAgeRestricted
         }
         return false
     }
@@ -6702,17 +6707,18 @@ open class ChatFragment : BaseFragment() {
     }
 
     private fun resolveChannelIcon(entity: com.mezon.mobile.home.clans.ClanChannelEntity?): MezonIcon {
+        val isAgeRestricted = entity?.isAgeRestricted ?: resolveChannelAgeRestricted()
         if (entity == null) {
             if (channelType == CHANNEL_TYPE_THREAD || routeParentId != 0L) {
-                return ChannelItemCell.resolveChannelIcon(CHANNEL_TYPE_THREAD, routeChannelPrivate)
+                return ChannelItemCell.resolveChannelIcon(CHANNEL_TYPE_THREAD, routeChannelPrivate, isAgeRestricted)
             }
             if (channelType == CHANNEL_TYPE_CHANNEL) {
-                return ChannelItemCell.resolveChannelIcon(CHANNEL_TYPE_CHANNEL, routeChannelPrivate)
+                return ChannelItemCell.resolveChannelIcon(CHANNEL_TYPE_CHANNEL, routeChannelPrivate, isAgeRestricted)
             }
-            return MezonIcon.channelText
+            return ChannelItemCell.resolveChannelIcon(channelType, routeChannelPrivate, isAgeRestricted)
         }
         val type = if (entity.isThread) CHANNEL_TYPE_THREAD else entity.type
-        return ChannelItemCell.resolveChannelIcon(type, entity.isPrivate, entity.isAgeRestricted)
+        return ChannelItemCell.resolveChannelIcon(type, entity.isPrivate, isAgeRestricted)
     }
 
     private fun navigateToChannelFromHashtag(channelIdStr: String?) {
