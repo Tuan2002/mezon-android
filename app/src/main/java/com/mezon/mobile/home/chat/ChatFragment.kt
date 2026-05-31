@@ -165,6 +165,7 @@ private const val POLL_TALLY_TICK_MS = 15_000L
 private const val POLL_TALLY_MIN_GAP_MS = 12_000L
 private const val POLL_TALLY_MAX_PER_TICK = 8
 private const val TOPIC_BADGE_HYDRATE_DEBOUNCE_MS = 500L
+private val AT_HERE_INPUT_REGEX = Regex("(?<!\\w)@here(?!\\w)")
 
 open class ChatFragment : BaseFragment() {
 
@@ -2894,17 +2895,10 @@ open class ChatFragment : BaseFragment() {
     }
 
     private fun onPageDownClicked() {
-        if (returnToMessageId != 0L) {
-            val retId = returnToMessageId
-            returnToMessageId = 0L
-            scrollToReplyMessage(retId)
-        } else {
-            jumpToPresent()
-        }
+        jumpToPresent()
     }
 
     private fun jumpToPresent() {
-        returnToMessageId = 0L
         newUnreadCount = 0
         isViewingOlder = false
         hasMoreBottom = false
@@ -2926,13 +2920,8 @@ open class ChatFragment : BaseFragment() {
             markAsRead()
         } else {
             jumpingToPresent = true
-            messages.clear()
-            messagesDict.clear()
-            EmbedFormUtil.clearAll()
-            adapter.notifyMessagesUpdated()
-            recyclerView.visibility = View.INVISIBLE
             firstLoad = true
-            Log.d(TAG, "jumpToPresent: cleared list, calling loadMessages forceRefresh=true")
+            Log.d(TAG, "jumpToPresent: keeping current list until reload completes, loadMessages forceRefresh=true")
             chatController.loadMessages(channelId, clanId, forceRefresh = true, preferHttp = false, topicId = topicId)
         }
     }
@@ -6333,7 +6322,10 @@ open class ChatFragment : BaseFragment() {
             Log.d(TAG, "applyRealId tempId=$tempId realId=$realId already present, dropping optimistic")
             messagesDict.delete(tempId)
             messages.removeAt(idx)
-            if (fragmentView != null) adapter.notifyMessagesUpdated()
+            if (fragmentView != null) {
+                adapter.notifyMessageRemovedAt(idx)
+                updateUnreadDividerPosition()
+            }
             return
         }
 
@@ -6389,10 +6381,8 @@ open class ChatFragment : BaseFragment() {
 
     private var pendingHighlightMessageId = 0L
     private var pendingJumpMessageId = 0L
-    private var returnToMessageId = 0L
 
     private fun scrollToReplyMessage(messageId: Long) {
-        saveReturnPosition()
         val idx = messages.indexOfFirst { it.id == messageId }
         if (idx >= 0) {
             scrollToAndHighlight(idx)
@@ -6407,22 +6397,6 @@ open class ChatFragment : BaseFragment() {
                 preferHttp = openedFromNotification,
                 topicId = topicId
             )
-        }
-    }
-
-    private fun saveReturnPosition() {
-        if (messages.isEmpty()) return
-        val lm = recyclerView.layoutManager as? LinearLayoutManager ?: return
-        val firstPos = lm.findFirstVisibleItemPosition()
-        if (firstPos == RecyclerView.NO_POSITION) return
-        val v = recyclerView.findViewHolderForAdapterPosition(firstPos)?.itemView
-        val msgId = when (v) {
-            is ChatMessageCell -> v.messageEntity?.id
-            is SystemMessageCell -> v.messageEntity?.id
-            else -> null
-        }
-        if (msgId != null && msgId != 0L) {
-            returnToMessageId = msgId
         }
     }
 
@@ -6511,8 +6485,7 @@ open class ChatFragment : BaseFragment() {
     private fun mergeAtHereMentionsFromText(cleanedText: String, existing: List<MentionData>): List<MentionData> {
         val result = existing.toMutableList()
         if (cleanedText.isEmpty()) return result
-        val atHere = "(?<!\\w)@here(?!\\w)".toRegex()
-        for (match in atHere.findAll(cleanedText)) {
+        for (match in AT_HERE_INPUT_REGEX.findAll(cleanedText)) {
             val s = match.range.first
             val e = match.range.last + 1
             if (result.any { mentionIntervalsOverlap(it.startOffset, it.endOffset, s, e) }) continue

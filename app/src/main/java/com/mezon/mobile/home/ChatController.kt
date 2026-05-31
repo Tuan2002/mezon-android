@@ -99,6 +99,7 @@ const val LOAD_TYPE_MORE_BOTTOM = 2
 private const val DIRECTION_BEFORE = 3
 /** Wait for poll message over websocket after CreatePoll REST. */
 private const val POLL_MESSAGE_WAIT_MS = 8_000L
+private val FILENAME_SANITIZE_REGEX = Regex("[^a-zA-Z0-9._-]")
 
 private fun computeHasMoreTop(
     topicId: Long,
@@ -1349,7 +1350,7 @@ class ChatController @Inject constructor(
                                 continue
                             }
                             val timestamp = System.currentTimeMillis() / 1000
-                            val sanitizedName = item.filename.replace(Regex("[^a-zA-Z0-9._-]"), "_")
+                            val sanitizedName = item.filename.replace(FILENAME_SANITIZE_REGEX, "_")
                             val uploadFilename = "${timestamp}_$sanitizedName"
 
                             val presignResult = api.uploadAttachmentFile(
@@ -1500,7 +1501,7 @@ class ChatController @Inject constructor(
                         for (attempt in 1..SHARE_MAX_RETRIES) {
                             try {
                                 val timestamp = System.currentTimeMillis() / 1000
-                                val sanitizedName = item.filename.replace(Regex("[^a-zA-Z0-9._-]"), "_")
+                                val sanitizedName = item.filename.replace(FILENAME_SANITIZE_REGEX, "_")
                                 val uploadFilename = "${timestamp}_$sanitizedName"
 
                                 val presignResult = api.uploadAttachmentFile(

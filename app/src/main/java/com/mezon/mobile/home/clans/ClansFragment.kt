@@ -26,6 +26,7 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
+import androidx.recyclerview.widget.DefaultItemAnimator
 import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
@@ -238,7 +239,12 @@ class ClansFragment : BaseFragment() {
             layoutManager = LinearLayoutManager(context)
             setBackgroundColor(themeColors.serverRailBg)
             isVerticalScrollBarEnabled = false
-            itemAnimator = null
+            itemAnimator = DefaultItemAnimator().apply {
+                supportsChangeAnimations = false
+                addDuration = 180L
+                removeDuration = 180L
+                moveDuration = 220L
+            }
             setSelectorType(RecyclerListView.SELECTOR_CIRCLE_TO_BOUND)
         }
         serverAdapter = ServerRailAdapter()
@@ -1098,6 +1104,8 @@ class ClansFragment : BaseFragment() {
         sheet.show()
     }
 
+    private data class RailRow(val id: Long, val type: Int, val content: Any?)
+
     inner class ServerRailAdapter : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
 
         init { setHasStableIds(true) }
@@ -1130,15 +1138,10 @@ class ClansFragment : BaseFragment() {
             newLogoUrl: String = "",
             embeddedDiscoverRail: Boolean = false
         ) {
-            val oldUnreadDms = ArrayList(unreadDms)
-            val oldUnreadIds = oldUnreadDms.map { it.channelId }
-            val oldClans = ArrayList(clans)
-            val oldClanIds = oldClans.map { it.clanId }
-            val oldSelectedId = selectedClanId
-            val oldPendingFriendCount = pendingFriendCount
-            val oldLogoUrl = logoUrl
-            val oldEmbeddedDiscoverRail = embeddedRailDiscoverHighlight
-            val oldSize = itemCount
+            val oldRows = buildRows(
+                unreadDms, clans, selectedClanId,
+                pendingFriendCount, logoUrl, embeddedRailDiscoverHighlight
+            )
 
             unreadDms.clear()
             unreadDms.addAll(newUnreadDms)
@@ -1149,55 +1152,50 @@ class ClansFragment : BaseFragment() {
             logoUrl = newLogoUrl
             embeddedRailDiscoverHighlight = embeddedDiscoverRail
 
-            val newUnreadIds = newUnreadDms.map { it.channelId }
-            val newClanIds = newClans.map { it.clanId }
-            val newSize = itemCount
+            val newRows = buildRows(
+                unreadDms, clans, selectedClanId,
+                pendingFriendCount, logoUrl, embeddedRailDiscoverHighlight
+            )
 
-            val structureChanged = oldSize != newSize ||
-                oldUnreadIds != newUnreadIds ||
-                oldClanIds != newClanIds
-            if (structureChanged) {
-                notifyDataSetChanged()
-                return
+            DiffUtil.calculateDiff(object : DiffUtil.Callback() {
+                override fun getOldListSize() = oldRows.size
+                override fun getNewListSize() = newRows.size
+                override fun areItemsTheSame(oldPos: Int, newPos: Int) =
+                    oldRows[oldPos].id == newRows[newPos].id
+                override fun areContentsTheSame(oldPos: Int, newPos: Int) =
+                    oldRows[oldPos] == newRows[newPos]
+            }).dispatchUpdatesTo(this)
+        }
+
+        private fun buildRows(
+            unreadList: List<DirectMessage>,
+            clanList: List<ClanEntity>,
+            selectedId: Long,
+            pendingCount: Int,
+            logo: String,
+            discoverHighlight: Boolean
+        ): List<RailRow> {
+            val rows = ArrayList<RailRow>(unreadList.size + clanList.size + 4)
+            rows.add(RailRow(Long.MIN_VALUE, VIEW_TYPE_DM_HEADER, listOf(logo, pendingCount)))
+            for (dm in unreadList) {
+                rows.add(RailRow(dm.channelId, VIEW_TYPE_UNREAD_DM, listOf(dm.unreadCount, dm.lastMessageContent)))
             }
-
-            if (oldLogoUrl != newLogoUrl || oldPendingFriendCount != newPendingFriendCount) {
-                notifyItemChanged(0)
+            if (clanList.isNotEmpty()) {
+                rows.add(RailRow(Long.MIN_VALUE + 1, VIEW_TYPE_SEPARATOR, Unit))
             }
-
-            for (i in newUnreadDms.indices) {
-                val old = oldUnreadDms.getOrNull(i)
-                val new = newUnreadDms[i]
-                if (old == null || old.unreadCount != new.unreadCount ||
-                    old.lastMessageContent != new.lastMessageContent) {
-                    notifyItemChanged(dmHeaderCount + i)
-                }
+            for (clan in clanList) {
+                rows.add(
+                    RailRow(
+                        clan.clanId, VIEW_TYPE_CLAN,
+                        listOf(clan.badgeCount, clan.hasUnread, clan.logo, clan.clanName, clan.clanId == selectedId)
+                    )
+                )
             }
-
-            val sep = if (hasSeparator) 1 else 0
-            val clanStart = dmHeaderCount + unreadDms.size + sep
-            val oldClanMap = HashMap<Long, ClanEntity>(oldClans.size)
-            for (c in oldClans) oldClanMap[c.clanId] = c
-
-            for (i in newClans.indices) {
-                val new = newClans[i]
-                val old = oldClanMap[new.clanId]
-                val selected = new.clanId == newSelectedId
-                val wasSelected = new.clanId == oldSelectedId
-                if (old == null ||
-                    old.badgeCount != new.badgeCount ||
-                    old.hasUnread != new.hasUnread ||
-                    old.logo != new.logo ||
-                    old.clanName != new.clanName ||
-                    selected != wasSelected) {
-                    notifyItemChanged(clanStart + i)
-                }
+            if (discoverRailCellEnabled) {
+                rows.add(RailRow(Long.MIN_VALUE + 3, VIEW_TYPE_DISCOVER, discoverHighlight))
             }
-
-            if (discoverRailCellEnabled &&
-                oldEmbeddedDiscoverRail != embeddedRailDiscoverHighlight) {
-                notifyItemChanged(itemCount - 2)
-            }
+            rows.add(RailRow(Long.MIN_VALUE + 4, VIEW_TYPE_ADD_CLAN, Unit))
+            return rows
         }
 
         fun updatePendingFriendCount(count: Int) {

@@ -102,6 +102,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
+private val AT_HERE_INPUT_REGEX = Regex("(?<!\\w)@here(?!\\w)")
+
 class CreateThreadFragment : BaseFragment() {
 
     companion object {
@@ -1515,8 +1517,7 @@ class CreateThreadFragment : BaseFragment() {
     private fun mergeAtHereMentionsFromText(cleanedText: String, existing: List<MentionData>): List<MentionData> {
         val result = existing.toMutableList()
         if (cleanedText.isEmpty()) return result
-        val atHere = "(?<!\\w)@here(?!\\w)".toRegex()
-        for (match in atHere.findAll(cleanedText)) {
+        for (match in AT_HERE_INPUT_REGEX.findAll(cleanedText)) {
             val s = match.range.first
             val e = match.range.last + 1
             if (result.any { mentionIntervalsOverlap(it.startOffset, it.endOffset, s, e) }) continue
