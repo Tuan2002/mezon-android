@@ -14,13 +14,13 @@ import com.mezon.mobile.R
 import com.mezon.mobile.core.AvatarDrawable
 import com.mezon.mobile.core.LayoutHelper
 import com.mezon.mobile.core.ThemeColors
+import com.mezon.mobile.home.clans.ChannelItemCell
 import com.mezon.mobile.home.messages.ChannelAvatarLoadState
 import com.mezon.mobile.home.messages.ChannelAvatarRequest
 import com.mezon.mobile.home.messages.loadChannelAvatar
 import com.mezon.mobile.network.CHANNEL_TYPE_DM
 import com.mezon.mobile.network.CHANNEL_TYPE_GROUP
 import com.mezon.mobile.network.CHANNEL_TYPE_THREAD
-import com.mezon.mobile.ui.cells.MezonIcon
 
 class WelcomeMessageCell(context: Context, private val theme: ThemeColors) : View(context) {
 
@@ -28,6 +28,7 @@ class WelcomeMessageCell(context: Context, private val theme: ThemeColors) : Vie
     var channelType = 0
     var clanId = 0L
     var isPrivate = false
+    var isAgeRestricted = false
     var avatarUrl = ""
     var avatarUserId = 0L
     var avatarPlaceholderKey = ""
@@ -73,11 +74,7 @@ class WelcomeMessageCell(context: Context, private val theme: ThemeColors) : Vie
 
     private fun resolveChannelIcon(): Drawable? {
         if (isDM) return null
-        val iconEnum = if (isThread) {
-            if (isPrivate) MezonIcon.threadLockIcon else MezonIcon.threadIcon
-        } else {
-            if (isPrivate) MezonIcon.channelTextLock else MezonIcon.channelText
-        }
+        val iconEnum = ChannelItemCell.resolveChannelIcon(channelType, isPrivate, isAgeRestricted)
         val drawable = iconEnum.getDrawable(context, theme)
         if (!iconEnum.shouldKeepOriginalFill()) {
             drawable.colorFilter = PorterDuffColorFilter(theme.tabLabelInactive, PorterDuff.Mode.SRC_IN)
