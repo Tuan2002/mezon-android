@@ -289,6 +289,7 @@ open class ChatFragment : BaseFragment() {
     private var topicId = 0L
     private var rootMessageId = 0L
     private var topicRootHeader: TopicRootHeaderView? = null
+    private var cachedTopicRootMessage: MessageEntity? = null
     private val messageListKey: Long
         get() = if (topicId != 0L) topicId else channelId
     private val isTopicMode: Boolean
@@ -1404,16 +1405,6 @@ open class ChatFragment : BaseFragment() {
         actionBar = chatActionBar
         innerLayout.addView(chatActionBar, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, 56))
 
-        if (isTopicMode) {
-            topicRootHeader = TopicRootHeaderView(context, themeColors).apply {
-                visibility = View.GONE
-            }
-            innerLayout.addView(
-                topicRootHeader,
-                LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT)
-            )
-        }
-
         val contentFrame = FrameLayout(context)
         innerLayout.addView(contentFrame, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, 0, 1f))
 
@@ -2070,6 +2061,14 @@ open class ChatFragment : BaseFragment() {
             if (!isTopicMode) openTopicDiscussion(tid, rootId)
         }
         adapter.topicButtonEnabled = !isTopicMode
+        if (isTopicMode) {
+            adapter.setShowTopicRootHeader(true)
+            adapter.onTopicRootHeaderReady = { topicRootHeader = it }
+            cachedTopicRootMessage?.let { msg ->
+                adapter.topicRootMessage = msg
+                adapter.notifyTopicRootHeaderChanged()
+            }
+        }
         adapter.topicCreatorResolver = { creatorId ->
             memberResolver.resolveMember(creatorId, clanId, channelId, channelType)?.let { member ->
                 val name = member.clanNick.ifBlank { member.displayName.ifBlank { member.username } }
@@ -2589,7 +2588,7 @@ open class ChatFragment : BaseFragment() {
                     val references = buildReplyReferences()
                     chatController.sendDirectAttachment(
                         channelId, clanId, channelType, resolveChannelPrivate(),
-                        url, filetype, sticker.id, references
+                        url, filetype, sticker.id, references, topicId = topicId
                     )
                     clearReplyState()
                     hideEmojiView()
@@ -2600,7 +2599,7 @@ open class ChatFragment : BaseFragment() {
                     val references = buildReplyReferences()
                     chatController.sendDirectAttachment(
                         channelId, clanId, channelType, resolveChannelPrivate(),
-                        gifUrl, "image/gif", references = references
+                        gifUrl, "image/gif", references = references, topicId = topicId
                     )
                     clearReplyState()
                     hideEmojiView()
@@ -3498,6 +3497,10 @@ open class ChatFragment : BaseFragment() {
 
     private fun refreshChatSenderRoleRows() {
         if (isPaused || fragmentView == null) return
+        if (isTopicMode) {
+            topicRootHeader?.refreshDisplayRole()
+            if (::adapter.isInitialized) adapter.notifyTopicRootHeaderChanged()
+        }
         updateVisibleRows(NotificationCenter.UPDATE_MASK_NAME)
     }
 
@@ -5126,7 +5129,8 @@ open class ChatFragment : BaseFragment() {
             buildReplyReferences(),
             null,
             null,
-            null
+            null,
+            topicId = topicId
         )
         clearReplyState()
     }
@@ -5523,7 +5527,9 @@ open class ChatFragment : BaseFragment() {
         if (channelId == 0L) return false
         if (clanId == 0L || channelType == CHANNEL_TYPE_DM || channelType == CHANNEL_TYPE_GROUP) return true
         if (!permissionPolicy.hasCachedChannelUserPermissions(channelId)) return true
-        return permissionPolicy.checkPermission(PermissionPolicy.SEND_MESSAGE, channelId, clanId)
+        if (permissionPolicy.checkPermission(PermissionPolicy.SEND_MESSAGE, channelId, clanId)) return true
+        if (isTopicMode && permissionPolicy.canCreateThreadFromMessage(channelId, clanId)) return true
+        return false
     }
 
     private fun ensureCanSendMessageOrNotify(): Boolean {
@@ -5535,8 +5541,14 @@ open class ChatFragment : BaseFragment() {
 
     private fun isProtectedTopicDeleteMessage(msg: MessageEntity): Boolean {
         if (msg.code == MessageEntity.CODE_TOPIC) return true
+        if (msg.isTopicRootMessage) return true
         val hasTopicPayload = runCatching { org.json.JSONObject(msg.content).has("tp") }.getOrDefault(false)
         if (hasTopicPayload) return true
+        if (isTopicMode) {
+            if (rootMessageId != 0L && msg.id == rootMessageId) return true
+            val firstMessageId = messages.filterNot { it.isUnreadDivider }.minOfOrNull { it.id } ?: return false
+            return msg.id == firstMessageId
+        }
         val isThread = channelType == CHANNEL_TYPE_THREAD || routeParentId != 0L
         if (!isThread) return false
         val firstMessageId = messages.filterNot { it.isUnreadDivider }.minOfOrNull { it.id } ?: return false
@@ -5566,7 +5578,7 @@ open class ChatFragment : BaseFragment() {
         if (clanId == 0L) return false
         if (channelType == CHANNEL_TYPE_DM || channelType == CHANNEL_TYPE_GROUP) return false
         if (channelType == CHANNEL_TYPE_STREAMING || channelType == CHANNEL_TYPE_APP || channelType == CHANNEL_TYPE_VOICE) return false
-        if (!canSendMessageInCurrentChannel()) return false
+        if (msg.effectiveTopicId != 0L) return false
         if (msg.isPollMessage) return false
         if (msg.code == MessageEntity.CODE_TOPIC) return false
         if (msg.code == MessageEntity.CODE_CREATE_THREAD) return false
@@ -5575,7 +5587,7 @@ open class ChatFragment : BaseFragment() {
         if (msg.code == MessageEntity.CODE_AUDIT_LOG) return false
         if (msg.code == MessageEntity.CODE_WELCOME) return false
         if (msg.code == MessageEntity.CODE_UPCOMING_EVENT) return false
-        return true
+        return canSendMessageInCurrentChannel() || canManageThreadInCurrentChannel()
     }
 
     private fun showMessageActionSheet(msg: MessageEntity) {
@@ -5964,6 +5976,14 @@ open class ChatFragment : BaseFragment() {
             }
             MessageActionBottomSheet.ActionType.TopicDiscussion -> {
                 if (!canShowTopicDiscussionInMessageMenu(msg)) return
+                if (anonymousController.isAnonymous(clanId)) {
+                    MezonToast.show(
+                        this,
+                        ToastOverlay.ToastType.ERROR,
+                        getString(R.string.advanced_anonymous_off)
+                    )
+                    return
+                }
                 CreateThreadSeedStash.pendingSeedMessage = msg
                 presentFragment(
                     CreateThreadFragment.newInstance(
@@ -6866,6 +6886,7 @@ open class ChatFragment : BaseFragment() {
     private fun loadTopicRootHeaderMessage() {
         if (!isTopicMode || rootMessageId == 0L) return
         appScope.launch(ioDispatcher) {
+            chatController.reloadChannelMessageIfMissing(channelId, clanId, rootMessageId)
             var root = chatController.getMessageById(channelId, rootMessageId)
             if (root == null) {
                 val detail = topicController.fetchTopicDetail(topicId)
@@ -6899,8 +6920,11 @@ open class ChatFragment : BaseFragment() {
                 base
             }
             withContext(mainDispatcher) {
-                topicRootHeader?.setRootMessage(resolved)
-                topicRootHeader?.visibility = View.VISIBLE
+                cachedTopicRootMessage = resolved
+                if (::adapter.isInitialized) {
+                    adapter.topicRootMessage = resolved
+                    adapter.notifyTopicRootHeaderChanged()
+                }
             }
         }
     }
