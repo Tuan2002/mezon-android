@@ -70,7 +70,7 @@ internal class TopicMessageButtonLayout(
         topicLinkPaint.color = theme.textLink
         topicMutedPaint.textSize = TOPIC_TEXT_SIZE
         topicMutedPaint.color = theme.onSurfaceVariant
-        topicBgPaint.color = theme.dividerColor
+        topicBgPaint.color = theme.secondaryLight
         topicBorderPaint.color = theme.outlineVariant
         topicBorderPaint.strokeWidth = TOPIC_BORDER.toFloat()
     }
@@ -82,6 +82,25 @@ internal class TopicMessageButtonLayout(
     fun cancelAvatarLoad() {
         topicAvatarDisposable?.cancel()
         topicAvatarDisposable = null
+    }
+
+    fun clear() {
+        clearInternal()
+    }
+
+    private fun clearInternal() {
+        visible = false
+        blockHeight = 0
+        topicId = 0L
+        rootMessageId = 0L
+        topicButtonRect.setEmpty()
+        topicCreatorLayout = null
+        topicViewLayout = null
+        topicRepliesLayout = null
+        topicRepliesSecondRowLayout = null
+        useTwoTextRows = false
+        badgeCount = 0
+        badgeLabelText = ""
     }
 
     fun bind(
@@ -96,13 +115,7 @@ internal class TopicMessageButtonLayout(
         val effectiveTopicId = msg.effectiveTopicId
         visible = msg.isTopicRootMessage && effectiveTopicId != 0L
         if (!visible) {
-            blockHeight = 0
-            topicButtonRect.setEmpty()
-            topicCreatorLayout = null
-            topicViewLayout = null
-            topicRepliesLayout = null
-            topicRepliesSecondRowLayout = null
-            useTwoTextRows = false
+            clearInternal()
             return
         }
         topicId = effectiveTopicId
@@ -141,13 +154,7 @@ internal class TopicMessageButtonLayout(
 
     fun layout(contentLeft: Float, top: Float, width: Int) {
         if (!visible) {
-            topicButtonRect.setEmpty()
-            topicCreatorLayout = null
-            topicViewLayout = null
-            topicRepliesLayout = null
-            topicRepliesSecondRowLayout = null
-            useTwoTextRows = false
-            blockHeight = 0
+            clearInternal()
             return
         }
         val innerW = (width - contentLeft - PAD_END).toInt().coerceAtLeast(1)

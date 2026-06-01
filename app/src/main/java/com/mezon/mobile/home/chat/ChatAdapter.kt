@@ -35,6 +35,26 @@ class ChatAdapter(
         private const val TYPE_SYSTEM = 4
         private const val TYPE_WELCOME = 5
         private const val TYPE_SEND_TOKEN = 6
+        private const val TYPE_TOPIC_ROOT = 7
+    }
+
+    var showTopicRootHeader = false
+        private set
+    var topicRootHeaderRow = -1
+        private set
+    var topicRootMessage: MessageEntity? = null
+    var onTopicRootHeaderReady: ((TopicRootHeaderView) -> Unit)? = null
+
+    fun setShowTopicRootHeader(show: Boolean) {
+        if (showTopicRootHeader == show) return
+        showTopicRootHeader = show
+        updateRowsSafe()
+    }
+
+    fun notifyTopicRootHeaderChanged() {
+        if (topicRootHeaderRow >= 0) {
+            notifyItemChanged(topicRootHeaderRow)
+        }
     }
 
     var loadingUpRow = -1
@@ -52,6 +72,7 @@ class ChatAdapter(
 
     fun updateRowsInternal() {
         rowCount = 0
+        topicRootHeaderRow = -1
         if (messages.isNotEmpty()) {
             if (showLoadingDown) {
                 loadingDownRow = rowCount++
@@ -72,6 +93,9 @@ class ChatAdapter(
             messagesStartRow = 0
             messagesEndRow = 0
         }
+        if (showTopicRootHeader) {
+            topicRootHeaderRow = rowCount++
+        }
     }
 
     fun updateRowsSafe() {
@@ -80,10 +104,11 @@ class ChatAdapter(
         val prevLoadingDownRow = loadingDownRow
         val prevMessagesStartRow = messagesStartRow
         val prevMessagesEndRow = messagesEndRow
+        val prevTopicRootHeaderRow = topicRootHeaderRow
         updateRowsInternal()
         if (prevRowCount != rowCount || prevLoadingUpRow != loadingUpRow ||
             prevLoadingDownRow != loadingDownRow || prevMessagesStartRow != messagesStartRow ||
-            prevMessagesEndRow != messagesEndRow
+            prevMessagesEndRow != messagesEndRow || prevTopicRootHeaderRow != topicRootHeaderRow
         ) {
             notifyDataSetChanged()
         }
@@ -153,6 +178,7 @@ class ChatAdapter(
     override fun getItemId(position: Int): Long = when (position) {
         loadingUpRow -> Long.MIN_VALUE
         loadingDownRow -> Long.MIN_VALUE + 1
+        topicRootHeaderRow -> Long.MIN_VALUE + 2
         else -> {
             val idx = position - messagesStartRow
             if (idx in messages.indices) messages[idx].id else RecyclerView.NO_ID
@@ -162,6 +188,7 @@ class ChatAdapter(
     override fun getItemViewType(position: Int): Int = when (position) {
         loadingUpRow -> TYPE_LOADING_UP
         loadingDownRow -> TYPE_LOADING_DOWN
+        topicRootHeaderRow -> TYPE_TOPIC_ROOT
         else -> {
             val idx = position - messagesStartRow
             if (idx !in messages.indices) TYPE_RECEIVED
@@ -216,6 +243,15 @@ class ChatAdapter(
                 }
                 SendTokenViewHolder(cell)
             }
+            TYPE_TOPIC_ROOT -> {
+                val header = TopicRootHeaderView(parent.context, themeColors).apply {
+                    layoutParams = RecyclerView.LayoutParams(
+                        RecyclerView.LayoutParams.MATCH_PARENT,
+                        RecyclerView.LayoutParams.WRAP_CONTENT
+                    )
+                }
+                TopicRootViewHolder(header)
+            }
             else -> {
                 val cell = ChatMessageCell(parent.context, themeColors).apply {
                     layoutParams = RecyclerView.LayoutParams(
@@ -229,6 +265,15 @@ class ChatAdapter(
     }
 
     override fun onBindViewHolder(holder: RecyclerView.ViewHolder, position: Int) {
+        if (holder is TopicRootViewHolder) {
+            val resolver = displayRoleResolver
+            if (resolver != null) {
+                holder.header.configure(clanId, resolver)
+            }
+            holder.header.setRootMessage(topicRootMessage)
+            onTopicRootHeaderReady?.invoke(holder.header)
+            return
+        }
         val idx = position - messagesStartRow
         if (idx !in messages.indices) return
         when (holder) {
@@ -318,5 +363,6 @@ class ChatAdapter(
     class WelcomeViewHolder(val cell: WelcomeMessageCell) : RecyclerView.ViewHolder(cell)
     class SystemViewHolder(val cell: SystemMessageCell) : RecyclerView.ViewHolder(cell)
     class SendTokenViewHolder(val cell: SendTokenMessageCell) : RecyclerView.ViewHolder(cell)
+    class TopicRootViewHolder(val header: TopicRootHeaderView) : RecyclerView.ViewHolder(header)
     class LoadingViewHolder(view: android.view.View) : RecyclerView.ViewHolder(view)
 }

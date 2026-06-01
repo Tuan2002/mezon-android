@@ -786,7 +786,8 @@ class ChatController @Inject constructor(
             timestampSeconds = System.currentTimeMillis() / 1000,
             code = MessageEntity.CODE_CHAT,
             isMe = true,
-            sendState = MessageEntity.SEND_STATE_SENDING
+            sendState = MessageEntity.SEND_STATE_SENDING,
+            topicId = topicId
         )
         notificationCenter.postNotificationOnMainThread(
             NotificationCenter.didReceiveNewMessages, cacheKey, optimistic
@@ -933,7 +934,8 @@ class ChatController @Inject constructor(
             attachmentUrl = url,
             attachmentFiletype = filetype,
             attachmentFilename = filename.orEmpty(),
-            sendState = MessageEntity.SEND_STATE_SENDING
+            sendState = MessageEntity.SEND_STATE_SENDING,
+            topicId = topicId
         )
         notificationCenter.postNotificationOnMainThread(
             NotificationCenter.didReceiveNewMessages, cacheKey, optimistic
@@ -1322,7 +1324,8 @@ class ChatController @Inject constructor(
             attachmentWidth = firstItem?.width ?: 0,
             attachmentHeight = firstItem?.height ?: 0,
             extraAttachmentsJson = extraJson,
-            sendState = MessageEntity.SEND_STATE_SENDING
+            sendState = MessageEntity.SEND_STATE_SENDING,
+            topicId = topicId
         )
         notificationCenter.postNotificationOnMainThread(
             NotificationCenter.didReceiveNewMessages, cacheKey, optimistic

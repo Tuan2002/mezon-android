@@ -169,6 +169,7 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
         }
     var isCombined: Boolean = false
     var isInPinMode: Boolean = false
+    var isTopicHeaderContent: Boolean = false
 
     private val avatarDrawable = AvatarDrawable()
     private var currentAvatarUrl: String? = null
@@ -934,8 +935,15 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
     private fun maxBubbleWidth(): Int = maxBubbleWidth(currentWidth())
 
     private fun maxBubbleWidth(width: Int): Int {
+        if (isTopicHeaderContent) return width
         if (isInPinMode) return width - PIN_PAD_H * 2
         return width - PAD_H - AVATAR_SIZE - GAP_AVATAR - BUBBLE_RIGHT_INSET
+    }
+
+    private fun messageContentLeft(): Int = when {
+        isTopicHeaderContent -> 0
+        isInPinMode -> PIN_PAD_H
+        else -> PAD_H + AVATAR_SIZE + GAP_AVATAR
     }
 
     private fun buildCallLogLayouts(msg: MessageEntity, textWidth: Int, parsed: ParsedCallLogMessage) {
@@ -1390,7 +1398,7 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
         if (drawEphemeral && !isInPinMode) {
             val bodyH = mainContentStackHeight()
             if (bodyH > 0) {
-                val contentLeft = if (isInPinMode) PIN_PAD_H else PAD_H + AVATAR_SIZE + GAP_AVATAR
+                val contentLeft = messageContentLeft()
                 val top = yOffsetTopOfMainContent(msg)
                 ephemeralDecorRect.set(
                     contentLeft - EphemeralMessageUi.HORIZONTAL_INSET.toFloat(),
@@ -1414,7 +1422,7 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
 
     private fun buildTopicButton(msg: MessageEntity, width: Int) {
         if (!topicButtonEnabled || !msg.isTopicRootMessage) {
-            topicButtonLayout.bind(msg, "", "", "", "", "")
+            topicButtonLayout.clear()
             return
         }
         val creator = topicCreatorResolver?.invoke(msg.topicCreatorId)
@@ -1438,7 +1446,7 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
             topicBadgeCount
         )
         if (width > 0) {
-            val contentLeft = if (isInPinMode) PIN_PAD_H else PAD_H + AVATAR_SIZE + GAP_AVATAR
+            val contentLeft = messageContentLeft()
             topicButtonLayout.layout(contentLeft.toFloat(), yOffsetBeforeTopicButton(msg), width)
         }
     }
@@ -1471,7 +1479,7 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
     }
 
     private fun shareContactContentLeft(): Int =
-        if (isInPinMode) PIN_PAD_H else PAD_H + AVATAR_SIZE + GAP_AVATAR
+        messageContentLeft()
 
     private fun syncShareContactHitRect(contentLeft: Int) {
         if (!hasShareContactCard || shareContactParsed == null || shareContactCardDrawTopY.isNaN()) {
@@ -1494,7 +1502,7 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
             pollCardDrawTopY = Float.NaN
             return
         }
-        val contentLeft = if (isInPinMode) PIN_PAD_H else PAD_H + AVATAR_SIZE + GAP_AVATAR
+        val contentLeft = messageContentLeft()
         val drawTop = if (!pollCardDrawTopY.isNaN()) pollCardDrawTopY else verticalOffsetBeforePollCard()
         val xCard = contentLeft.toFloat()
         hasPollCard = true
@@ -2645,7 +2653,7 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
 
     private fun drawStickerOnly(canvas: Canvas, msg: MessageEntity) {
         val topPad = if (isCombined) COMBINE_PAD_V else PAD_V
-        val contentLeft = if (isInPinMode) PIN_PAD_H else PAD_H + AVATAR_SIZE + GAP_AVATAR
+        val contentLeft = messageContentLeft()
         var yOff = topPad.toFloat()
 
         if (!isCombined) {
@@ -2691,7 +2699,7 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
     private fun drawMessageBubble(canvas: Canvas, msg: MessageEntity) {
         pollCardDrawTopY = Float.NaN
         val topPad = if (isCombined) COMBINE_PAD_V else PAD_V
-        val contentLeft = if (isInPinMode) PIN_PAD_H else PAD_H + AVATAR_SIZE + GAP_AVATAR
+        val contentLeft = messageContentLeft()
 
         var yOff = topPad.toFloat()
 
