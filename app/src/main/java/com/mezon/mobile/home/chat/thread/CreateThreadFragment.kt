@@ -211,6 +211,7 @@ class CreateThreadFragment : BaseFragment() {
     private var voiceLongPressFired = false
     private var voiceTouchDownX = 0f
     private val voiceLongPressRunnable = Runnable { onVoiceLongPressFired() }
+    private var voiceCompleteRunnable: Runnable? = null
 
     private val openKeyboardRunnable = object : Runnable {
         override fun run() {
@@ -2275,22 +2276,24 @@ class CreateThreadFragment : BaseFragment() {
     private fun finishVoiceRecording() {
         val recorder = voiceRecorder
         val ctx = getContext()
-        voiceRecorder = null
         if (!voiceIsRecording || recorder == null || ctx == null) {
+            voiceRecorder = null
             teardownVoiceUi()
             return
         }
         val elapsed = recorder.elapsedMs()
         if (elapsed < VoiceRecorder.MIN_RECORD_MS) {
-            mainHandler.postDelayed({
-                completeVoiceRecording(recorder, ctx)
-            }, VoiceRecorder.MIN_RECORD_MS - elapsed)
+            val runnable = Runnable { completeVoiceRecording(recorder, ctx) }
+            voiceCompleteRunnable = runnable
+            mainHandler.postDelayed(runnable, VoiceRecorder.MIN_RECORD_MS - elapsed)
         } else {
             completeVoiceRecording(recorder, ctx)
         }
     }
 
     private fun completeVoiceRecording(recorder: VoiceRecorder, ctx: Context) {
+        voiceCompleteRunnable = null
+        voiceRecorder = null
         val result = recorder.stop()
         teardownVoiceUi()
         if (result == null) {
@@ -2306,6 +2309,8 @@ class CreateThreadFragment : BaseFragment() {
     }
 
     private fun cancelVoiceRecording(showToast: Boolean) {
+        voiceCompleteRunnable?.let { mainHandler.removeCallbacks(it) }
+        voiceCompleteRunnable = null
         voiceRecorder?.cancel()
         voiceRecorder = null
         voiceCancelled = true
@@ -2355,6 +2360,8 @@ class CreateThreadFragment : BaseFragment() {
     override fun onFragmentDestroy() {
         waitingForKeyboardOpen = false
         mainHandler.removeCallbacks(voiceLongPressRunnable)
+        voiceCompleteRunnable?.let { mainHandler.removeCallbacks(it) }
+        voiceCompleteRunnable = null
         voiceRecorder?.cancel()
         voiceRecorder = null
         AndroidUtilities.cancelRunOnUIThread(openKeyboardRunnable)

@@ -1309,4 +1309,5 @@
     <string name="sticker_delete_confirm_title">Xóa nhãn dán?</string>
     <string name="sticker_delete_confirm_msg">Bạn có chắc muốn xóa \"%1$s\"?</string>
     <string name="sticker_add_label">Thêm nhãn dán</string>
+    <string name="advanced_anonymous_off">Tắt ẩn danh</string>
 </resources>

@@ -79,6 +79,14 @@ class TopicRootHeaderView(
         metaView.refreshDisplayRole()
     }
 
+    override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+        if (visibility == GONE) {
+            setMeasuredDimension(MeasureSpec.getSize(widthMeasureSpec), 0)
+            return
+        }
+        super.onMeasure(widthMeasureSpec, heightMeasureSpec)
+    }
+
     override fun dispatchDraw(canvas: Canvas) {
         super.dispatchDraw(canvas)
         val y = height - borderPaint.strokeWidth / 2f
@@ -114,6 +122,7 @@ private class TopicRootMetaView(
         textSize = LayoutHelper.sp(12f)
     }
     private val roleIconPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { isFilterBitmap = true }
+    private val roleIconRect = RectF()
     private var nameLayout: StaticLayout? = null
     private var timeLayout: StaticLayout? = null
     private var avatarDisposable: MezonImageLoader.Cancellable? = null
@@ -274,17 +283,13 @@ private class TopicRootMetaView(
             if (reserveRoleIcon && roleIconBitmap != null) {
                 val iconX = textLeft + it.getLineWidth(0).toInt() + ROLE_ICON_GAP
                 val iconY = y + (it.height - ROLE_ICON_SIZE) / 2f
-                canvas.drawBitmap(
-                    roleIconBitmap!!,
-                    null,
-                    android.graphics.RectF(
-                        iconX.toFloat(),
-                        iconY,
-                        (iconX + ROLE_ICON_SIZE).toFloat(),
-                        iconY + ROLE_ICON_SIZE
-                    ),
-                    roleIconPaint
+                roleIconRect.set(
+                    iconX.toFloat(),
+                    iconY,
+                    (iconX + ROLE_ICON_SIZE).toFloat(),
+                    iconY + ROLE_ICON_SIZE
                 )
+                canvas.drawBitmap(roleIconBitmap!!, null, roleIconRect, roleIconPaint)
             }
             y += it.height + TIME_GAP
         }
