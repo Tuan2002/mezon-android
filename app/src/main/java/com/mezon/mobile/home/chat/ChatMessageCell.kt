@@ -826,6 +826,8 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
 
         if (mediaGridCount == 0) return
 
+        val uploadPendingFlags = msg.mediaUploadPendingFlags()
+
         if (mediaGridCount > 1 && mediaGroupSlots.size != mediaGridCount) {
             val parentW = currentWidth()
             val maxW = albumMaxWidthPx(parentW)
@@ -850,7 +852,7 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
             val isLocalUri = att.url.startsWith("content://") || att.url.startsWith("file://")
             val isVideo = att.filetype.startsWith("video/", true)
             slotIsVideo[i] = isVideo
-            slotUploadPending[i] = msg.isMediaAttachmentUploadPending(i)
+            slotUploadPending[i] = uploadPendingFlags.getOrElse(i) { false }
             if (isLocalUri && isVideo) {
                 receiver.recycle()
                 loadLocalVideoThumbnail(att.url, i)

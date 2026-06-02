@@ -11,6 +11,9 @@
     <string name="common_create">Tạo</string>
     <string name="common_confirm">Xác nhận</string>
     <string name="common_close">Đóng</string>
+    <string name="toast_title_success">Thành công</string>
+    <string name="toast_title_error">Lỗi</string>
+    <string name="toast_title_info">Thông tin</string>
     <string name="common_open_settings">Mở cài đặt</string>
     <string name="common_retry">Thử lại</string>
     <string name="common_refresh">Làm mới</string>

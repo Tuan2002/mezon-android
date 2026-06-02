@@ -5,6 +5,7 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Matrix
 import android.media.ExifInterface
+import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.os.Build
 import android.util.Log
@@ -51,8 +52,48 @@ object AttachmentUploader {
     private const val IMAGE_MAX_DIMENSION = 2560
     private const val IMAGE_WEBP_QUALITY = 85
     private const val IMAGE_RECOMPRESS_MIN_BYTES = 512L * 1024
+    private const val VIDEO_THUMB_MAX_DIMENSION = 640
+    private const val VIDEO_THUMB_JPEG_QUALITY = 85
+    private const val VIDEO_THUMB_FRAME_US = 100_000L
 
-    data class CompressedImage(
+    fun isVideoMimeType(mimeType: String): Boolean =
+        mimeType.startsWith("video/", ignoreCase = true)
+
+    fun extractVideoThumbnailJpeg(file: File): CompressedImage? {
+        val retriever = MediaMetadataRetriever()
+        var frame: Bitmap? = null
+        return try {
+            retriever.setDataSource(file.absolutePath)
+            frame = retriever.getFrameAtTime(
+                VIDEO_THUMB_FRAME_US,
+                MediaMetadataRetriever.OPTION_CLOSEST_SYNC,
+            ) ?: return null
+            var bitmap = scaleToMaxDimension(frame, VIDEO_THUMB_MAX_DIMENSION)
+            if (bitmap !== frame) frame.recycle()
+            frame = null
+            val out = ByteArrayOutputStream()
+            val ok = bitmap.compress(Bitmap.CompressFormat.JPEG, VIDEO_THUMB_JPEG_QUALITY, out)
+            val w = bitmap.width
+            val h = bitmap.height
+            bitmap.recycle()
+            if (!ok) return null
+            CompressedImage(
+                bytes = out.toByteArray(),
+                width = w,
+                height = h,
+                mimeType = "image/jpeg",
+                filename = "thumb.jpg",
+            )
+        } catch (e: Throwable) {
+            Log.w(TAG, "extractVideoThumbnailJpeg failed path=${file.absolutePath}", e)
+            null
+        } finally {
+            frame?.recycle()
+            runCatching { retriever.release() }
+        }
+    }
+
+    class CompressedImage(
         val bytes: ByteArray,
         val width: Int,
         val height: Int,

@@ -316,32 +316,49 @@ data class MessageEntity(
         return url.startsWith("content://") || url.startsWith("file://")
     }
 
-    fun attachmentUploadFailed(url: String): Boolean {
-        if (extraAttachmentsJson.isEmpty()) return false
+    private fun parseUploadErrorUrls(): Set<String> {
+        if (extraAttachmentsJson.isEmpty()) return emptySet()
         return try {
             val arr = JSONArray(extraAttachmentsJson)
+            val urls = HashSet<String>()
             for (i in 0 until arr.length()) {
                 val obj = arr.getJSONObject(i)
-                if (obj.optString("url") == url) return obj.optBoolean("upload_error", false)
+                if (obj.optBoolean("upload_error", false)) urls.add(obj.optString("url"))
             }
-            false
+            urls
         } catch (_: Exception) {
-            false
+            emptySet()
         }
+    }
+
+    fun attachmentUploadFailed(url: String): Boolean = url in parseUploadErrorUrls()
+
+    private fun isMediaUploadPending(att: AttachmentInfo, index: Int, errorUrls: Set<String>): Boolean {
+        val url = att.url
+        if (!isLocalAttachmentUrl(url)) return false
+        if (url in errorUrls) return false
+        if (index == 0 && attachmentUrl == url && isError) return false
+        return true
     }
 
     fun isMediaAttachmentUploadPending(mediaIndex: Int): Boolean {
         val media = allImageAttachments
         if (mediaIndex !in media.indices) return false
-        val url = media[mediaIndex].url
-        if (!isLocalAttachmentUrl(url)) return false
-        if (attachmentUploadFailed(url)) return false
-        if (mediaIndex == 0 && attachmentUrl == url && isError) return false
-        return true
+        return isMediaUploadPending(media[mediaIndex], mediaIndex, parseUploadErrorUrls())
+    }
+
+    fun mediaUploadPendingFlags(): List<Boolean> {
+        val media = allImageAttachments
+        if (media.isEmpty()) return emptyList()
+        val errorUrls = parseUploadErrorUrls()
+        return media.indices.map { isMediaUploadPending(media[it], it, errorUrls) }
     }
 
     fun hasPendingMediaAttachmentUploads(): Boolean {
-        return allImageAttachments.indices.any { isMediaAttachmentUploadPending(it) }
+        val media = allImageAttachments
+        if (media.isEmpty()) return false
+        val errorUrls = parseUploadErrorUrls()
+        return media.indices.any { isMediaUploadPending(media[it], it, errorUrls) }
     }
 
     fun buildAttachmentJson(): String {

@@ -43,6 +43,9 @@ import kotlinx.coroutines.withContext
 import java.util.Locale
 
 private const val TAG = "PhotoViewer"
+private const val LOADING_SHOW_DELAY_MS = 300L
+private const val MIN_LOADING_VISIBLE_MS = 300L
+private const val LOADING_FADE_MS = 150L
 
 class PhotoViewer(context: Context) : Dialog(context, android.R.style.Theme_Black_NoTitleBar_Fullscreen) {
 
@@ -269,6 +272,10 @@ class PhotoViewer(context: Context) : Dialog(context, android.R.style.Theme_Blac
         ) : RecyclerView.ViewHolder(container) {
             var pendingLoad: MezonImageLoader.Cancellable? = null
             var bindGeneration: Long = 0L
+            var progressShown = false
+            var progressShownAt = 0L
+            var showProgressRunnable: Runnable? = null
+            var hideProgressRunnable: Runnable? = null
         }
 
         private fun stopAndClearPhotoView(photoView: PhotoView) {
@@ -340,11 +347,68 @@ class PhotoViewer(context: Context) : Dialog(context, android.R.style.Theme_Blac
             return ViewHolder(container, photoView, progress)
         }
 
+        private fun cancelProgressAnim(holder: ViewHolder) {
+            holder.showProgressRunnable?.let { holder.progressBar.removeCallbacks(it) }
+            holder.showProgressRunnable = null
+            holder.hideProgressRunnable?.let { holder.progressBar.removeCallbacks(it) }
+            holder.hideProgressRunnable = null
+            holder.progressBar.animate().cancel()
+        }
+
+        private fun scheduleShowProgress(holder: ViewHolder, bindGen: Long) {
+            cancelProgressAnim(holder)
+            holder.progressShown = false
+            holder.progressBar.visibility = View.GONE
+            holder.progressBar.alpha = 1f
+            val runnable = Runnable {
+                if (holder.bindGeneration != bindGen) return@Runnable
+                holder.progressShown = true
+                holder.progressShownAt = android.os.SystemClock.elapsedRealtime()
+                holder.progressBar.visibility = View.VISIBLE
+                holder.progressBar.alpha = 0f
+                holder.progressBar.animate().alpha(1f).setDuration(LOADING_FADE_MS).start()
+            }
+            holder.showProgressRunnable = runnable
+            holder.progressBar.postDelayed(runnable, LOADING_SHOW_DELAY_MS)
+        }
+
+        private fun hideProgressBar(holder: ViewHolder, bindGen: Long) {
+            holder.showProgressRunnable?.let { holder.progressBar.removeCallbacks(it) }
+            holder.showProgressRunnable = null
+            if (!holder.progressShown) {
+                holder.progressBar.visibility = View.GONE
+                return
+            }
+            val elapsedVisible = android.os.SystemClock.elapsedRealtime() - holder.progressShownAt
+            val delay = (MIN_LOADING_VISIBLE_MS - elapsedVisible).coerceAtLeast(0L)
+            holder.hideProgressRunnable?.let { holder.progressBar.removeCallbacks(it) }
+            val runnable = Runnable {
+                if (holder.bindGeneration != bindGen) return@Runnable
+                holder.hideProgressRunnable = null
+                holder.progressBar.animate().cancel()
+                holder.progressBar.animate()
+                    .alpha(0f)
+                    .setDuration(LOADING_FADE_MS)
+                    .withEndAction {
+                        if (holder.bindGeneration == bindGen) {
+                            holder.progressBar.visibility = View.GONE
+                            holder.progressBar.alpha = 1f
+                            holder.progressShown = false
+                        }
+                    }
+                    .start()
+            }
+            holder.hideProgressRunnable = runnable
+            if (delay > 0) holder.progressBar.postDelayed(runnable, delay) else runnable.run()
+        }
+
         override fun onViewRecycled(holder: ViewHolder) {
             super.onViewRecycled(holder)
             holder.pendingLoad?.cancel()
             holder.pendingLoad = null
             holder.bindGeneration++
+            cancelProgressAnim(holder)
+            holder.progressShown = false
             holder.progressBar.visibility = View.GONE
             stopAndClearPhotoView(holder.photoView)
         }
@@ -357,6 +421,7 @@ class PhotoViewer(context: Context) : Dialog(context, android.R.style.Theme_Blac
             holder.pendingLoad = null
             holder.bindGeneration++
             val bindGen = holder.bindGeneration
+            cancelProgressAnim(holder)
             stopAndClearPhotoView(photoView)
 
             val hasThumb = position == currentIndex && initialThumb != null
@@ -364,8 +429,9 @@ class PhotoViewer(context: Context) : Dialog(context, android.R.style.Theme_Blac
                 photoView.setImageBitmap(initialThumb)
                 photoView.getAttacher().update()
                 photoView.setScale(1f, false)
+            } else {
+                scheduleShowProgress(holder, bindGen)
             }
-            holder.progressBar.visibility = if (hasThumb) View.GONE else View.VISIBLE
 
             startLoad(holder, url, bindGen, allowRetry = true)
         }
@@ -377,7 +443,7 @@ class PhotoViewer(context: Context) : Dialog(context, android.R.style.Theme_Blac
                     if (allowRetry) {
                         startLoad(holder, url, bindGen, allowRetry = false)
                     } else {
-                        holder.progressBar.visibility = View.GONE
+                        hideProgressBar(holder, bindGen)
                     }
                 }
             }
@@ -388,7 +454,7 @@ class PhotoViewer(context: Context) : Dialog(context, android.R.style.Theme_Blac
                     holder.pendingLoad = loader.loadDrawable(url, 0, 0,
                         onSuccess = { drawable ->
                             if (holder.bindGeneration != bindGen) return@loadDrawable
-                            holder.progressBar.visibility = View.GONE
+                            hideProgressBar(holder, bindGen)
                             applyLoadedDrawable(holder, drawable)
                         },
                         onError = { onErr() }
@@ -397,7 +463,7 @@ class PhotoViewer(context: Context) : Dialog(context, android.R.style.Theme_Blac
                     holder.pendingLoad = loader.load(url, 0, 0,
                         onSuccess = { bmp ->
                             if (holder.bindGeneration != bindGen) return@load
-                            holder.progressBar.visibility = View.GONE
+                            hideProgressBar(holder, bindGen)
                             applyLoadedBitmap(holder, bmp)
                         },
                         onError = { onErr() }
@@ -411,7 +477,7 @@ class PhotoViewer(context: Context) : Dialog(context, android.R.style.Theme_Blac
                 holder.pendingLoad = loader.load(loadUrl, screenW, screenH,
                     onSuccess = { bmp ->
                         if (holder.bindGeneration != bindGen) return@load
-                        holder.progressBar.visibility = View.GONE
+                        hideProgressBar(holder, bindGen)
                         applyLoadedBitmap(holder, bmp)
                     },
                     onError = { onErr() },

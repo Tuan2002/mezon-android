@@ -12,10 +12,8 @@ object MediaGroupLayout {
     private const val MAX_SIZE_HEIGHT = 814f
     private const val LAYOUT_TO_PIXEL = 1000f
 
-    // Single album shows up to 12 photos (Telegram's line algorithm resolves <= 12).
     private const val SINGLE_ALBUM_MAX = 12
 
-    // When split, each sub-album caps at 10 like Telegram, distributed evenly.
     private const val SPLIT_CHUNK_MAX = 10
 
     private const val FLAG_LEFT = 1
