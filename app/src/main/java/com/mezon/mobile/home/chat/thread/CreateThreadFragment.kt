@@ -1059,10 +1059,20 @@ class CreateThreadFragment : BaseFragment() {
     private fun openAttachAlert() {
         dismissPasteImagePopup()
         val ctx = getContext() ?: return
-        val alert = ChatAttachAlert(ctx, mediaController, themeColors)
+        val preselected = pendingAttachments.filter { !it.isFileType }
+        val alert = ChatAttachAlert(ctx, mediaController, themeColors, preselected)
         alert.attachDelegate = object : ChatAttachAlert.ChatAttachAlertDelegate {
-            override fun onAttachmentsSelected(items: List<AttachmentPickerItem>) {
-                pendingAttachments.addAll(items)
+            override fun canSelectMore(): Boolean {
+                return pendingAttachments.size < AttachmentPickerItem.GALLERY_MAX_SELECTION
+            }
+
+            override fun onSelectionChanged(item: AttachmentPickerItem, selected: Boolean) {
+                if (selected) {
+                    if (pendingAttachments.any { it.id == item.id }) return
+                    pendingAttachments.add(item)
+                } else {
+                    pendingAttachments.removeAll { it.id == item.id }
+                }
                 updateAttachmentPreview()
                 updateSendButtonState()
             }
@@ -1112,11 +1122,7 @@ class CreateThreadFragment : BaseFragment() {
         val uri = data?.data ?: return
         val ctx = getContext() ?: return
         val item = AttachmentPickerItem.fromDocumentUri(ctx, uri) ?: return
-        val maxSize = if (item.mimeType.startsWith("image/")) {
-            AttachmentPickerItem.IMAGE_MAX_FILE_SIZE
-        } else {
-            AttachmentPickerItem.MAX_FILE_SIZE
-        }
+        val maxSize = AttachmentPickerItem.maxFileSizeBytes(item.mimeType)
         if (item.size > maxSize) {
             val limitText = FileUtils.formatFileSize(maxSize)
             MezonToast.show(this, ToastOverlay.ToastType.ERROR, getString(R.string.file_too_large, limitText))

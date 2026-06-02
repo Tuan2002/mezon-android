@@ -71,6 +71,13 @@ class ImageReceiver(private val parentView: View) {
         roundRadius.fill(radius)
     }
 
+    fun setRoundRadius(topLeft: Int, topRight: Int, bottomRight: Int, bottomLeft: Int) {
+        roundRadius[0] = topLeft
+        roundRadius[1] = topRight
+        roundRadius[2] = bottomRight
+        roundRadius[3] = bottomLeft
+    }
+
     fun setRequestedSize(w: Int, h: Int) {
         requestW = w
         requestH = h

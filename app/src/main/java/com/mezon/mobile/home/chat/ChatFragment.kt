@@ -237,6 +237,7 @@ open class ChatFragment : BaseFragment() {
     private lateinit var dialogsController: DialogsController
     private lateinit var channelController: ChannelController
     private lateinit var mediaController: MediaController
+    private lateinit var channelGalleryController: com.mezon.mobile.home.ChannelGalleryController
     private lateinit var audioPlayerController: AudioPlayerController
     private lateinit var permissionPolicy: PermissionPolicy
     private lateinit var pinMessageController: com.mezon.mobile.home.PinMessageController
@@ -292,6 +293,8 @@ open class ChatFragment : BaseFragment() {
     private var topicId = 0L
     private var rootMessageId = 0L
     private var topicRootHeader: TopicRootHeaderView? = null
+    private var activePhotoViewer: PhotoViewer? = null
+    private var photoViewerSelectedUrl = ""
     private var cachedTopicRootMessage: MessageEntity? = null
     private val messageListKey: Long
         get() = if (topicId != 0L) topicId else channelId
@@ -894,7 +897,7 @@ open class ChatFragment : BaseFragment() {
                 }
                 if (pendingIdx >= 0) {
                     val pending = messages[pendingIdx]
-                    applyRealId(pending.id, entity.id)
+                    applyRealId(pending.id, entity.id, entity)
                     return@observe
                 }
             }
@@ -1003,8 +1006,8 @@ open class ChatFragment : BaseFragment() {
             if (idx >= 0) {
                 val existing = messages[idx]
                 val mask = if (args.size >= 3) args[2] as? Int ?: NotificationCenter.UPDATE_MASK_MESSAGE_TEXT else NotificationCenter.UPDATE_MASK_MESSAGE_TEXT
-                val merged = if (mask and NotificationCenter.UPDATE_MASK_TOPIC != 0) {
-                    existing.copy(
+                val merged = when {
+                    (mask and NotificationCenter.UPDATE_MASK_TOPIC) != 0 -> existing.copy(
                         content = updateEntity.content,
                         updateTimeSeconds = updateEntity.updateTimeSeconds,
                         hideEditted = updateEntity.hideEditted,
@@ -1014,8 +1017,29 @@ open class ChatFragment : BaseFragment() {
                         rplCount = updateEntity.rplCount,
                         lastSentSeconds = updateEntity.lastSentSeconds
                     )
-                } else {
-                    existing.copy(
+                    (mask and NotificationCenter.UPDATE_MASK_ATTACHMENTS) != 0 -> existing.copy(
+                        content = updateEntity.content.ifBlank { existing.content },
+                        updateTimeSeconds = updateEntity.updateTimeSeconds,
+                        hideEditted = updateEntity.hideEditted,
+                        code = updateEntity.code,
+                        attachmentUrl = updateEntity.attachmentUrl,
+                        attachmentThumb = updateEntity.attachmentThumb,
+                        attachmentWidth = updateEntity.attachmentWidth,
+                        attachmentHeight = updateEntity.attachmentHeight,
+                        attachmentFilename = updateEntity.attachmentFilename,
+                        attachmentFiletype = updateEntity.attachmentFiletype,
+                        attachmentSize = updateEntity.attachmentSize,
+                        attachmentDuration = updateEntity.attachmentDuration,
+                        extraAttachmentsJson = updateEntity.extraAttachmentsJson,
+                        messageType = updateEntity.messageType,
+                        isError = updateEntity.isError,
+                        sendState = if (updateEntity.sendState != MessageEntity.SEND_STATE_SENDING) {
+                            updateEntity.sendState
+                        } else {
+                            existing.sendState
+                        },
+                    )
+                    else -> existing.copy(
                         content = updateEntity.content,
                         updateTimeSeconds = updateEntity.updateTimeSeconds,
                         hideEditted = updateEntity.hideEditted,
@@ -1289,6 +1313,12 @@ open class ChatFragment : BaseFragment() {
             }
         }
 
+        observeGlobal(NotificationCenter.channelGalleryDidLoad) { _, _, args ->
+            val cid = args.getOrNull(0) as? Long ?: return@observeGlobal
+            if (cid != channelId || activePhotoViewer == null) return@observeGlobal
+            refreshActivePhotoViewerGallery()
+        }
+
         notificationCenter.addPostponeNotificationsCallback(postponeNewMessagesCallback)
 
         isLoading = true
@@ -1301,6 +1331,7 @@ open class ChatFragment : BaseFragment() {
         dialogsController = entryPoint.dialogsController()
         channelController = entryPoint.channelController()
         mediaController = entryPoint.mediaController()
+        channelGalleryController = entryPoint.channelGalleryController()
         audioPlayerController = entryPoint.audioPlayerController()
         userClanController = entryPoint.userClanController()
         userController = entryPoint.userController()
@@ -1866,21 +1897,13 @@ open class ChatFragment : BaseFragment() {
                 if (url.isEmpty()) return
 
                 val isVideo = att.filetype.startsWith("video/")
-                val isSticker = att.filetype.equals("sticker", ignoreCase = true) ||
-                    url.contains("/stickers/", ignoreCase = true)
-                val isGif = isSticker ||
-                    att.filetype.contains("gif", true) ||
-                    url.contains("tenor.com", true)
                 val thumbBmp = cell.getMediaBitmap(attachmentIndex)
 
-                when {
-                    isVideo -> VideoPlayerDialog(context).play(url)
-                    isGif -> PhotoViewer(context).show(url, thumbBitmap = thumbBmp, preferDrawableLoader = true)
-                    else -> {
-                        val gallery = allMedia.filter { !it.filetype.startsWith("video/") }.map { it.url }
-                        val idx = gallery.indexOf(url).coerceAtLeast(0)
-                        PhotoViewer(context).show(url, gallery = gallery, index = idx, thumbBitmap = thumbBmp)
-                    }
+                if (isVideo) {
+                    VideoPlayerDialog(context).play(url)
+                } else {
+                    val seed = allMedia.filter { !it.filetype.startsWith("video/") && it.url.isNotEmpty() }.map { it.url }
+                    openChannelPhotoViewer(context, url, thumbBmp, seed)
                 }
             }
             override fun didClickFile(cell: ChatMessageCell, msg: MessageEntity) {
@@ -2636,6 +2659,9 @@ open class ChatFragment : BaseFragment() {
     }
 
     override fun onFragmentDestroy() {
+        activePhotoViewer?.setOnDismissListener(null)
+        activePhotoViewer?.dismiss()
+        activePhotoViewer = null
         dismissPasteImagePopup()
         waitingForKeyboardOpen = false
         AndroidUtilities.cancelRunOnUIThread(openKeyboardRunnable)
@@ -3510,6 +3536,53 @@ open class ChatFragment : BaseFragment() {
         updateVisibleRows(NotificationCenter.UPDATE_MASK_NAME)
     }
 
+    private fun channelGalleryImageUrls(): List<String> =
+        channelGalleryController.getItems(channelId)
+            .asSequence()
+            .filter { !it.isVideo && it.url.isNotEmpty() }
+            .map { it.url }
+            .distinct()
+            .toList()
+
+    private fun buildPhotoViewerUrls(selectedUrl: String, seedUrls: List<String> = emptyList()): List<String> {
+        val base = channelGalleryImageUrls()
+        if (base.isEmpty()) {
+            return when {
+                seedUrls.isNotEmpty() -> seedUrls
+                selectedUrl.isEmpty() -> emptyList()
+                else -> listOf(selectedUrl)
+            }
+        }
+        return if (selectedUrl.isEmpty() || base.contains(selectedUrl)) base else listOf(selectedUrl) + base
+    }
+
+    private fun openChannelPhotoViewer(context: Context, url: String, thumbBmp: Bitmap?, seedUrls: List<String>) {
+        val viewer = PhotoViewer(context)
+        activePhotoViewer = viewer
+        photoViewerSelectedUrl = url
+        viewer.onCurrentUrlChanged = { photoViewerSelectedUrl = it }
+        viewer.onReachedOldestEdge = { channelGalleryController.fetchOlderIfNeeded(channelId, clanId) }
+        viewer.setOnDismissListener {
+            if (activePhotoViewer === viewer) activePhotoViewer = null
+        }
+        val initial = buildPhotoViewerUrls(url, seedUrls)
+        val idx = initial.indexOf(url).coerceAtLeast(0)
+        viewer.show(url, gallery = initial, index = idx, thumbBitmap = thumbBmp)
+        val loaded = channelGalleryController.isInitialLoadFinished(channelId)
+        if (!loaded) {
+            channelGalleryController.clearAndReload(channelId, clanId)
+        } else {
+            refreshActivePhotoViewerGallery()
+        }
+    }
+
+    private fun refreshActivePhotoViewerGallery() {
+        val viewer = activePhotoViewer ?: return
+        val urls = buildPhotoViewerUrls(photoViewerSelectedUrl)
+        if (urls.isEmpty()) return
+        viewer.updateGallery(urls, photoViewerSelectedUrl)
+    }
+
     private fun updateVisibleRows(mask: Int = 0) {
         if (isPaused) return
         if (scrollingManually && mask != 0) {
@@ -3546,21 +3619,42 @@ open class ChatFragment : BaseFragment() {
             existing.updateTimeSeconds == entity.updateTimeSeconds &&
             existing.hideEditted == entity.hideEditted &&
             existing.reactionsJson == entity.reactionsJson &&
-            existing.sendState == entity.sendState
+            existing.sendState == entity.sendState &&
+            existing.attachmentUrl == entity.attachmentUrl &&
+            existing.extraAttachmentsJson == entity.extraAttachmentsJson &&
+            existing.isError == entity.isError
         ) {
             if (BuildConfig.DEBUG) {
                 Log.d(TAG, "didReceiveNewMessages exact duplicate id=${entity.id} code=${entity.code}")
             }
             return true
         }
+        val merged = if (entity.isMe) {
+            chatController.mergeSelfSentMessageEcho(existing, entity)
+        } else {
+            entity.copy(sendState = MessageEntity.SEND_STATE_SENT, isError = false)
+        }
         val idx = messages.indexOfFirst { it.id == entity.id }
-        val merged = entity.copy(sendState = MessageEntity.SEND_STATE_SENT, isError = false)
         messagesDict.put(merged.id, merged)
         if (idx >= 0) {
             messages[idx] = merged
         }
         if (fragmentView != null) {
-            updateVisibleRows(NotificationCenter.UPDATE_MASK_MESSAGE_TEXT)
+            var mask = 0
+            if (merged.content != existing.content) {
+                mask = mask or NotificationCenter.UPDATE_MASK_MESSAGE_TEXT
+            }
+            if (merged.attachmentUrl != existing.attachmentUrl ||
+                merged.extraAttachmentsJson != existing.extraAttachmentsJson ||
+                merged.messageType != existing.messageType
+            ) {
+                mask = mask or NotificationCenter.UPDATE_MASK_ATTACHMENTS
+            }
+            if (merged.sendState != existing.sendState || merged.isError != existing.isError) {
+                mask = mask or NotificationCenter.UPDATE_MASK_SEND_STATE
+            }
+            if (mask == 0) mask = NotificationCenter.UPDATE_MASK_MESSAGE_TEXT
+            updateVisibleRows(mask)
         }
         if (BuildConfig.DEBUG) {
             Log.d(
@@ -4392,14 +4486,24 @@ open class ChatFragment : BaseFragment() {
     private fun openAttachAlert() {
         dismissPasteImagePopup()
         val ctx = getContext() ?: return
-        val alert = ChatAttachAlert(ctx, mediaController, themeColors)
+        val preselected = pendingAttachments.filter { !it.isFileType }
+        val alert = ChatAttachAlert(ctx, mediaController, themeColors, preselected)
         alert.attachDelegate = object : ChatAttachAlert.ChatAttachAlertDelegate {
-            override fun onAttachmentsSelected(items: List<AttachmentPickerItem>) {
-                if (!ensureCanSendMessageOrNotify()) return
-                pendingAttachments.addAll(items)
+            override fun canSelectMore(): Boolean {
+                return pendingAttachments.size < AttachmentPickerItem.GALLERY_MAX_SELECTION
+            }
+
+            override fun onSelectionChanged(item: AttachmentPickerItem, selected: Boolean) {
+                if (selected) {
+                    if (pendingAttachments.any { it.id == item.id }) return
+                    pendingAttachments.add(item)
+                } else {
+                    pendingAttachments.removeAll { it.id == item.id }
+                }
                 updateAttachmentPreview()
                 updateSendButtonState()
             }
+
             override fun onFilesRequested() {
                 if (!ensureCanSendMessageOrNotify()) return
                 launchDocumentPicker()
@@ -4537,11 +4641,7 @@ open class ChatFragment : BaseFragment() {
         val ctx = getContext() ?: return
         val item = AttachmentPickerItem.fromDocumentUri(ctx, uri) ?: return
 
-        val maxSize = if (item.mimeType.startsWith("image/")) {
-            AttachmentPickerItem.IMAGE_MAX_FILE_SIZE
-        } else {
-            AttachmentPickerItem.MAX_FILE_SIZE
-        }
+        val maxSize = AttachmentPickerItem.maxFileSizeBytes(item.mimeType)
         if (item.size > maxSize) {
             val limitText = FileUtils.formatFileSize(maxSize)
             MezonToast.show(this, ToastOverlay.ToastType.ERROR, getString(R.string.file_too_large, limitText))
@@ -6339,7 +6439,7 @@ open class ChatFragment : BaseFragment() {
         inputField.text?.clear()
     }
 
-    private fun applyRealId(tempId: Long, realId: Long) {
+    private fun applyRealId(tempId: Long, realId: Long, echoEntity: MessageEntity? = null) {
         if (tempId == realId) {
             markMessageSent(tempId)
             return
@@ -6364,15 +6464,41 @@ open class ChatFragment : BaseFragment() {
 
         val old = messages[idx]
         messagesDict.delete(tempId)
-        val updated = old.copy(id = realId, sendState = MessageEntity.SEND_STATE_SENT)
+        val pendingEntity = chatController.takePendingAttachmentEntityForTempId(tempId)
+        val updated = when {
+            pendingEntity != null -> pendingEntity.copy(
+                id = realId,
+                sendState = MessageEntity.SEND_STATE_SENT,
+                content = if (pendingEntity.content.isNotBlank()) pendingEntity.content else old.content,
+                senderId = if (pendingEntity.senderId != 0L) pendingEntity.senderId else old.senderId,
+                senderName = pendingEntity.senderName.ifBlank { old.senderName },
+                senderUsername = pendingEntity.senderUsername.ifBlank { old.senderUsername },
+                senderAvatar = pendingEntity.senderAvatar.ifBlank { old.senderAvatar },
+                timestampSeconds = old.timestampSeconds,
+            )
+            echoEntity != null -> chatController.mergeSelfSentMessageEcho(old, echoEntity)
+            chatController.isIncrementalAttachmentJobActive(realId) -> old.copy(
+                id = realId,
+                sendState = MessageEntity.SEND_STATE_SENT,
+            )
+            else -> old.copy(id = realId, sendState = MessageEntity.SEND_STATE_SENT)
+        }
         messages[idx] = updated
         messagesDict.put(realId, updated)
         Log.d(TAG, "applyRealId tempId=$tempId → realId=$realId")
         if (fragmentView == null) return
+        val cellMask = when {
+            pendingEntity != null || echoEntity != null ->
+                NotificationCenter.UPDATE_MASK_SEND_STATE or NotificationCenter.UPDATE_MASK_ATTACHMENTS or
+                    NotificationCenter.UPDATE_MASK_MESSAGE_TEXT
+            chatController.isIncrementalAttachmentJobActive(realId) ->
+                NotificationCenter.UPDATE_MASK_SEND_STATE or NotificationCenter.UPDATE_MASK_ATTACHMENTS
+            else -> NotificationCenter.UPDATE_MASK_SEND_STATE
+        }
         for (i in 0 until recyclerView.childCount) {
             val cell = recyclerView.getChildAt(i) as? ChatMessageCell ?: continue
-            if (cell.messageEntity?.id == tempId) {
-                cell.update(NotificationCenter.UPDATE_MASK_SEND_STATE, updated)
+            if (cell.messageEntity?.id == tempId || cell.messageEntity?.id == realId) {
+                cell.update(cellMask, updated)
                 break
             }
         }

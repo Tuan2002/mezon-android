@@ -41,6 +41,7 @@ import com.mezon.mobile.session.StoredSession
 import com.mezon.mobile.util.ContentUriTooLargeException
 import com.mezon.mobile.util.FileUtils
 import com.mezon.mobile.util.parseContentPreview
+import com.mezon.mobile.util.AttachmentUploader
 import com.mezon.mobile.home.call.messagePreviewForDialog
 import dagger.Lazy
 import com.mezon.mezon.api.ChannelDescription
@@ -603,17 +604,17 @@ class DialogsController @Inject constructor(
             val filename = "${System.currentTimeMillis() / 1000}_dm_group.$ext"
             val cdnUrl = sessionManager.withAutoRefresh { session ->
                 withContext(ioDispatcher) {
-                    val presign = api.uploadAttachmentFile(
+                    AttachmentUploader.uploadAttachmentBytes(
+                        api,
                         session.apiUrl,
                         session.token,
                         filename,
                         normalized.mimeType,
-                        normalized.bytes.size,
+                        normalized.bytes,
                         512,
-                        512
-                    )
-                    api.putFileToPresignedUrl(presign.url, normalized.bytes, normalized.mimeType)
-                    "${BuildConfig.MEZON_BASE_IMG_URL}/${presign.filename}"
+                        512,
+                        BuildConfig.MEZON_BASE_IMG_URL,
+                    ).cdnUrl
                 }
             }
             DmGroupAvatarUploadResult.Success(cdnUrl)

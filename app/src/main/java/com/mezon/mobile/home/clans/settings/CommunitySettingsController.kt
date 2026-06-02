@@ -6,6 +6,7 @@ import com.mezon.mobile.di.IoDispatcher
 import com.mezon.mobile.home.clans.ClansController
 import com.mezon.mobile.network.MezonApi
 import com.mezon.mobile.session.SessionManager
+import com.mezon.mobile.util.AttachmentUploader
 import com.mezon.mezon.rtapi.ClanUpdatedEvent
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
@@ -367,7 +368,8 @@ private suspend fun uploadCommunityBanner(
 ): String {
     require(bytes.isNotEmpty())
     val filename = "community-banner/$clanId.$ext"
-    val presign = api.uploadAttachmentFile(apiUrl, token, filename, mimeType, bytes.size, 0, 0)
-    api.putFileToPresignedUrl(presign.url, bytes, mimeType)
-    return "${BuildConfig.MEZON_BASE_IMG_URL}/${presign.filename}"
+    return AttachmentUploader.uploadAttachmentBytes(
+        api, apiUrl, token, filename, mimeType, bytes,
+        cdnBaseUrl = BuildConfig.MEZON_BASE_IMG_URL,
+    ).cdnUrl
 }

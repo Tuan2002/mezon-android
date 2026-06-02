@@ -19,6 +19,7 @@ import com.mezon.mobile.network.UnauthorizedException
 import com.mezon.mobile.network.apiCacheKey
 import com.mezon.mobile.session.SessionManager
 import com.mezon.mobile.util.avatarImgproxyUrl
+import com.mezon.mobile.util.AttachmentUploader
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.async
@@ -467,12 +468,17 @@ class AccountController @Inject constructor(
 
                 val cdnUrl = sessionManager.withAutoRefresh { session ->
                     withContext(ioDispatcher) {
-                        val presignResult = api.uploadAttachmentFile(
-                            session.apiUrl, session.token,
-                            filename, mimeType, fileBytes.size, 400, 400
-                        )
-                        api.putFileToPresignedUrl(presignResult.url, fileBytes, mimeType)
-                        "${BuildConfig.MEZON_BASE_IMG_URL}/${presignResult.filename}"
+                        AttachmentUploader.uploadAttachmentBytes(
+                            api,
+                            session.apiUrl,
+                            session.token,
+                            filename,
+                            mimeType,
+                            fileBytes,
+                            400,
+                            400,
+                            BuildConfig.MEZON_BASE_IMG_URL,
+                        ).cdnUrl
                     }
                 }
                 withContext(kotlinx.coroutines.Dispatchers.Main) { onResult(true, cdnUrl) }
