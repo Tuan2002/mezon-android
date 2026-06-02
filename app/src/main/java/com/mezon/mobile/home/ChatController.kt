@@ -152,8 +152,10 @@ class ChatController @Inject constructor(
     private val attachmentJobsByTempId = LongSparseArray<IncrementalAttachmentJob>()
     private val attachmentJobsByRealId = LongSparseArray<IncrementalAttachmentJob>()
     private val pendingAttachmentEntityByTempId = LongSparseArray<MessageEntity>()
+    private val imageCompressionSlots = Semaphore(IMAGE_COMPRESSION_PARALLELISM)
+    private val largeUploadSlots = Semaphore(LARGE_ATTACHMENT_PARALLELISM)
 
-    private data class CachedAttachment(
+    private class CachedAttachment(
         val item: AttachmentPickerItem,
         val bytes: ByteArray,
     )
@@ -307,6 +309,7 @@ class ChatController @Inject constructor(
         }
         pendingApiReactions.clear()
         lastApiReactionDedup = null
+        com.mezon.mobile.util.AttachmentUploader.resetMultipartAvailabilityForSession()
     }
 
     suspend fun getMessageById(channelId: Long, messageId: Long): MessageEntity? =
@@ -1282,6 +1285,9 @@ class ChatController @Inject constructor(
         private const val SHARE_MAX_RETRIES = 5
         private const val SHARE_RETRY_DELAY_MS = 4000L
         private const val ATTACHMENT_UPLOAD_PARALLELISM = 4
+        private const val IMAGE_COMPRESSION_PARALLELISM = 2
+        private const val LARGE_ATTACHMENT_BYTES = 50L * 1024 * 1024
+        private const val LARGE_ATTACHMENT_PARALLELISM = 2
         private const val PENDING_API_REACTION_DEDUP_MS = 5000L
     }
 
@@ -1627,40 +1633,55 @@ class ChatController @Inject constructor(
         val uploadedByIndex = arrayOfNulls<MessageAttachment>(items.size)
         val failedIndices = HashSet<Int>()
         var messageSent = false
+        var firstSendStarted = false
         var realMessageId = 0L
         var lastSyncedUploadCount = 0
+        val resultMutex = Mutex()
+        val sendMutex = Mutex()
 
         suspend fun flushAttachmentUpdate(updateError: Boolean = false) {
-            if (!messageSent || realMessageId == 0L) return
-            val uploadedList = uploadedByIndex.filterNotNull()
-            val uploadedCount = uploadedList.size
-            val hasFailure = failedIndices.isNotEmpty()
-            if (!updateError && uploadedCount == lastSyncedUploadCount && !hasFailure) return
+            var proceed = false
+            var uploadedSnapshot: List<MessageAttachment?> = emptyList()
+            var failedSnapshot: Set<Int> = emptySet()
+            var uploadedCount = 0
+            var targetMessageId = 0L
+            resultMutex.withLock {
+                if (messageSent && realMessageId != 0L) {
+                    uploadedSnapshot = uploadedByIndex.toList()
+                    failedSnapshot = failedIndices.toSet()
+                    uploadedCount = uploadedSnapshot.count { it != null }
+                    targetMessageId = realMessageId
+                    proceed = updateError || uploadedCount != lastSyncedUploadCount || failedSnapshot.isNotEmpty()
+                }
+            }
+            if (!proceed) return
             if (uploadedCount > 1) {
                 try {
                     channelUpdate(
                         apiUrl, token,
                         params.clanId, params.channelId, params.mode, params.isPublic,
-                        realMessageId, params.wireContent, params.protoMentions, uploadedList,
+                        targetMessageId, params.wireContent, params.protoMentions, uploadedSnapshot.filterNotNull(),
                         topicId = params.topicId,
                     )
-                    lastSyncedUploadCount = uploadedCount
+                    resultMutex.withLock {
+                        if (uploadedCount > lastSyncedUploadCount) lastSyncedUploadCount = uploadedCount
+                    }
                 } catch (e: Exception) {
-                    Log.e(TAG, "Incremental send: attachment batch update failed messageId=$realMessageId", e)
+                    Log.e(TAG, "Incremental send: attachment batch update failed messageId=$targetMessageId", e)
                     applyLocalOrderedAttachmentUpdate(
-                        params.cacheKey, realMessageId, params.allItems,
-                        uploadedByIndex.toList(), failedIndices, updateError = true,
+                        params.cacheKey, targetMessageId, params.allItems,
+                        uploadedSnapshot, failedSnapshot, updateError = true,
                     )
                     return
                 }
             }
             applyLocalOrderedAttachmentUpdate(
-                params.cacheKey, realMessageId, params.allItems,
-                uploadedByIndex.toList(), failedIndices, updateError = updateError,
+                params.cacheKey, targetMessageId, params.allItems,
+                uploadedSnapshot, failedSnapshot, updateError = updateError,
             )
         }
 
-        suspend fun dispatchFirstMessage(attachment: MessageAttachment, index: Int) {
+        suspend fun dispatchFirstMessage(attachment: MessageAttachment) {
             val request = channelMessageSend {
                 this.clanId = params.clanId
                 this.channelId = params.channelId
@@ -1675,20 +1696,27 @@ class ChatController @Inject constructor(
                 if (params.topicId != 0L) this.topicId = params.topicId
             }
             val ack = channelSend(apiUrl, token, request)
-            realMessageId = ack.messageId
-            messageSent = true
-            job.realMessageId = realMessageId
-            lastSyncedUploadCount = 1
+            val newMessageId = ack.messageId
+            val uploadedSnapshot: List<MessageAttachment?>
+            val failedSnapshot: Set<Int>
+            resultMutex.withLock {
+                realMessageId = newMessageId
+                messageSent = true
+                job.realMessageId = newMessageId
+                lastSyncedUploadCount = 1
+                uploadedSnapshot = uploadedByIndex.toList()
+                failedSnapshot = failedIndices.toSet()
+            }
             synchronized(this) {
-                attachmentJobsByRealId.put(realMessageId, job)
+                attachmentJobsByRealId.put(newMessageId, job)
             }
             markForwardTargetUsed(params.channelId, params.channelType)
             val updatedEntity = applyLocalAfterFirstSendOrdered(
-                params.cacheKey, params.tempId, realMessageId,
-                params.allItems, uploadedByIndex.toList(), failedIndices,
+                params.cacheKey, params.tempId, newMessageId,
+                params.allItems, uploadedSnapshot, failedSnapshot,
             )
             notificationCenter.postNotificationOnMainThread(
-                NotificationCenter.pendingMessageSent, params.cacheKey, params.tempId, realMessageId
+                NotificationCenter.pendingMessageSent, params.cacheKey, params.tempId, newMessageId
             )
             notificationCenter.postNotificationOnMainThread(
                 NotificationCenter.messageDidUpdate, params.cacheKey, updatedEntity,
@@ -1697,9 +1725,10 @@ class ChatController @Inject constructor(
         }
 
         val uploadSlots = Semaphore(ATTACHMENT_UPLOAD_PARALLELISM)
-        val resultMutex = Mutex()
 
         suspend fun recordResult(index: Int, attachment: MessageAttachment?) {
+            var firstToSend: MessageAttachment? = null
+            var shouldFlush = false
             resultMutex.withLock {
                 if (attachment == null) {
                     failedIndices.add(index)
@@ -1707,13 +1736,22 @@ class ChatController @Inject constructor(
                 } else {
                     uploadedByIndex[index] = attachment
                     job.uploadedCount = uploadedByIndex.count { it != null }
-                    if (!messageSent) dispatchFirstMessage(attachment, index)
+                    if (!messageSent && !firstSendStarted) {
+                        firstSendStarted = true
+                        firstToSend = attachment
+                    }
                 }
-                if (messageSent &&
+                if (firstToSend == null && messageSent &&
                     uploadedByIndex.count { it != null } - lastSyncedUploadCount >= ATTACHMENT_UPLOAD_PARALLELISM
                 ) {
-                    flushAttachmentUpdate()
+                    shouldFlush = true
                 }
+            }
+            val toSend = firstToSend
+            if (toSend != null) {
+                sendMutex.withLock { dispatchFirstMessage(toSend) }
+            } else if (shouldFlush) {
+                sendMutex.withLock { flushAttachmentUpdate() }
             }
         }
 
@@ -1721,10 +1759,14 @@ class ChatController @Inject constructor(
             coroutineScope {
                 items.forEachIndexed { index, item ->
                     launch(ioDispatcher) {
-                        val attachment = if (item == null) {
-                            null
-                        } else {
-                            uploadSlots.withPermit {
+                        val attachment = when {
+                            item == null -> null
+                            item.size > LARGE_ATTACHMENT_BYTES -> largeUploadSlots.withPermit {
+                                loadAndUploadAttachment(
+                                    item, contentResolver, apiUrl, token, cdnBaseUrl, params.maxRetriesPerFile,
+                                )
+                            }
+                            else -> uploadSlots.withPermit {
                                 loadAndUploadAttachment(
                                     item, contentResolver, apiUrl, token, cdnBaseUrl, params.maxRetriesPerFile,
                                 )
@@ -1734,7 +1776,7 @@ class ChatController @Inject constructor(
                     }
                 }
             }
-            if (messageSent) flushAttachmentUpdate()
+            if (messageSent) sendMutex.withLock { flushAttachmentUpdate() }
 
             if (!messageSent) {
                 notificationCenter.postNotificationOnMainThread(
@@ -1745,6 +1787,7 @@ class ChatController @Inject constructor(
             synchronized(this) {
                 attachmentJobsByTempId.remove(params.tempId)
                 if (realMessageId != 0L) attachmentJobsByRealId.remove(realMessageId)
+                pendingAttachmentEntityByTempId.remove(params.tempId)
             }
         }
     }
@@ -1760,9 +1803,11 @@ class ChatController @Inject constructor(
         val uploader = com.mezon.mobile.util.AttachmentUploader
 
         if (!item.isVideo && uploader.isCompressibleImage(item.mimeType)) {
-            val compressed = uploader.compressImageFromUri(
-                contentResolver, item.uri, item.mimeType, item.filename, item.size,
-            )
+            val compressed = imageCompressionSlots.withPermit {
+                uploader.compressImageFromUri(
+                    contentResolver, item.uri, item.mimeType, item.filename, item.size,
+                )
+            }
             if (compressed != null) {
                 val uploadItem = item.copy(
                     filename = compressed.filename,
@@ -1791,6 +1836,34 @@ class ChatController @Inject constructor(
         }
     }
 
+    private suspend fun uploadVideoThumbnailIfNeeded(
+        item: AttachmentPickerItem,
+        file: java.io.File,
+        apiUrl: String,
+        token: String,
+        cdnBaseUrl: String,
+        timestamp: Long,
+        sanitizedName: String,
+    ): String {
+        if (!item.isVideo && !com.mezon.mobile.util.AttachmentUploader.isVideoMimeType(item.mimeType)) {
+            return ""
+        }
+        val thumb = com.mezon.mobile.util.AttachmentUploader.extractVideoThumbnailJpeg(file) ?: return ""
+        val dot = sanitizedName.lastIndexOf('.')
+        val base = if (dot > 0) sanitizedName.substring(0, dot) else sanitizedName
+        val thumbFilename = "${timestamp}_${base}_thumb.jpg"
+        return try {
+            val thumbUpload = com.mezon.mobile.util.AttachmentUploader.uploadAttachmentBytes(
+                api, apiUrl, token, thumbFilename, thumb.mimeType, thumb.bytes,
+                thumb.width, thumb.height, cdnBaseUrl,
+            )
+            thumbUpload.cdnUrl
+        } catch (e: Exception) {
+            Log.w(TAG, "Video thumbnail upload failed for ${item.filename}", e)
+            ""
+        }
+    }
+
     private suspend fun uploadStreamedAttachment(
         item: AttachmentPickerItem,
         file: java.io.File,
@@ -1809,6 +1882,9 @@ class ChatController @Inject constructor(
                     api, apiUrl, token, uploadFilename, item.mimeType, file, fileSize,
                     item.width, item.height, cdnBaseUrl,
                 )
+                val thumbUrl = uploadVideoThumbnailIfNeeded(
+                    item, file, apiUrl, token, cdnBaseUrl, timestamp, sanitizedName,
+                )
                 Log.d(TAG, "Uploaded: ${item.filename} → ${uploadResult.cdnUrl}")
                 return messageAttachment {
                     this.filename = item.filename
@@ -1818,6 +1894,7 @@ class ChatController @Inject constructor(
                     this.width = item.width
                     this.height = item.height
                     if (item.duration > 0) this.duration = item.duration
+                    if (thumbUrl.isNotEmpty()) thumbnail = thumbUrl
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to upload attachment: ${item.filename}", e)
