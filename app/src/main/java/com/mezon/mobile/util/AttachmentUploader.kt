@@ -7,7 +7,6 @@ import android.graphics.Matrix
 import android.media.ExifInterface
 import android.net.Uri
 import android.os.Build
-import android.util.Log
 import com.mezon.mobile.network.MezonApi
 import java.io.ByteArrayOutputStream
 import java.io.File
@@ -23,7 +22,6 @@ object AttachmentUploader {
 
     const val MAX_UPLOAD_BYTES: Long = 100L * 1024 * 1024
 
-    private const val TAG = "AttachmentUploader"
     private const val PARALLEL_PART_UPLOADS = 3
     private const val MULTIPART_PART_SIZE = 5 * 1024 * 1024
     private const val MULTIPART_MIN_FILE_SIZE = 5 * 1024 * 1024
@@ -117,8 +115,7 @@ object AttachmentUploader {
                 mimeType = "image/webp",
                 filename = replaceExtension(filename, "webp"),
             )
-        } catch (e: Throwable) {
-            Log.w(TAG, "compressImageFromUri failed for $filename", e)
+        } catch (_: Throwable) {
             return null
         }
     }
@@ -211,13 +208,7 @@ object AttachmentUploader {
                 )
             } catch (_: MultipartNotApplicable) {
                 skipMultipartStartForSession = true
-                Log.i(
-                    TAG,
-                    "Multipart start returned no part URLs (size=${bytes.size}); " +
-                        "skipping start RPC for rest of session",
-                )
-            } catch (e: Exception) {
-                Log.w(TAG, "Multipart upload failed, falling back to single PUT: $uploadFilename", e)
+            } catch (_: Exception) {
             }
         }
         return uploadSinglePut(

@@ -824,7 +824,6 @@ class ChatController @Inject constructor(
                 }
                 return
             } catch (e: Exception) {
-                Log.w(TAG, "Channel message update via socket failed, using REST", e)
                 sentryReporter.logSocketWarning(
                     "channelMessageUpdate",
                     "fallback REST channelId=$channelId messageId=$messageId err=${e.message}"
@@ -1586,7 +1585,6 @@ class ChatController @Inject constructor(
                     )
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "shareMedia: Failed", e)
                 notificationCenter.postNotificationOnMainThread(
                     NotificationCenter.pendingMessageError, channelId, tempId
                 )
@@ -1602,7 +1600,6 @@ class ChatController @Inject constructor(
     ) {
         val items: List<AttachmentPickerItem?> = params.allItems.map { item ->
             if (com.mezon.mobile.util.AttachmentUploader.isOverSizeLimit(item.size)) {
-                Log.e(TAG, "Attachment too large, skipping: ${item.filename} size=${item.size}")
                 null
             } else {
                 item
@@ -1647,7 +1644,6 @@ class ChatController @Inject constructor(
                     )
                     lastSyncedUploadCount = uploadedCount
                 } catch (e: Exception) {
-                    Log.e(TAG, "Incremental send: attachment batch update failed messageId=$realMessageId", e)
                     applyLocalOrderedAttachmentUpdate(
                         params.cacheKey, realMessageId, params.allItems,
                         uploadedByIndex.toList(), failedIndices, updateError = true,
@@ -1784,7 +1780,6 @@ class ChatController @Inject constructor(
             )
         }
         if (bytes == null) {
-            Log.e(TAG, "Failed to read file or over size: ${item.filename}")
             return null
         }
         return uploadCachedAttachment(
@@ -1818,17 +1813,9 @@ class ChatController @Inject constructor(
                     this.height = item.height
                     if (item.duration > 0) this.duration = item.duration
                 }
-            } catch (e: Exception) {
-                if (maxRetries > 1) {
-                    Log.e(TAG, "Upload attempt $attempt failed for ${item.filename}", e)
-                } else {
-                    Log.e(TAG, "Failed to upload attachment: ${item.filename}", e)
-                }
+            } catch (_: Exception) {
                 if (attempt < maxRetries) delay(SHARE_RETRY_DELAY_MS)
             }
-        }
-        if (maxRetries > 1) {
-            Log.e(TAG, "All retries exhausted for ${item.filename}")
         }
         return null
     }
