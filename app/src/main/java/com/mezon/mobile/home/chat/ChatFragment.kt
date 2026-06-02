@@ -4641,11 +4641,7 @@ open class ChatFragment : BaseFragment() {
         val ctx = getContext() ?: return
         val item = AttachmentPickerItem.fromDocumentUri(ctx, uri) ?: return
 
-        val maxSize = if (item.mimeType.startsWith("image/")) {
-            AttachmentPickerItem.IMAGE_MAX_FILE_SIZE
-        } else {
-            AttachmentPickerItem.MAX_FILE_SIZE
-        }
+        val maxSize = AttachmentPickerItem.maxFileSizeBytes(item.mimeType)
         if (item.size > maxSize) {
             val limitText = FileUtils.formatFileSize(maxSize)
             MezonToast.show(this, ToastOverlay.ToastType.ERROR, getString(R.string.file_too_large, limitText))

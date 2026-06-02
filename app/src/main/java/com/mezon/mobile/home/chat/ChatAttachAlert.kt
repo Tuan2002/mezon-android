@@ -4,8 +4,6 @@ import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
-import android.graphics.PorterDuff
-import android.graphics.PorterDuffColorFilter
 import android.graphics.Rect
 import android.graphics.RectF
 import android.graphics.Typeface
@@ -189,9 +187,7 @@ class ChatAttachAlert(
         }
 
         val iconView = ImageView(context).apply {
-            val d = icon.getDrawable(context).mutate()
-            d.colorFilter = PorterDuffColorFilter(theme.onSurface, PorterDuff.Mode.SRC_IN)
-            setImageDrawable(d)
+            setImageDrawable(icon.getDrawable(context).mutate())
         }
         val iconSize = LayoutHelper.dp(20f)
         btn.addView(iconView, LinearLayout.LayoutParams(iconSize, iconSize))
@@ -243,7 +239,7 @@ class ChatAttachAlert(
                 return
             }
 
-            val maxSize = if (item.isVideo) AttachmentPickerItem.MAX_FILE_SIZE else AttachmentPickerItem.IMAGE_MAX_FILE_SIZE
+            val maxSize = AttachmentPickerItem.maxFileSizeBytes(item.mimeType)
             if (item.size > maxSize) {
                 val limitMB = maxSize / (1024 * 1024)
                 Toast.makeText(context, "File exceeds ${limitMB}MB limit", Toast.LENGTH_SHORT).show()

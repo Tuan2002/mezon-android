@@ -7,11 +7,14 @@ import android.graphics.Matrix
 import android.media.ExifInterface
 import android.net.Uri
 import android.os.Build
+import android.util.Log
+import com.mezon.mobile.home.chat.AttachmentPickerItem
 import com.mezon.mobile.network.MezonApi
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileOutputStream
 import java.io.InputStream
+import java.io.RandomAccessFile
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -20,8 +23,7 @@ import kotlinx.coroutines.sync.withPermit
 
 object AttachmentUploader {
 
-    const val MAX_UPLOAD_BYTES: Long = 100L * 1024 * 1024
-
+    private const val TAG = "AttachmentUploader"
     private const val PARALLEL_PART_UPLOADS = 3
     private const val MULTIPART_PART_SIZE = 5 * 1024 * 1024
     private const val MULTIPART_MIN_FILE_SIZE = 5 * 1024 * 1024
@@ -41,7 +43,10 @@ object AttachmentUploader {
         val cdnUrl: String,
     )
 
-    fun isOverSizeLimit(sizeBytes: Long): Boolean = sizeBytes > MAX_UPLOAD_BYTES
+    fun isOverSizeLimit(sizeBytes: Long, mimeType: String): Boolean =
+        AttachmentPickerItem.isOverSizeLimit(sizeBytes, mimeType)
+
+    private fun maxReadBytes(mimeType: String): Long = AttachmentPickerItem.maxFileSizeBytes(mimeType)
 
     private const val IMAGE_MAX_DIMENSION = 2560
     private const val IMAGE_WEBP_QUALITY = 85
@@ -115,7 +120,8 @@ object AttachmentUploader {
                 mimeType = "image/webp",
                 filename = replaceExtension(filename, "webp"),
             )
-        } catch (_: Throwable) {
+        } catch (e: Throwable) {
+            Log.w(TAG, "compressImageFromUri failed for $filename", e)
             return null
         }
     }
@@ -208,7 +214,13 @@ object AttachmentUploader {
                 )
             } catch (_: MultipartNotApplicable) {
                 skipMultipartStartForSession = true
-            } catch (_: Exception) {
+                Log.i(
+                    TAG,
+                    "Multipart start returned no part URLs (size=${bytes.size}); " +
+                        "skipping start RPC for rest of session",
+                )
+            } catch (e: Exception) {
+                Log.w(TAG, "Multipart upload failed, falling back to single PUT: $uploadFilename", e)
             }
         }
         return uploadSinglePut(
@@ -238,6 +250,176 @@ object AttachmentUploader {
         )
     }
 
+    fun copyUriToTempFile(
+        contentResolver: ContentResolver,
+        uri: Uri,
+        mimeType: String,
+        cacheDir: File,
+    ): File? {
+        val input: InputStream = contentResolver.openInputStream(uri) ?: return null
+        val tmpFile = File(cacheDir, "upload_" + System.nanoTime())
+        try {
+            input.use { i ->
+                FileOutputStream(tmpFile).use { o ->
+                    val buf = ByteArray(64 * 1024)
+                    var total = 0L
+                    while (true) {
+                        val n = i.read(buf)
+                        if (n <= 0) break
+                        total += n
+                        if (total > maxReadBytes(mimeType)) {
+                            tmpFile.delete()
+                            return null
+                        }
+                        o.write(buf, 0, n)
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            runCatching { tmpFile.delete() }
+            return null
+        }
+        if (mimeType.equals("image/jpeg", true) ||
+            mimeType.equals("image/jpg", true) ||
+            mimeType.equals("image/heic", true) ||
+            mimeType.equals("image/heif", true)
+        ) {
+            stripExifSensitive(tmpFile)
+        }
+        return tmpFile
+    }
+
+    suspend fun uploadAttachmentFromFile(
+        api: MezonApi,
+        apiUrl: String,
+        token: String,
+        uploadFilename: String,
+        mimeType: String,
+        file: File,
+        fileSize: Long,
+        width: Int = 0,
+        height: Int = 0,
+        cdnBaseUrl: String,
+        onProgress: ((uploaded: Long, total: Long) -> Unit)? = null,
+    ): UploadedFileResult {
+        if (MULTIPART_UPLOAD_ENABLED && fileSize >= MULTIPART_MIN_FILE_SIZE && !skipMultipartStartForSession) {
+            try {
+                return uploadMultipartFromFile(
+                    api, apiUrl, token, uploadFilename, mimeType, file, fileSize,
+                    width, height, cdnBaseUrl, onProgress,
+                )
+            } catch (_: MultipartNotApplicable) {
+                skipMultipartStartForSession = true
+                Log.i(
+                    TAG,
+                    "Multipart start returned no part URLs (size=$fileSize); " +
+                        "skipping start RPC for rest of session",
+                )
+            } catch (e: Exception) {
+                Log.w(TAG, "Multipart upload failed, falling back to single PUT: $uploadFilename", e)
+            }
+        }
+        return uploadSinglePutFromFile(
+            api, apiUrl, token, uploadFilename, mimeType, file, fileSize,
+            width, height, cdnBaseUrl, onProgress,
+        )
+    }
+
+    private suspend fun uploadSinglePutFromFile(
+        api: MezonApi,
+        apiUrl: String,
+        token: String,
+        uploadFilename: String,
+        mimeType: String,
+        file: File,
+        fileSize: Long,
+        width: Int,
+        height: Int,
+        cdnBaseUrl: String,
+        onProgress: ((uploaded: Long, total: Long) -> Unit)?,
+    ): UploadedFileResult {
+        val presign = api.uploadAttachmentFile(
+            apiUrl, token, uploadFilename, mimeType, fileSize.toInt(), width, height,
+        )
+        api.putFileToPresignedUrlFromFile(presign.url, file, mimeType)
+        onProgress?.invoke(fileSize, fileSize)
+        return UploadedFileResult(
+            serverFilename = presign.filename,
+            cdnUrl = "$cdnBaseUrl/${presign.filename}",
+        )
+    }
+
+    private suspend fun uploadMultipartFromFile(
+        api: MezonApi,
+        apiUrl: String,
+        token: String,
+        uploadFilename: String,
+        mimeType: String,
+        file: File,
+        fileSize: Long,
+        width: Int,
+        height: Int,
+        cdnBaseUrl: String,
+        onProgress: ((uploaded: Long, total: Long) -> Unit)?,
+    ): UploadedFileResult {
+        val start = api.multipartUploadAttachmentFileStart(
+            apiUrl, token, uploadFilename, mimeType, fileSize.toInt(), width, height,
+        )
+        val urls = start.urlsList
+        val uploadId = start.uploadId
+
+        if (urls.size == 1 && uploadId.isEmpty()) {
+            api.putFileToPresignedUrlFromFile(urls[0], file, mimeType)
+            onProgress?.invoke(fileSize, fileSize)
+            val serverFilename = start.filename.ifEmpty { uploadFilename }
+            return UploadedFileResult(
+                serverFilename = serverFilename,
+                cdnUrl = "$cdnBaseUrl/$serverFilename",
+            )
+        }
+
+        if (urls.isEmpty() || uploadId.isEmpty()) {
+            throw MultipartNotApplicable()
+        }
+
+        val partCount = urls.size
+        val semaphore = Semaphore(PARALLEL_PART_UPLOADS)
+        val uploadedLock = Any()
+        var uploadedBytes = 0L
+
+        val partResults = coroutineScope {
+            urls.mapIndexed { index, url ->
+                async {
+                    semaphore.withPermit {
+                        val offset = index.toLong() * MULTIPART_PART_SIZE
+                        val end = if (index == partCount - 1) fileSize else offset + MULTIPART_PART_SIZE
+                        val len = (end - offset).toInt()
+                        val partBytes = ByteArray(len)
+                        RandomAccessFile(file, "r").use { raf ->
+                            raf.seek(offset)
+                            raf.readFully(partBytes)
+                        }
+                        val etag = api.putFilePartToPresignedUrl(url, partBytes, mimeType)
+                        synchronized(uploadedLock) {
+                            uploadedBytes += len
+                            onProgress?.invoke(uploadedBytes, fileSize)
+                        }
+                        (index + 1) to etag
+                    }
+                }
+            }.awaitAll().sortedBy { it.first }
+        }
+
+        val finish = api.multipartUploadAttachmentFileFinish(
+            apiUrl, token, start.uploadId, partResults,
+        )
+        val serverFilename = finish.filename.ifEmpty { start.filename.ifEmpty { uploadFilename } }
+        return UploadedFileResult(
+            serverFilename = serverFilename,
+            cdnUrl = "$cdnBaseUrl/$serverFilename",
+        )
+    }
+
     fun readUriBytesSafely(
         contentResolver: ContentResolver,
         uri: Uri,
@@ -255,7 +437,7 @@ object AttachmentUploader {
                         val n = input.read(buf)
                         if (n <= 0) break
                         total += n
-                        if (total > MAX_UPLOAD_BYTES) {
+                        if (total > maxReadBytes(mimeType)) {
                             tmpFile.delete()
                             return null
                         }

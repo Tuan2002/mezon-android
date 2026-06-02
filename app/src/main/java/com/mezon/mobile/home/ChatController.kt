@@ -824,6 +824,7 @@ class ChatController @Inject constructor(
                 }
                 return
             } catch (e: Exception) {
+                Log.w(TAG, "Channel message update via socket failed, using REST", e)
                 sentryReporter.logSocketWarning(
                     "channelMessageUpdate",
                     "fallback REST channelId=$channelId messageId=$messageId err=${e.message}"
@@ -1585,6 +1586,7 @@ class ChatController @Inject constructor(
                     )
                 }
             } catch (e: Exception) {
+                Log.e(TAG, "shareMedia: Failed", e)
                 notificationCenter.postNotificationOnMainThread(
                     NotificationCenter.pendingMessageError, channelId, tempId
                 )
@@ -1599,7 +1601,7 @@ class ChatController @Inject constructor(
         token: String,
     ) {
         val items: List<AttachmentPickerItem?> = params.allItems.map { item ->
-            if (com.mezon.mobile.util.AttachmentUploader.isOverSizeLimit(item.size)) {
+            if (com.mezon.mobile.util.AttachmentUploader.isOverSizeLimit(item.size, item.mimeType)) {
                 null
             } else {
                 item
@@ -1644,6 +1646,7 @@ class ChatController @Inject constructor(
                     )
                     lastSyncedUploadCount = uploadedCount
                 } catch (e: Exception) {
+                    Log.e(TAG, "Incremental send: attachment batch update failed messageId=$realMessageId", e)
                     applyLocalOrderedAttachmentUpdate(
                         params.cacheKey, realMessageId, params.allItems,
                         uploadedByIndex.toList(), failedIndices, updateError = true,
@@ -1755,36 +1758,73 @@ class ChatController @Inject constructor(
         maxRetries: Int,
     ): MessageAttachment? {
         val uploader = com.mezon.mobile.util.AttachmentUploader
-        var uploadItem = item
-        var bytes: ByteArray? = null
 
         if (!item.isVideo && uploader.isCompressibleImage(item.mimeType)) {
             val compressed = uploader.compressImageFromUri(
                 contentResolver, item.uri, item.mimeType, item.filename, item.size,
             )
             if (compressed != null) {
-                bytes = compressed.bytes
-                uploadItem = item.copy(
+                val uploadItem = item.copy(
                     filename = compressed.filename,
                     mimeType = compressed.mimeType,
                     width = compressed.width,
                     height = compressed.height,
                     size = compressed.bytes.size.toLong(),
                 )
+                return uploadCachedAttachment(
+                    CachedAttachment(uploadItem, compressed.bytes), apiUrl, token, cdnBaseUrl, maxRetries,
+                )
             }
         }
 
-        if (bytes == null) {
-            bytes = uploader.readUriBytesSafely(
-                contentResolver, item.uri, item.mimeType, appContext.cacheDir,
-            )
-        }
-        if (bytes == null) {
+        val tmpFile = uploader.copyUriToTempFile(
+            contentResolver, item.uri, item.mimeType, appContext.cacheDir,
+        )
+        if (tmpFile == null) {
+            Log.e(TAG, "Failed to read file or over size: ${item.filename}")
             return null
         }
-        return uploadCachedAttachment(
-            CachedAttachment(uploadItem, bytes), apiUrl, token, cdnBaseUrl, maxRetries,
-        )
+        return try {
+            uploadStreamedAttachment(item, tmpFile, apiUrl, token, cdnBaseUrl, maxRetries)
+        } finally {
+            runCatching { tmpFile.delete() }
+        }
+    }
+
+    private suspend fun uploadStreamedAttachment(
+        item: AttachmentPickerItem,
+        file: java.io.File,
+        apiUrl: String,
+        token: String,
+        cdnBaseUrl: String,
+        maxRetries: Int,
+    ): MessageAttachment? {
+        val fileSize = file.length()
+        for (attempt in 1..maxRetries) {
+            try {
+                val timestamp = System.currentTimeMillis() / 1000
+                val sanitizedName = item.filename.replace(FILENAME_SANITIZE_REGEX, "_")
+                val uploadFilename = "${timestamp}_$sanitizedName"
+                val uploadResult = com.mezon.mobile.util.AttachmentUploader.uploadAttachmentFromFile(
+                    api, apiUrl, token, uploadFilename, item.mimeType, file, fileSize,
+                    item.width, item.height, cdnBaseUrl,
+                )
+                Log.d(TAG, "Uploaded: ${item.filename} → ${uploadResult.cdnUrl}")
+                return messageAttachment {
+                    this.filename = item.filename
+                    this.url = uploadResult.cdnUrl
+                    this.filetype = item.mimeType
+                    this.size = fileSize.toInt()
+                    this.width = item.width
+                    this.height = item.height
+                    if (item.duration > 0) this.duration = item.duration
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to upload attachment: ${item.filename}", e)
+                if (attempt < maxRetries) delay(SHARE_RETRY_DELAY_MS)
+            }
+        }
+        return null
     }
 
     private suspend fun uploadCachedAttachment(
@@ -1813,9 +1853,17 @@ class ChatController @Inject constructor(
                     this.height = item.height
                     if (item.duration > 0) this.duration = item.duration
                 }
-            } catch (_: Exception) {
+            } catch (e: Exception) {
+                if (maxRetries > 1) {
+                    Log.e(TAG, "Upload attempt $attempt failed for ${item.filename}", e)
+                } else {
+                    Log.e(TAG, "Failed to upload attachment: ${item.filename}", e)
+                }
                 if (attempt < maxRetries) delay(SHARE_RETRY_DELAY_MS)
             }
+        }
+        if (maxRetries > 1) {
+            Log.e(TAG, "All retries exhausted for ${item.filename}")
         }
         return null
     }

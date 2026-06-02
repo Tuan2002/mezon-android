@@ -258,6 +258,10 @@ class PhotoViewer(context: Context) : Dialog(context, android.R.style.Theme_Blac
         private val initialThumb: Bitmap?
     ) : RecyclerView.Adapter<PhotoPagerAdapter.ViewHolder>() {
 
+        init {
+            setHasStableIds(true)
+        }
+
         inner class ViewHolder(
             val container: FrameLayout,
             val photoView: PhotoView,
@@ -274,14 +278,7 @@ class PhotoViewer(context: Context) : Dialog(context, android.R.style.Theme_Blac
             photoView.setScale(1f, false)
         }
 
-        private fun applyLoadedDrawable(
-            holder: ViewHolder,
-            expectedPosition: Int,
-            expectedUrl: String,
-            drawable: Drawable
-        ) {
-            if (holder.bindingAdapterPosition != expectedPosition) return
-            if (urls.getOrNull(expectedPosition) != expectedUrl) return
+        private fun applyLoadedDrawable(holder: ViewHolder, drawable: Drawable) {
             val pv = holder.photoView
             (pv.drawable as? AnimatedImageDrawable)?.stop()
             pv.setImageDrawable(drawable)
@@ -293,14 +290,7 @@ class PhotoViewer(context: Context) : Dialog(context, android.R.style.Theme_Blac
             }
         }
 
-        private fun applyLoadedBitmap(
-            holder: ViewHolder,
-            expectedPosition: Int,
-            expectedUrl: String,
-            bmp: Bitmap
-        ) {
-            if (holder.bindingAdapterPosition != expectedPosition) return
-            if (urls.getOrNull(expectedPosition) != expectedUrl) return
+        private fun applyLoadedBitmap(holder: ViewHolder, bmp: Bitmap) {
             val pv = holder.photoView
             (pv.drawable as? AnimatedImageDrawable)?.stop()
             pv.setImageDrawable(BitmapDrawable(pv.context.resources, bmp))
@@ -377,7 +367,20 @@ class PhotoViewer(context: Context) : Dialog(context, android.R.style.Theme_Blac
             }
             holder.progressBar.visibility = if (hasThumb) View.GONE else View.VISIBLE
 
+            startLoad(holder, url, bindGen, allowRetry = true)
+        }
+
+        private fun startLoad(holder: ViewHolder, url: String, bindGen: Long, allowRetry: Boolean) {
             val loader = MezonImageLoader.getInstance(context)
+            val onErr: () -> Unit = {
+                if (holder.bindGeneration == bindGen) {
+                    if (allowRetry) {
+                        startLoad(holder, url, bindGen, allowRetry = false)
+                    } else {
+                        holder.progressBar.visibility = View.GONE
+                    }
+                }
+            }
             val drawableLoader = urlNeedsAnimatedDrawable(url) ||
                 (preferDrawableLoaderForSingle && urls.size == 1)
             if (drawableLoader) {
@@ -386,24 +389,18 @@ class PhotoViewer(context: Context) : Dialog(context, android.R.style.Theme_Blac
                         onSuccess = { drawable ->
                             if (holder.bindGeneration != bindGen) return@loadDrawable
                             holder.progressBar.visibility = View.GONE
-                            applyLoadedDrawable(holder, position, url, drawable)
+                            applyLoadedDrawable(holder, drawable)
                         },
-                        onError = {
-                            if (holder.bindGeneration != bindGen) return@loadDrawable
-                            holder.progressBar.visibility = View.GONE
-                        }
+                        onError = { onErr() }
                     )
                 } else {
                     holder.pendingLoad = loader.load(url, 0, 0,
                         onSuccess = { bmp ->
                             if (holder.bindGeneration != bindGen) return@load
                             holder.progressBar.visibility = View.GONE
-                            applyLoadedBitmap(holder, position, url, bmp)
+                            applyLoadedBitmap(holder, bmp)
                         },
-                        onError = {
-                            if (holder.bindGeneration != bindGen) return@load
-                            holder.progressBar.visibility = View.GONE
-                        }
+                        onError = { onErr() }
                     )
                 }
             } else {
@@ -415,18 +412,18 @@ class PhotoViewer(context: Context) : Dialog(context, android.R.style.Theme_Blac
                     onSuccess = { bmp ->
                         if (holder.bindGeneration != bindGen) return@load
                         holder.progressBar.visibility = View.GONE
-                        applyLoadedBitmap(holder, position, url, bmp)
+                        applyLoadedBitmap(holder, bmp)
                     },
-                    onError = {
-                        if (holder.bindGeneration != bindGen) return@load
-                        holder.progressBar.visibility = View.GONE
-                    },
+                    onError = { onErr() },
                     noCache = true
                 )
             }
         }
 
         override fun getItemCount() = urls.size
+
+        override fun getItemId(position: Int): Long =
+            urls.getOrNull(position)?.hashCode()?.toLong() ?: RecyclerView.NO_ID
     }
 
     private fun createToolbarButton(ctx: Context, iconRes: Int, desc: String, onClick: () -> Unit): ImageView {

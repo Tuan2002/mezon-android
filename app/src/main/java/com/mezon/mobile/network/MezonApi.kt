@@ -158,7 +158,10 @@ import io.ktor.client.statement.HttpResponse
 import io.ktor.client.statement.bodyAsText
 import io.ktor.client.statement.readBytes
 import io.ktor.http.ContentType
+import io.ktor.http.content.OutgoingContent
 import io.ktor.http.HttpHeaders
+import io.ktor.util.cio.readChannel
+import io.ktor.utils.io.ByteReadChannel
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
 import io.ktor.http.isSuccess
@@ -2791,6 +2794,25 @@ class MezonApi @Inject constructor(
         val response = httpClient.put(presignedUrl) {
             header(HttpHeaders.ContentType, contentType)
             setBody(fileBytes)
+        }
+        if (!response.status.isSuccess()) {
+            throw RuntimeException("File upload failed (${response.status.value})")
+        }
+    }
+
+    suspend fun putFileToPresignedUrlFromFile(
+        presignedUrl: String,
+        file: java.io.File,
+        contentType: String
+    ) {
+        val parsedType = ContentType.parse(contentType)
+        val body = object : OutgoingContent.ReadChannelContent() {
+            override val contentLength: Long = file.length()
+            override val contentType: ContentType = parsedType
+            override fun readFrom(): ByteReadChannel = file.readChannel()
+        }
+        val response = httpClient.put(presignedUrl) {
+            setBody(body)
         }
         if (!response.status.isSuccess()) {
             throw RuntimeException("File upload failed (${response.status.value})")

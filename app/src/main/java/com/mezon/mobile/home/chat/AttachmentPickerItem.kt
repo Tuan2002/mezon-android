@@ -27,6 +27,19 @@ data class AttachmentPickerItem(
         const val MAX_FILE_SIZE = 1024L * 1024 * 1024
         const val GALLERY_MAX_SELECTION = 20
 
+        fun maxFileSizeBytes(mimeType: String): Long {
+            return if (mimeType.startsWith("image/", ignoreCase = true)) {
+                IMAGE_MAX_FILE_SIZE
+            } else {
+                MAX_FILE_SIZE
+            }
+        }
+
+        fun isOverSizeLimit(sizeBytes: Long, mimeType: String): Boolean {
+            if (sizeBytes <= 0L) return false
+            return sizeBytes > maxFileSizeBytes(mimeType)
+        }
+
         fun fromDocumentUri(context: Context, uri: Uri): AttachmentPickerItem? {
             val resolver = context.contentResolver
             val mimeType = resolver.getType(uri) ?: "application/octet-stream"
