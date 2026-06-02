@@ -312,6 +312,38 @@ data class MessageEntity(
             return first + extraAttachments.filter { isMediaAttachment(it.filetype, it.url) }
         }
 
+    fun isLocalAttachmentUrl(url: String): Boolean {
+        return url.startsWith("content://") || url.startsWith("file://")
+    }
+
+    fun attachmentUploadFailed(url: String): Boolean {
+        if (extraAttachmentsJson.isEmpty()) return false
+        return try {
+            val arr = JSONArray(extraAttachmentsJson)
+            for (i in 0 until arr.length()) {
+                val obj = arr.getJSONObject(i)
+                if (obj.optString("url") == url) return obj.optBoolean("upload_error", false)
+            }
+            false
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    fun isMediaAttachmentUploadPending(mediaIndex: Int): Boolean {
+        val media = allImageAttachments
+        if (mediaIndex !in media.indices) return false
+        val url = media[mediaIndex].url
+        if (!isLocalAttachmentUrl(url)) return false
+        if (attachmentUploadFailed(url)) return false
+        if (mediaIndex == 0 && attachmentUrl == url && isError) return false
+        return true
+    }
+
+    fun hasPendingMediaAttachmentUploads(): Boolean {
+        return allImageAttachments.indices.any { isMediaAttachmentUploadPending(it) }
+    }
+
     fun buildAttachmentJson(): String {
         if (attachmentUrl.isEmpty()) return ""
         val arr = JSONArray()

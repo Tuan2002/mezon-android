@@ -33,6 +33,7 @@ import androidx.recyclerview.widget.RecyclerView
 import androidx.viewpager2.widget.ViewPager2
 import com.github.chrisbanes.photoview.PhotoView
 import com.mezon.mobile.R
+import com.mezon.mobile.core.AndroidUtilities
 import com.mezon.mobile.core.LayoutHelper
 import com.mezon.mobile.di.FragmentEntryPoint
 import com.mezon.mobile.util.createImgproxyUrl
@@ -56,6 +57,9 @@ class PhotoViewer(context: Context) : Dialog(context, android.R.style.Theme_Blac
     private var currentIndex = 0
     private var preferDrawableLoaderForSingle = false
     private val currentUrl get() = urls.getOrElse(currentIndex) { "" }
+
+    var onReachedOldestEdge: (() -> Unit)? = null
+    var onCurrentUrlChanged: ((String) -> Unit)? = null
 
     init {
         requestWindowFeature(Window.FEATURE_NO_TITLE)
@@ -129,15 +133,16 @@ class PhotoViewer(context: Context) : Dialog(context, android.R.style.Theme_Blac
             LayoutHelper.dp(56)
         )
         topBarParams.gravity = Gravity.TOP
-        topBarParams.topMargin = LayoutHelper.dp(32)
+        topBarParams.topMargin = AndroidUtilities.statusBarHeight + LayoutHelper.dp(8)
         root.addView(topBar, topBarParams)
 
+        val navBarInset = AndroidUtilities.navigationBarHeight
         bottomBar = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
             setBackgroundColor(0x99000000.toInt())
             val pad = LayoutHelper.dp(12)
-            setPadding(pad, pad, pad, pad)
+            setPadding(pad, pad, pad, pad + navBarInset)
         }
         bottomBar.addView(createToolbarButton(context, android.R.drawable.ic_menu_share, "Share") {
             shareUrl(currentUrl)
@@ -150,7 +155,7 @@ class PhotoViewer(context: Context) : Dialog(context, android.R.style.Theme_Blac
         })
         val bottomBarParams = FrameLayout.LayoutParams(
             FrameLayout.LayoutParams.MATCH_PARENT,
-            LayoutHelper.dp(56)
+            FrameLayout.LayoutParams.WRAP_CONTENT
         )
         bottomBarParams.gravity = Gravity.BOTTOM
         root.addView(bottomBar, bottomBarParams)
@@ -181,6 +186,8 @@ class PhotoViewer(context: Context) : Dialog(context, android.R.style.Theme_Blac
             override fun onPageSelected(position: Int) {
                 currentIndex = position
                 updateCounter()
+                onCurrentUrlChanged?.invoke(currentUrl)
+                if (position >= urls.size - 2) onReachedOldestEdge?.invoke()
             }
         })
 
@@ -197,6 +204,24 @@ class PhotoViewer(context: Context) : Dialog(context, android.R.style.Theme_Blac
         } else {
             counterView.visibility = View.GONE
         }
+    }
+
+    fun updateGallery(newUrls: List<String>, keepUrl: String) {
+        if (newUrls.isEmpty() || newUrls == urls) return
+        val appendOnly = newUrls.size > urls.size && newUrls.subList(0, urls.size) == urls
+        val keepIndex = newUrls.indexOf(keepUrl).let {
+            if (it >= 0) it else currentIndex.coerceIn(0, newUrls.size - 1)
+        }
+        val prevSize = urls.size
+        urls = newUrls
+        currentIndex = keepIndex
+        if (appendOnly) {
+            viewPager.adapter?.notifyItemRangeInserted(prevSize, newUrls.size - prevSize)
+        } else {
+            viewPager.adapter?.notifyDataSetChanged()
+            viewPager.setCurrentItem(currentIndex, false)
+        }
+        updateCounter()
     }
 
     private fun toggleToolbar() {

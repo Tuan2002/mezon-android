@@ -56,6 +56,7 @@ import com.mezon.mobile.ui.cells.ToastOverlay
 import com.mezon.mobile.home.UserClanController
 import com.mezon.mobile.util.isClanEmojiNameValid
 import com.mezon.mobile.util.getEmojiUrl
+import com.mezon.mobile.util.AttachmentUploader
 import com.mezon.mobile.util.CLAN_EMOJI_NAME_MAX_LENGTH
 import com.mezon.mobile.util.CLAN_EMOJI_NAME_MIN_LENGTH
 import kotlinx.coroutines.CoroutineDispatcher
@@ -568,17 +569,17 @@ class EmojiSettingFragment : BaseFragment() {
         height: Int,
     ): String {
         return sessionManager.withAutoRefresh { session ->
-            val presign = api.uploadAttachmentFile(
+            AttachmentUploader.uploadAttachmentBytes(
+                api,
                 session.apiUrl,
                 session.token,
                 filename,
                 mime,
-                bytes.size,
+                bytes,
                 width.coerceAtLeast(1),
                 height.coerceAtLeast(1),
-            )
-            api.putFileToPresignedUrl(presign.url, bytes, mime)
-            "${BuildConfig.MEZON_BASE_IMG_URL}/${presign.filename}"
+                BuildConfig.MEZON_BASE_IMG_URL,
+            ).cdnUrl
         }
     }
 

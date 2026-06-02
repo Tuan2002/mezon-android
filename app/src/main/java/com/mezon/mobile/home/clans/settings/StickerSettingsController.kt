@@ -7,6 +7,7 @@ import com.mezon.mobile.home.chat.EmojiController
 import com.mezon.mobile.home.chat.StickerItem
 import com.mezon.mobile.network.MezonApi
 import com.mezon.mobile.session.SessionManager
+import com.mezon.mobile.util.AttachmentUploader
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
@@ -114,12 +115,17 @@ class StickerSettingsController @Inject constructor(
     private suspend fun uploadStickerBytes(bytes: ByteArray, recordId: Long, mime: String, ext: String): String {
         val filename = "stickers/$recordId.$ext"
         return sessionManager.withAutoRefresh { s ->
-            val presign = api.uploadAttachmentFile(
-                s.apiUrl, s.token, filename, mime, bytes.size,
-                STICKER_DIMENSION, STICKER_DIMENSION,
-            )
-            api.putFileToPresignedUrl(presign.url, bytes, mime)
-            "${BuildConfig.MEZON_BASE_IMG_URL}/${presign.filename}"
+            AttachmentUploader.uploadAttachmentBytes(
+                api,
+                s.apiUrl,
+                s.token,
+                filename,
+                mime,
+                bytes,
+                STICKER_DIMENSION,
+                STICKER_DIMENSION,
+                BuildConfig.MEZON_BASE_IMG_URL,
+            ).cdnUrl
         }
     }
 

@@ -227,6 +227,7 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
     private var drawEphemeral = false
     private var drawError = false
     private var drawSending = false
+    private var hasPendingMediaUploads = false
     private var fileIconDrawable: Drawable? = null
     private val fileRoundRect = RectF()
     private var fileRowWidth = 0
@@ -248,8 +249,27 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
     private val audioWavePath = Path()
 
     private val photoImage = ImageReceiver(this)
-    private val extraPhotoImages = arrayOf(ImageReceiver(this), ImageReceiver(this), ImageReceiver(this))
-    private val allReceivers = arrayOf(photoImage, extraPhotoImages[0], extraPhotoImages[1], extraPhotoImages[2])
+    private val extraPhotoImages = ArrayList<ImageReceiver>()
+    private var mediaGroupSlots = emptyList<MediaGroupLayout.Slot>()
+
+    private fun mediaReceiver(index: Int): ImageReceiver {
+        if (index == 0) return photoImage
+        val extraIndex = index - 1
+        while (extraPhotoImages.size <= extraIndex) {
+            val receiver = ImageReceiver(this)
+            if (attachedToWindow) receiver.onAttachedToWindow()
+            extraPhotoImages.add(receiver)
+        }
+        return extraPhotoImages[extraIndex]
+    }
+
+    private fun forEachMediaReceiver(upTo: Int, block: (Int, ImageReceiver) -> Unit) {
+        for (i in 0 until upTo) block(i, mediaReceiver(i))
+    }
+
+    private fun forEachActiveMediaReceiver(block: (Int, ImageReceiver) -> Unit) {
+        forEachMediaReceiver(mediaGridCount, block)
+    }
     private val ogpImage = ImageReceiver(this)
     private val shimmerEffect = ShimmerEffect()
     private var photoWidth = 0
@@ -424,6 +444,7 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
         drawEphemeral = false
         drawError = false
         drawSending = false
+        hasPendingMediaUploads = false
         parsedContent = ""
         hasCallLogCard = false
         callLogParsed = null
@@ -444,9 +465,10 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
             videoThumbJobs[i] = null
         }
         slotIsVideo.fill(false)
+        slotUploadPending.fill(false)
         mediaGridCount = 0
         mediaGridTotalH = 0
-        gridExtraCount = 0
+        mediaGroupSlots = emptyList()
         extraPhotoImages.forEach { it.recycle() }
         lastBoundId = 0L
         lastBoundContentHash = 0
@@ -478,6 +500,7 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
                 msg.code xor (if (msg.isForwarded) 1 else 0) xor
                 msg.updateTimeSeconds.hashCode() xor (if (msg.hideEditted) 2 else 0) xor
                 msg.rplCount xor msg.topicId.hashCode() xor
+                msg.attachmentUrl.hashCode() xor msg.extraAttachmentsJson.hashCode() xor
                 (pollBridge?.stateFingerprint(msg.id) ?: 0)
             if (msg.id == lastBoundId && contentHash == lastBoundContentHash && isCombined == lastBoundCombined) {
                 return false
@@ -505,6 +528,7 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
             drawEphemeral = msg.isEphemeral
             drawError = msg.isError
             drawSending = msg.isSending
+            hasPendingMediaUploads = msg.hasPendingMediaAttachmentUploads()
             hasReply = if (isInPinMode) false else parseReply(msg)
             if (isInPinMode) {
                 drawForwardHeader = false
@@ -512,6 +536,7 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
                 drawEphemeral = false
                 drawError = false
                 drawSending = false
+                hasPendingMediaUploads = false
             }
             updateColors(msg)
             if (drawPhotoImage) computePhotoSize(msg)
@@ -550,6 +575,7 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
             val prevError = drawError
             drawSending = msg.isSending
             drawError = msg.isError
+            hasPendingMediaUploads = msg.hasPendingMediaAttachmentUploads()
             if (BuildConfig.DEBUG) {
                 Log.d(
                     TAG,
@@ -594,10 +620,26 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
             return true
         }
 
+        if ((mask and NotificationCenter.UPDATE_MASK_ATTACHMENTS) != 0) {
+            val m = newMsg ?: messageEntity ?: return false
+            if (newMsg != null) messageEntity = newMsg
+            hasPendingMediaUploads = m.hasPendingMediaAttachmentUploads()
+            drawPhotoImage = m.hasAnyMedia
+            val isAudioAtt = m.isAudioAttachment && !m.hasAnyMedia
+            drawAudioAttachment = isAudioAtt
+            drawFileAttachment = m.hasFileAttachments && !isAudioAtt
+            if (drawPhotoImage) computePhotoSize(m) else clearPhotoReceivers()
+            buildLayouts(m)
+            if (drawPhotoImage) loadPhotoImage(m) else clearPhotoReceivers()
+            measuredCellHeight = computeHeight(m)
+            requestLayout()
+            invalidate()
+            return true
+        }
+
         if ((mask and NotificationCenter.UPDATE_MASK_REACTIONS) != 0) {
             val m = newMsg ?: messageEntity ?: return false
             if (newMsg != null) messageEntity = newMsg
-            Log.d(TAG, "REACTION update id=${m.id} extraAtt=${m.extraAttachmentsJson.length} drawFile=$drawFileAttachment hasFile=${m.hasFileAttachments}")
             val oldReactionH = reactionRowHeight
             buildReactionLayouts(m, cachedInnerWidth)
             if (oldReactionH != reactionRowHeight) {
@@ -622,6 +664,7 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
             drawEphemeral = m.isEphemeral
             drawError = m.isError
             drawSending = m.isSending
+            hasPendingMediaUploads = m.hasPendingMediaAttachmentUploads()
             updateColors(m)
             buildLayouts(m)
             if (!drawPhotoImage) clearPhotoReceivers()
@@ -638,32 +681,65 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
     private fun clearPhotoReceivers() {
         if (mediaGridCount == 0 && !photoImage.hasImage()) return
         photoImage.recycle()
-        for (r in extraPhotoImages) r.recycle()
+        extraPhotoImages.forEach { it.recycle() }
         mediaGridCount = 0
         mediaGridTotalH = 0
-        gridExtraCount = 0
+        mediaGroupSlots = emptyList()
+    }
+
+    private fun aspectRatioForAttachment(att: AttachmentInfo): Float {
+        var w = att.width
+        var h = att.height
+        if (w <= 0 || h <= 0) {
+            w = 100
+            h = 100
+        }
+        return w.toFloat() / h.toFloat()
+    }
+
+    private fun albumMaxWidthPx(width: Int): Int {
+        val displayH = resources.displayMetrics.heightPixels
+        val cap = min(width, displayH)
+        return maxBubbleWidth(width).coerceIn(LayoutHelper.dp(120), cap)
+    }
+
+    private fun buildMediaGroupLayout(msg: MessageEntity, maxW: Int): MediaGroupLayout.Result {
+        val media = msg.allImageAttachments
+        val aspects = media.map { aspectRatioForAttachment(it) }
+        val minSide = min(resources.displayMetrics.widthPixels, resources.displayMetrics.heightPixels)
+        return MediaGroupLayout.calculate(
+            aspects,
+            MediaGroupLayout.Params(
+                bubbleMaxWidthPx = maxW,
+                minDisplaySidePx = minSide,
+                isOut = msg.isMe,
+            ),
+        )
     }
 
     private fun computePhotoSize(msg: MessageEntity, width: Int = currentWidth()) {
-        val screenW = min(resources.displayMetrics.widthPixels, resources.displayMetrics.heightPixels)
         val isStickerMsg = msg.messageType == MessageEntity.TYPE_GIF &&
             (msg.attachmentFiletype.equals("sticker", true) || msg.attachmentUrl.contains("/stickers/"))
-        val rawMaxW = if (isStickerMsg) LayoutHelper.dp(160) else (screenW * 0.65f).toInt()
-        val maxW = if (isInPinMode) rawMaxW.coerceAtMost(maxBubbleWidth(width)) else rawMaxW
+        val bubbleCap = maxBubbleWidth(width)
+        val maxW = when {
+            isStickerMsg -> LayoutHelper.dp(160)
+            isInPinMode -> albumMaxWidthPx(width).coerceAtMost(bubbleCap)
+            else -> albumMaxWidthPx(width)
+        }
         val maxH = maxW + LayoutHelper.dp(100)
 
         // Multi-image grids (2/3/4) use a fixed grid geometry instead of the first
         // image's aspect ratio: cells are square-ish and center-cropped, so deriving
         // height from a single image squeezes the thumbnails (issue mezonai/mezon#13176).
-        val gridCount = msg.allImageAttachments.size.coerceAtMost(4)
+        val gridCount = msg.allImageAttachments.size
         if (gridCount > 1) {
-            val gap = LayoutHelper.dp(2)
-            val cellW = (maxW - gap) / 2
-            photoWidth = maxW
-            // 2 images -> two square cells side by side; 3/4 -> square container.
-            photoHeight = if (gridCount == 2) cellW else maxW
+            val layout = buildMediaGroupLayout(msg, maxW)
+            mediaGroupSlots = layout.slots
+            photoWidth = layout.totalWidthPx
+            photoHeight = layout.totalHeightPx
             return
         }
+        mediaGroupSlots = emptyList()
 
         val firstMedia = msg.allImageAttachments.firstOrNull()
         var imgW = firstMedia?.width ?: msg.attachmentWidth
@@ -697,98 +773,122 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
         photoHeight = h.coerceAtLeast(LayoutHelper.dp(100))
     }
 
-    private val videoThumbJobs = arrayOfNulls<Job>(4)
-    private val slotIsVideo = BooleanArray(4)
+    private val videoThumbJobs = ArrayList<Job?>()
+    private val slotIsVideo = ArrayList<Boolean>()
+    private val slotUploadPending = ArrayList<Boolean>()
+
+    private fun ensureSlotCapacity(count: Int) {
+        while (slotIsVideo.size < count) slotIsVideo.add(false)
+        while (slotUploadPending.size < count) slotUploadPending.add(false)
+        while (videoThumbJobs.size < count) videoThumbJobs.add(null)
+    }
 
     private fun bubbleDecodeProxySizePx(slotIndex: Int): Pair<Int, Int> {
-        val gapPx = LayoutHelper.dp(2)
+        val slot = mediaGroupSlots.getOrNull(slotIndex)
+        if (slot != null) {
+            return capped(slot.width, slot.height)
+        }
         val tw = photoWidth.coerceAtLeast(1)
         val th = photoHeight.coerceAtLeast(1)
-        fun capped(cellW: Float, cellH: Float): Pair<Int, Int> {
-            val uw = ceil(cellW.coerceAtLeast(1f) * 1.08f).toInt().coerceIn(64, 1200)
-            val uh = ceil(cellH.coerceAtLeast(1f) * 1.08f).toInt().coerceIn(64, 1200)
-            return uw to uh
+        return capped(tw.toFloat(), th.toFloat())
+    }
+
+    private fun capped(cellW: Float, cellH: Float): Pair<Int, Int> {
+        val uw = ceil(cellW.coerceAtLeast(1f) * 1.08f).toInt().coerceIn(64, 1200)
+        val uh = ceil(cellH.coerceAtLeast(1f) * 1.08f).toInt().coerceIn(64, 1200)
+        return uw to uh
+    }
+
+    private fun applyMediaCornerRadius(receiver: ImageReceiver, slotIndex: Int) {
+        val big = MEDIA_RADIUS.toInt()
+        if (mediaGridCount <= 1) {
+            receiver.setRoundRadius(big)
+            return
         }
-        return when (mediaGridCount) {
-            1 -> capped(tw.toFloat(), th.toFloat())
-            2 -> capped((tw - gapPx) / 2f, th.toFloat())
-            3 -> {
-                val leftW = (tw - gapPx) * 0.6f
-                val rightW = (tw - gapPx).toFloat() - leftW
-                val leftH = th.toFloat()
-                val rightH = (leftH - gapPx) / 2f
-                when (slotIndex) {
-                    0 -> capped(leftW, leftH)
-                    else -> capped(rightW, rightH)
-                }
-            }
-            else -> {
-                val cellW = (tw - gapPx) / 2f
-                val cellH = (th - gapPx) / 2f
-                capped(cellW, cellH)
-            }
-        }
+        val flags = mediaGroupSlots.getOrNull(slotIndex)?.flags
+            ?: (MediaGroupLayout.CORNER_TOP_LEFT or MediaGroupLayout.CORNER_BOTTOM_RIGHT)
+        val small = MEDIA_GROUP_INNER_RADIUS.toInt()
+        fun corner(mask: Int) = if ((flags and mask) == mask) big else small
+        receiver.setRoundRadius(
+            corner(MediaGroupLayout.CORNER_TOP_LEFT),
+            corner(MediaGroupLayout.CORNER_TOP_RIGHT),
+            corner(MediaGroupLayout.CORNER_BOTTOM_RIGHT),
+            corner(MediaGroupLayout.CORNER_BOTTOM_LEFT),
+        )
     }
 
     private fun loadPhotoImage(msg: MessageEntity) {
         val allMedia = msg.allImageAttachments
-        mediaGridCount = allMedia.size.coerceAtMost(4)
-        slotIsVideo.fill(false)
+        mediaGridCount = allMedia.size
+        ensureSlotCapacity(mediaGridCount)
+        for (i in 0 until slotIsVideo.size) slotIsVideo[i] = false
+        for (i in 0 until slotUploadPending.size) slotUploadPending[i] = false
 
         if (mediaGridCount == 0) return
 
-        for (i in 0 until 4) {
-            if (i < mediaGridCount) {
-                val att = allMedia[i]
-                val pair = bubbleDecodeProxySizePx(i)
-                val pw = pair.first
-                val ph = pair.second
-                val isStickerAttachment = att.filetype.equals("sticker", ignoreCase = true) ||
-                    att.url.contains("/stickers/", ignoreCase = true)
-                val isAnimated = att.filetype.contains("gif", true) ||
-                    att.url.contains("tenor.com", true)
-                allReceivers[i].setRoundRadius(MEDIA_RADIUS.toInt())
-                allReceivers[i].setRequestedSize(pw, ph)
-                val isLocalUri = att.url.startsWith("content://") || att.url.startsWith("file://")
-                val isVideo = att.filetype.startsWith("video/", true)
-                slotIsVideo[i] = isVideo
-                if (isLocalUri && isVideo) {
-                    allReceivers[i].recycle()
-                    loadLocalVideoThumbnail(att.url, i)
-                } else if (isLocalUri) {
-                    allReceivers[i].setLocalUri(android.net.Uri.parse(att.url), context)
-                } else if (isAnimated || isStickerAttachment) {
-                    allReceivers[i].setImage(att.url, att.thumb.ifEmpty { null }, context)
-                } else if (isVideo) {
-                    val thumb = att.thumb.ifEmpty { null }
-                    Log.d(TAG, "video slot=$i hasThumb=${thumb != null} thumb='${att.thumb}' filetype='${att.filetype}' url=${att.url}")
-                    if (thumb != null) {
-                        allReceivers[i].setImage(createImgproxyUrl(thumb, pw, ph, "fill"), null, context)
-                    } else {
-                        allReceivers[i].recycle()
-                    }
-                } else {
-                    val mainUrl = createImgproxyUrl(att.url, pw, ph, "fit")
-                    val thumbUrl = att.thumb.ifEmpty { null }?.let { createImgproxyUrl(it, pw / 4, ph / 4, "fit") }
-                    allReceivers[i].setImage(mainUrl, thumbUrl, context)
-                }
-            } else {
-                allReceivers[i].recycle()
-            }
+        if (mediaGridCount > 1 && mediaGroupSlots.size != mediaGridCount) {
+            val parentW = currentWidth()
+            val maxW = albumMaxWidthPx(parentW)
+            val layout = buildMediaGroupLayout(msg, maxW)
+            mediaGroupSlots = layout.slots
+            photoWidth = layout.totalWidthPx
+            photoHeight = layout.totalHeightPx
         }
 
-        gridExtraCount = if (allMedia.size > 4) allMedia.size - 4 else 0
-        computeMediaGridHeight()
-    }
-
-    private fun computeMediaGridHeight() {
-        // drawMediaGrid always lays the grid out within photoHeight for every cell
-        // count, so the measured height must match to avoid extra vertical padding.
+        for (i in 0 until mediaGridCount) {
+            val att = allMedia[i]
+            val pair = bubbleDecodeProxySizePx(i)
+            val pw = pair.first
+            val ph = pair.second
+            val receiver = mediaReceiver(i)
+            val isStickerAttachment = att.filetype.equals("sticker", ignoreCase = true) ||
+                att.url.contains("/stickers/", ignoreCase = true)
+            val isAnimated = att.filetype.contains("gif", true) ||
+                att.url.contains("tenor.com", true)
+            applyMediaCornerRadius(receiver, i)
+            receiver.setRequestedSize(pw, ph)
+            val isLocalUri = att.url.startsWith("content://") || att.url.startsWith("file://")
+            val isVideo = att.filetype.startsWith("video/", true)
+            slotIsVideo[i] = isVideo
+            slotUploadPending[i] = msg.isMediaAttachmentUploadPending(i)
+            if (isLocalUri && isVideo) {
+                receiver.recycle()
+                loadLocalVideoThumbnail(att.url, i)
+            } else if (isLocalUri) {
+                receiver.setLocalUri(android.net.Uri.parse(att.url), context)
+            } else if (isAnimated || isStickerAttachment) {
+                receiver.setImage(att.url, att.thumb.ifEmpty { null }, context)
+            } else if (isVideo) {
+                val thumb = att.thumb.ifEmpty { null }
+                if (thumb != null) {
+                    receiver.setImage(createImgproxyUrl(thumb, pw, ph, "fill"), null, context)
+                } else {
+                    receiver.recycle()
+                }
+            } else {
+                val mainUrl = createImgproxyUrl(att.url, pw, ph, "fit")
+                val thumbUrl = att.thumb.ifEmpty { null }?.let { createImgproxyUrl(it, pw / 4, ph / 4, "fit") }
+                receiver.setImage(mainUrl, thumbUrl, context)
+            }
+        }
+        for (i in mediaGridCount until slotIsVideo.size) {
+            mediaReceiver(i).recycle()
+        }
         mediaGridTotalH = photoHeight
     }
 
-    private var spinnerAngle = 0f
     private val spinnerArcRect = RectF()
+
+    private var spinnerRedrawScheduled = false
+
+    private fun scheduleSpinnerRedraw() {
+        if (spinnerRedrawScheduled) return
+        spinnerRedrawScheduled = true
+        postOnAnimation {
+            spinnerRedrawScheduled = false
+            invalidate()
+        }
+    }
 
     private fun videoThumbCacheKey(videoUrl: String): String = "vthumb:$videoUrl"
 
@@ -798,11 +898,12 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
         val loader = MezonImageLoader.getInstance(context)
         val key = videoThumbCacheKey(localUrl)
         loader.getBitmapFromMemory(key, pw, ph)?.let {
-            allReceivers[slotIndex].setBitmapDirectly(it)
+            mediaReceiver(slotIndex).setBitmapDirectly(it)
             invalidate()
             return
         }
-        videoThumbJobs[slotIndex]?.cancel()
+        if (slotIndex < videoThumbJobs.size) videoThumbJobs[slotIndex]?.cancel()
+        while (videoThumbJobs.size <= slotIndex) videoThumbJobs.add(null)
         videoThumbJobs[slotIndex] = VIDEO_THUMB_SCOPE.launch {
             val retriever = android.media.MediaMetadataRetriever()
             try {
@@ -814,11 +915,10 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
                     100_000L,
                     android.media.MediaMetadataRetriever.OPTION_CLOSEST_SYNC
                 )
-                Log.d(TAG, "loadLocalVideoThumbnail slot=$slotIndex frame=${if (frame != null) "${frame.width}x${frame.height}" else "NULL"} url=$localUrl")
                 if (frame != null) {
                     loader.cacheBitmap(key, pw, ph, frame)
                     withContext(Dispatchers.Main) {
-                        allReceivers[slotIndex].setBitmapDirectly(frame)
+                        mediaReceiver(slotIndex).setBitmapDirectly(frame)
                         invalidate()
                     }
                 }
@@ -2178,8 +2278,8 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
                 }
                 if (drawPhotoImage) {
                     if (mediaGridCount > 1) {
-                        for (i in 0 until mediaGridCount.coerceAtMost(4)) {
-                            val r = allReceivers[i]
+                        for (i in 0 until mediaGridCount) {
+                            val r = mediaReceiver(i)
                             val rx = r.getImageX(); val ry = r.getImageY()
                             if (x >= rx && x <= rx + r.getImageWidth() && y >= ry && y <= ry + r.getImageHeight()) {
                                 pressedOnMedia = true
@@ -2521,7 +2621,8 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
     }
 
     fun getMediaBitmap(index: Int): android.graphics.Bitmap? {
-        return allReceivers.getOrNull(index)?.getBitmap()
+        if (index < 0 || index >= mediaGridCount) return null
+        return mediaReceiver(index).getBitmap()
     }
 
     fun onMentionClicked(userId: String?, roleId: String?) {
@@ -2555,15 +2656,15 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
             val visibleH = if (visible) (photoHeight - clipTop - clipBottom) else 0f
             val ratio = visibleH / photoHeight
             photoImage.setSkipUpdateFrame(ratio < 0.25f)
-            for (i in 0 until mediaGridCount.coerceAtMost(3)) {
-                extraPhotoImages[i].setSkipUpdateFrame(ratio < 0.25f)
+            forEachActiveMediaReceiver { _, receiver ->
+                receiver.setSkipUpdateFrame(ratio < 0.25f)
             }
         }
     }
 
     fun stopHeavyOperations() {
         photoImage.setAllowStartAnimation(false)
-        for (i in extraPhotoImages.indices) extraPhotoImages[i].setAllowStartAnimation(false)
+        extraPhotoImages.forEach { it.setAllowStartAnimation(false) }
     }
 
     fun setHighlight() {
@@ -2573,7 +2674,7 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
 
     fun startHeavyOperations() {
         photoImage.setAllowStartAnimation(true)
-        for (i in extraPhotoImages.indices) extraPhotoImages[i].setAllowStartAnimation(true)
+        extraPhotoImages.forEach { it.setAllowStartAnimation(true) }
     }
 
     override fun onDraw(canvas: Canvas) {
@@ -2596,7 +2697,7 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
 
         val alpha = when {
             drawError -> 0.6f
-            drawSending -> 0.7f
+            drawSending || hasPendingMediaUploads -> 0.7f
             else -> 1f
         }
         if (alpha < 1f) {
@@ -2646,9 +2747,13 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
         val cx = x + w / 2f
         val cy = y + h / 2f
         spinnerArcRect.set(cx - SPINNER_RADIUS, cy - SPINNER_RADIUS, cx + SPINNER_RADIUS, cy + SPINNER_RADIUS)
-        canvas.drawArc(spinnerArcRect, spinnerAngle, 270f, false, SPINNER_ARC_PAINT)
-        spinnerAngle = (spinnerAngle + 3f) % 360f
-        postInvalidateDelayed(33)
+        val now = android.os.SystemClock.elapsedRealtime()
+        val rotation = (now % SPINNER_ROT_PERIOD_MS).toFloat() / SPINNER_ROT_PERIOD_MS * 360f
+        val sweepProgress = (now % SPINNER_SWEEP_PERIOD_MS).toFloat() / SPINNER_SWEEP_PERIOD_MS
+        val osc = (0.5 - 0.5 * Math.cos(2.0 * Math.PI * sweepProgress)).toFloat()
+        val sweep = SPINNER_MIN_SWEEP + (SPINNER_MAX_SWEEP - SPINNER_MIN_SWEEP) * osc
+        canvas.drawArc(spinnerArcRect, rotation - sweep / 2f, sweep, false, SPINNER_ARC_PAINT)
+        scheduleSpinnerRedraw()
     }
 
     private fun drawStickerOnly(canvas: Canvas, msg: MessageEntity) {
@@ -2687,7 +2792,7 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
         photoImage.setRoundRadius(0)
         photoImage.setImageCoords(imgX, yOff, photoWidth.toFloat(), photoHeight.toFloat())
         photoImage.draw(canvas)
-        if (drawSending) {
+        if (isSlotUploadPending(0)) {
             drawAttachmentUploadSpinner(canvas, imgX, yOff, photoWidth.toFloat(), photoHeight.toFloat(), 0f)
         } else if (!photoImage.hasMainImage() && photoImage.shouldAnimateLoadingPlaceholder()) {
             shimmerEffect.draw(canvas, imgX, yOff, imgX + photoWidth, yOff + photoHeight, 0f,
@@ -3083,98 +3188,52 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
         return cardBottom
     }
 
-    private var gridExtraCount = 0
+    private fun isSlotUploadPending(slot: Int): Boolean {
+        return slotUploadPending.getOrNull(slot) == true
+    }
 
     private fun drawGridCell(canvas: Canvas, slot: Int, x: Float, y: Float, w: Float, h: Float, isDark: Boolean): Boolean {
         var needsRedraw = false
-        if (drawSending) {
+        val receiver = mediaReceiver(slot)
+        if (isSlotUploadPending(slot)) {
             drawAttachmentUploadSpinner(canvas, x, y, w, h, MEDIA_RADIUS)
-        } else if (!allReceivers[slot].hasMainImage()) {
-            if (slotIsVideo[slot]) {
+        } else if (!receiver.hasMainImage()) {
+            if (slotIsVideo.getOrNull(slot) == true) {
                 drawVideoPlaceholder(canvas, x, y, w, h, MEDIA_RADIUS)
-            } else if (allReceivers[slot].shouldAnimateLoadingPlaceholder()) {
+            } else if (receiver.shouldAnimateLoadingPlaceholder()) {
                 shimmerEffect.draw(canvas, x, y, x + w, y + h, MEDIA_RADIUS, isDark)
                 needsRedraw = true
             }
         }
-        if (slotIsVideo[slot] && !drawSending) {
+        if (slotIsVideo.getOrNull(slot) == true && !isSlotUploadPending(slot)) {
             drawVideoPlayButton(canvas, x, y, w, h)
         }
         return needsRedraw
     }
 
     private fun drawMediaGrid(canvas: Canvas, msg: MessageEntity, startX: Float, startY: Float): Float {
-        val gap = GRID_GAP
-        val totalW = photoWidth.toFloat()
         val isDark = theme.resolvedMode != com.mezon.mobile.ui.theme.ThemeMode.LIGHT
         var needsShimmerRedraw = false
-
-        when (mediaGridCount) {
-            2 -> {
-                val cellW = (totalW - gap) / 2f
-                val cellH = photoHeight.toFloat()
-                for (i in 0 until 2) {
-                    val x = startX + i * (cellW + gap)
-                    allReceivers[i].setImageCoords(x, startY, cellW, cellH)
-                    allReceivers[i].draw(canvas)
-                    if (drawGridCell(canvas, i, x, startY, cellW, cellH, isDark)) needsShimmerRedraw = true
-                }
-                if (needsShimmerRedraw) postInvalidateDelayed(16)
-                return startY + cellH
-            }
-            3 -> {
-                val leftW = (totalW - gap) * 0.6f
-                val rightW = totalW - gap - leftW
-                val leftH = photoHeight.toFloat()
-                val rightH = (leftH - gap) / 2f
-
-                allReceivers[0].setImageCoords(startX, startY, leftW, leftH)
-                allReceivers[0].draw(canvas)
-                if (drawGridCell(canvas, 0, startX, startY, leftW, leftH, isDark)) needsShimmerRedraw = true
-
-                val rx = startX + leftW + gap
-                for (i in 1 until 3) {
-                    val ry = startY + (i - 1) * (rightH + gap)
-                    allReceivers[i].setImageCoords(rx, ry, rightW, rightH)
-                    allReceivers[i].draw(canvas)
-                    if (drawGridCell(canvas, i, rx, ry, rightW, rightH, isDark)) needsShimmerRedraw = true
-                }
-                if (needsShimmerRedraw) postInvalidateDelayed(16)
-                return startY + leftH
-            }
-            else -> {
-                val cellW = (totalW - gap) / 2f
-                val cellH = (photoHeight.toFloat() - gap) / 2f
-                for (i in 0 until mediaGridCount.coerceAtMost(4)) {
-                    val col = i % 2
-                    val row = i / 2
-                    val x = startX + col * (cellW + gap)
-                    val y = startY + row * (cellH + gap)
-                    allReceivers[i].setImageCoords(x, y, cellW, cellH)
-                    allReceivers[i].draw(canvas)
-                    if (drawGridCell(canvas, i, x, y, cellW, cellH, isDark)) needsShimmerRedraw = true
-                }
-                if (gridExtraCount > 0) {
-                    val x = startX + (cellW + gap)
-                    val y = startY + (cellH + gap)
-                    GRID_OVERLAY_PAINT.color = 0x80000000.toInt()
-                    tmpRect.set(x, y, x + cellW, y + cellH)
-                    canvas.drawRoundRect(tmpRect, MEDIA_RADIUS, MEDIA_RADIUS, GRID_OVERLAY_PAINT)
-                    val text = "+$gridExtraCount"
-                    val textY = y + cellH / 2f - (GRID_COUNT_PAINT.descent() + GRID_COUNT_PAINT.ascent()) / 2f
-                    canvas.drawText(text, x + cellW / 2f, textY, GRID_COUNT_PAINT)
-                }
-                if (needsShimmerRedraw) postInvalidateDelayed(16)
-                return startY + cellH * 2 + gap
+        for (i in 0 until mediaGridCount) {
+            val slot = mediaGroupSlots.getOrNull(i) ?: continue
+            val x = startX + slot.x
+            val y = startY + slot.y
+            val receiver = mediaReceiver(i)
+            receiver.setImageCoords(x, y, slot.width, slot.height)
+            receiver.draw(canvas)
+            if (drawGridCell(canvas, i, x, y, slot.width, slot.height, isDark)) {
+                needsShimmerRedraw = true
             }
         }
+        if (needsShimmerRedraw) postInvalidateDelayed(16)
+        return startY + photoHeight
     }
 
     private fun drawMediaOverlays(canvas: Canvas, msg: MessageEntity, imgX: Float, imgY: Float) {
         val w = photoWidth.toFloat()
         val h = photoHeight.toFloat()
-        val isVideo = msg.messageType == MessageEntity.TYPE_VIDEO || slotIsVideo[0]
-        if (drawSending) {
+        val isVideo = msg.messageType == MessageEntity.TYPE_VIDEO || slotIsVideo.getOrNull(0) == true
+        if (isSlotUploadPending(0)) {
             drawAttachmentUploadSpinner(canvas, imgX, imgY, w, h, MEDIA_RADIUS)
         } else if (!photoImage.hasMainImage()) {
             if (isVideo) {
@@ -3185,7 +3244,7 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
                 postInvalidateDelayed(32)
             }
         }
-        if (isVideo && !drawSending) {
+        if (isVideo && !isSlotUploadPending(0)) {
             drawVideoPlayButton(canvas, imgX, imgY, w, h)
             durationLayout?.let { drawDurationBadge(canvas, it, imgX, imgY) }
         }
@@ -4244,6 +4303,7 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
         private val ROLE_ICON_GAP = LayoutHelper.dp(4f)
         private val LINK_INVITE_V_MARGIN = LayoutHelper.dp(12) 
         private val MEDIA_RADIUS = LayoutHelper.dp(12).toFloat()
+        private val MEDIA_GROUP_INNER_RADIUS = LayoutHelper.dp(2).toFloat()
         private val OGP_RADIUS = LayoutHelper.dp(8).toFloat()
         private val OGP_CARD_RADIUS = LayoutHelper.dp(4).toFloat()
         private val OGP_PADDING = LayoutHelper.dp(10)
@@ -4345,8 +4405,12 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
         private val REFERENCE_SENDER_ID_REGEX = Regex("\"message_sender_id\"\\s*:\\s*\"?(\\d+)\"?")
         private val REFERENCE_AVATAR_REGEX = Regex("\"(?:mesages_sender_avatar|message_sender_avatar)\"\\s*:\\s*\"([^\"]+)\"")
 
-        private val SPINNER_RADIUS = LayoutHelper.dp(14).toFloat()
-        private val SPINNER_STROKE = LayoutHelper.dpf(2.5f)
+        private const val SPINNER_ROT_PERIOD_MS = 1100L
+        private const val SPINNER_SWEEP_PERIOD_MS = 1400L
+        private const val SPINNER_MIN_SWEEP = 30f
+        private const val SPINNER_MAX_SWEEP = 300f
+        private val SPINNER_RADIUS = LayoutHelper.dp(9).toFloat()
+        private val SPINNER_STROKE = LayoutHelper.dpf(2f)
         private val SPINNER_OVERLAY_PAINT = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             style = Paint.Style.FILL
             color = 0x55000000
@@ -4361,17 +4425,6 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
         private val GRID_GAP = LayoutHelper.dp(2).toFloat()
         private val BADGE_PAD = LayoutHelper.dp(6).toFloat()
         private val BADGE_MARGIN = LayoutHelper.dp(6).toFloat()
-
-        private val GRID_OVERLAY_PAINT = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            style = Paint.Style.FILL
-        }
-
-        private val GRID_COUNT_PAINT = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = 0xFFFFFFFF.toInt()
-            textSize = LayoutHelper.dp(20).toFloat()
-            textAlign = Paint.Align.CENTER
-            typeface = android.graphics.Typeface.DEFAULT_BOLD
-        }
 
         private val PLAY_BG_PAINT = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = 0x66000000.toInt()

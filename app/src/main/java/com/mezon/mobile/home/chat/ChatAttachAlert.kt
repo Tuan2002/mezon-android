@@ -12,6 +12,7 @@ import android.graphics.Typeface
 import android.text.TextPaint
 import android.util.Log
 import android.view.Gravity
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.widget.FrameLayout
@@ -36,11 +37,13 @@ private const val GRID_GAP = 2
 class ChatAttachAlert(
     context: Context,
     private val mediaController: MediaController,
-    private val theme: ThemeColors
+    private val theme: ThemeColors,
+    preselectedItems: List<AttachmentPickerItem> = emptyList()
 ) : BottomSheet(context), MediaController.GalleryLoadListener {
 
     interface ChatAttachAlertDelegate {
-        fun onAttachmentsSelected(items: List<AttachmentPickerItem>)
+        fun canSelectMore(): Boolean = true
+        fun onSelectionChanged(item: AttachmentPickerItem, selected: Boolean)
         fun onFilesRequested() {}
     }
 
@@ -50,12 +53,22 @@ class ChatAttachAlert(
     private val selectedPhotosOrder = ArrayList<Long>()
 
     private var gridView: RecyclerView? = null
+    private var headerRowView: LinearLayout? = null
     private var adapter: PhotoAttachAdapter? = null
     private var emptyView: TextView? = null
     private var sendBtn: SendButtonView? = null
+    private var swipeDismissFromHandle = false
 
     private var allPhotos = ArrayList<AttachmentPickerItem>()
     private var itemSize = 0
+
+    init {
+        for (item in preselectedItems) {
+            if (selectedPhotos.containsKey(item.id)) continue
+            selectedPhotos[item.id] = item
+            selectedPhotosOrder.add(item.id)
+        }
+    }
 
     override fun onCreate(savedInstanceState: android.os.Bundle?) {
         super.onCreate(savedInstanceState)
@@ -73,6 +86,7 @@ class ChatAttachAlert(
 
         mediaController.setGalleryLoadListener(this)
         mediaController.loadGalleryPhotos()
+        updateSendButton()
     }
 
     private val LOAD_MORE_THRESHOLD = 12
@@ -88,6 +102,7 @@ class ChatAttachAlert(
             gravity = Gravity.CENTER_VERTICAL
             setPadding(LayoutHelper.dp(12f), 0, LayoutHelper.dp(12f), 0)
         }
+        headerRowView = headerRow
         buildHeaderButton(headerRow, MezonIcon.fileIconGray, R.string.file_selection_upload) {
             dismiss()
             attachDelegate?.onFilesRequested()
@@ -219,8 +234,11 @@ class ChatAttachAlert(
             selectedPhotosOrder.remove(id)
             cell.setChecked(-1, false, true)
             updateCheckedPhotoIndices()
+            attachDelegate?.onSelectionChanged(item, false)
         } else {
-            if (selectedPhotosOrder.size >= AttachmentPickerItem.GALLERY_MAX_SELECTION) {
+            if (attachDelegate?.canSelectMore() == false ||
+                selectedPhotosOrder.size >= AttachmentPickerItem.GALLERY_MAX_SELECTION
+            ) {
                 Toast.makeText(context, "Maximum ${AttachmentPickerItem.GALLERY_MAX_SELECTION} items", Toast.LENGTH_SHORT).show()
                 return
             }
@@ -235,6 +253,7 @@ class ChatAttachAlert(
             selectedPhotos[id] = item
             selectedPhotosOrder.add(id)
             cell.setChecked(selectedPhotosOrder.size - 1, true, true)
+            attachDelegate?.onSelectionChanged(item, true)
         }
 
         updateSendButton()
@@ -260,14 +279,40 @@ class ChatAttachAlert(
 
     private fun onSendClicked() {
         if (selectedPhotosOrder.isEmpty()) return
-        val result = selectedPhotosOrder.mapNotNull { selectedPhotos[it] }
         dismiss()
-        attachDelegate?.onAttachmentsSelected(result)
     }
 
     override fun dismiss() {
         mediaController.setGalleryLoadListener(null)
         super.dismiss()
+    }
+
+    override fun canDismissWithSwipe(): Boolean {
+        if (swipeDismissFromHandle) return true
+        val rv = gridView ?: return super.canDismissWithSwipe()
+        return !rv.canScrollVertically(-1)
+    }
+
+    override fun onContainerTouchEvent(ev: MotionEvent): Boolean {
+        when (ev.actionMasked) {
+            MotionEvent.ACTION_DOWN -> swipeDismissFromHandle = isInSwipeDismissHandleZone(ev)
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> swipeDismissFromHandle = false
+        }
+        return false
+    }
+
+    private fun isInSwipeDismissHandleZone(ev: MotionEvent): Boolean {
+        val header = headerRowView
+        if (header != null && header.isShown) {
+            val headerLoc = IntArray(2)
+            header.getLocationOnScreen(headerLoc)
+            if (ev.rawY <= headerLoc[1] + header.height) return true
+        }
+        val handle = contentLayout?.getChildAt(0) ?: return false
+        if (!handle.isShown) return false
+        val handleLoc = IntArray(2)
+        handle.getLocationOnScreen(handleLoc)
+        return ev.rawY <= handleLoc[1] + handle.height
     }
 
     inner class PhotoAttachAdapter : RecyclerView.Adapter<RecyclerView.ViewHolder>() {

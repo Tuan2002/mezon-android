@@ -39,8 +39,11 @@ import com.mezon.mezon.api.NotificationList
 import com.mezon.mezon.api.SearchMessageResponse
 import com.mezon.mezon.api.ChannelAttachmentList
 import com.mezon.mezon.api.UploadAttachment
+import com.mezon.mezon.api.MultipartUploadAttachment
 import com.mezon.mezon.api.listChannelAttachmentRequest
 import com.mezon.mezon.api.uploadAttachmentRequest
+import com.mezon.mezon.api.multipartUploadAttachmentFinishRequest
+import com.mezon.mezon.api.multipartUploadAttachmentPart
 import com.mezon.mezon.api.accountEmail
 import com.mezon.mezon.api.AddFriendsResponse
 import com.mezon.mezon.api.addFriendsRequest
@@ -1894,6 +1897,47 @@ class MezonApi @Inject constructor(
         return UploadAttachment.parseFrom(bytes)
     }
 
+    suspend fun multipartUploadAttachmentFileStart(
+        apiUrl: String,
+        token: String,
+        filename: String,
+        filetype: String,
+        size: Int,
+        width: Int = 0,
+        height: Int = 0
+    ): MultipartUploadAttachment {
+        val request = uploadAttachmentRequest {
+            this.filename = filename
+            this.filetype = filetype
+            this.size = size
+            if (width > 0) this.width = width
+            if (height > 0) this.height = height
+        }
+        val bytes = rpc(apiUrl, token, "MultipartUploadAttachmentFileStart", request.toByteArray())
+        return MultipartUploadAttachment.parseFrom(bytes)
+    }
+
+    suspend fun multipartUploadAttachmentFileFinish(
+        apiUrl: String,
+        token: String,
+        uploadId: String,
+        parts: List<Pair<Int, String>>
+    ): UploadAttachment {
+        val request = multipartUploadAttachmentFinishRequest {
+            this.uploadId = uploadId
+            parts.forEach { (partNumber, eTag) ->
+                this.parts.add(
+                    multipartUploadAttachmentPart {
+                        this.partNumber = partNumber
+                        this.eTag = eTag
+                    }
+                )
+            }
+        }
+        val bytes = rpc(apiUrl, token, "MultipartUploadAttachmentFileFinish", request.toByteArray())
+        return UploadAttachment.parseFrom(bytes)
+    }
+
     suspend fun listChannelAttachments(
         apiUrl: String,
         token: String,
@@ -2751,6 +2795,25 @@ class MezonApi @Inject constructor(
         if (!response.status.isSuccess()) {
             throw RuntimeException("File upload failed (${response.status.value})")
         }
+    }
+
+    suspend fun putFilePartToPresignedUrl(
+        presignedUrl: String,
+        partBytes: ByteArray,
+        contentType: String
+    ): String {
+        val response = httpClient.put(presignedUrl) {
+            header(HttpHeaders.ContentType, contentType)
+            setBody(partBytes)
+        }
+        if (!response.status.isSuccess()) {
+            throw RuntimeException("File part upload failed (${response.status.value})")
+        }
+        return response.headers[HttpHeaders.ETag]
+            ?.trim()
+            ?.trim('"')
+            ?.takeIf { it.isNotEmpty() }
+            ?: throw RuntimeException("File part upload missing ETag")
     }
 
 }

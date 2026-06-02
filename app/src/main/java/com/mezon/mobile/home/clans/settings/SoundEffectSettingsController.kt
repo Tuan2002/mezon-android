@@ -7,6 +7,7 @@ import com.mezon.mobile.home.chat.EmojiController
 import com.mezon.mobile.home.chat.StickerItem
 import com.mezon.mobile.network.MezonApi
 import com.mezon.mobile.session.SessionManager
+import com.mezon.mobile.util.AttachmentUploader
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -159,11 +160,15 @@ class SoundEffectSettingsController @Inject constructor(
     private suspend fun uploadSoundBytes(wav: ByteArray, recordId: Long): String {
         val filename = "sounds/$recordId.wav"
         return sessionManager.withAutoRefresh { s ->
-            val presign = api.uploadAttachmentFile(
-                s.apiUrl, s.token, filename, "audio/wav", wav.size, 0, 0,
-            )
-            api.putFileToPresignedUrl(presign.url, wav, "audio/wav")
-            "${BuildConfig.MEZON_BASE_IMG_URL}/${presign.filename}"
+            AttachmentUploader.uploadAttachmentBytes(
+                api,
+                s.apiUrl,
+                s.token,
+                filename,
+                "audio/wav",
+                wav,
+                cdnBaseUrl = BuildConfig.MEZON_BASE_IMG_URL,
+            ).cdnUrl
         }
     }
 

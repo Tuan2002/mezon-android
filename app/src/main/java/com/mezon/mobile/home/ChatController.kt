@@ -43,6 +43,7 @@ import com.mezon.mobile.util.firstReferenceMessageId
 import com.mezon.mobile.util.SentryReporter
 import com.mezon.mobile.util.MentionData
 import com.mezon.mobile.util.buildTextContent
+import com.mezon.mobile.util.messageHasExplicitTextBody
 import com.mezon.mobile.util.EmojiMarker
 import com.mezon.mobile.util.MarkdownMarker
 import com.mezon.mobile.util.OgpMarker
@@ -74,14 +75,19 @@ import com.mezon.mezon.rtapi.channelMessageUpdate
 import com.mezon.mobile.network.ConnectionState
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
-import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.coroutines.resume
 
@@ -143,6 +149,61 @@ class ChatController @Inject constructor(
     private val lastMessageByChannel = LongSparseArray<Long>()
     private val pendingTempMessageByChannel = LongSparseArray<Long>()
     private val topicRootByTopicId = LongSparseArray<TopicRootRef>()
+    private val attachmentJobsByTempId = LongSparseArray<IncrementalAttachmentJob>()
+    private val attachmentJobsByRealId = LongSparseArray<IncrementalAttachmentJob>()
+    private val pendingAttachmentEntityByTempId = LongSparseArray<MessageEntity>()
+
+    private data class CachedAttachment(
+        val item: AttachmentPickerItem,
+        val bytes: ByteArray,
+    )
+
+    private data class IncrementalAttachmentSendParams(
+        val tempId: Long,
+        val cacheKey: Long,
+        val channelId: Long,
+        val clanId: Long,
+        val channelType: Int,
+        val mode: Int,
+        val isPublic: Boolean,
+        val wireContent: String,
+        val protoMentions: List<MessageMention>?,
+        val references: List<com.mezon.mezon.api.MessageRef>?,
+        val mentionEveryone: Boolean,
+        val anon: Boolean,
+        val topicId: Long,
+        val allItems: List<AttachmentPickerItem>,
+        val maxRetriesPerFile: Int = 1,
+    )
+
+    private data class IncrementalAttachmentJob(
+        val tempId: Long,
+        val cacheKey: Long,
+        var realMessageId: Long = 0L,
+        var uploadedCount: Int = 0,
+        var failedCount: Int = 0,
+        val totalCount: Int,
+    )
+
+    fun isIncrementalAttachmentJobActive(messageId: Long): Boolean = synchronized(this) {
+        attachmentJobsByTempId.indexOfKey(messageId) >= 0 ||
+            attachmentJobsByRealId.indexOfKey(messageId) >= 0
+    }
+
+    fun takePendingAttachmentEntityForTempId(tempId: Long): MessageEntity? = synchronized(this) {
+        pendingAttachmentEntityByTempId.get(tempId)?.also {
+            pendingAttachmentEntityByTempId.remove(tempId)
+        }
+    }
+
+    fun mergeSelfSentMessageEcho(existing: MessageEntity, incoming: MessageEntity): MessageEntity {
+        return mergeIncomingAttachmentEntity(existing, incoming).copy(
+            id = incoming.id,
+            sendState = MessageEntity.SEND_STATE_SENT,
+            isError = existing.isError || incoming.isError,
+            timestampSeconds = if (incoming.timestampSeconds > 0L) incoming.timestampSeconds else existing.timestampSeconds,
+        )
+    }
 
     private data class TopicRootRef(val parentChannelId: Long, val rootMessageId: Long)
 
@@ -239,6 +300,9 @@ class ChatController @Inject constructor(
             lastMessageByChannel.clear()
             pendingTempMessageByChannel.clear()
             topicRootByTopicId.clear()
+            attachmentJobsByTempId.clear()
+            attachmentJobsByRealId.clear()
+            pendingAttachmentEntityByTempId.clear()
             cachedCurrentUserId = 0L
         }
         pendingApiReactions.clear()
@@ -736,6 +800,54 @@ class ChatController @Inject constructor(
         }
     }
 
+    private suspend fun channelUpdate(
+        apiUrl: String,
+        token: String,
+        clanId: Long,
+        channelId: Long,
+        mode: Int,
+        isPublic: Boolean,
+        messageId: Long,
+        content: String,
+        mentions: List<MessageMention>?,
+        attachments: List<MessageAttachment>,
+        hideEditted: Boolean = true,
+        topicId: Long = 0L,
+    ) {
+        if (mezonSocket.connectionState.value == ConnectionState.CONNECTED) {
+            try {
+                withContext(ioDispatcher) {
+                    mezonSocket.updateChatMessage(
+                        clanId, channelId, mode, isPublic, messageId, content,
+                        mentions, attachments, hideEditted, topicId,
+                    )
+                }
+                return
+            } catch (e: Exception) {
+                Log.w(TAG, "Channel message update via socket failed, using REST", e)
+                sentryReporter.logSocketWarning(
+                    "channelMessageUpdate",
+                    "fallback REST channelId=$channelId messageId=$messageId err=${e.message}"
+                )
+            }
+        }
+        withContext(ioDispatcher) {
+            val request = channelMessageUpdate {
+                this.clanId = clanId
+                this.channelId = channelId
+                this.messageId = messageId
+                this.content = content
+                mentions?.let { this.mentions.addAll(it) }
+                this.attachments.addAll(attachments)
+                this.mode = mode
+                this.isPublic = isPublic
+                this.hideEditted = hideEditted
+                if (topicId != 0L) this.topicId = topicId
+            }
+            api.updateChannelMessage(apiUrl, token, request)
+        }
+    }
+
     fun sendMessage(
         channelId: Long,
         clanId: Long,
@@ -1169,6 +1281,7 @@ class ChatController @Inject constructor(
         private const val SEND_RETRY_DELAY_MS = 500L
         private const val SHARE_MAX_RETRIES = 5
         private const val SHARE_RETRY_DELAY_MS = 4000L
+        private const val ATTACHMENT_UPLOAD_PARALLELISM = 4
         private const val PENDING_API_REACTION_DEDUP_MS = 5000L
     }
 
@@ -1330,6 +1443,9 @@ class ChatController @Inject constructor(
         notificationCenter.postNotificationOnMainThread(
             NotificationCenter.didReceiveNewMessages, cacheKey, optimistic
         )
+        synchronized(this) {
+            pendingAttachmentEntityByTempId.put(tempId, optimistic)
+        }
 
         appScope.launch(ioDispatcher) {
             try {
@@ -1343,76 +1459,27 @@ class ChatController @Inject constructor(
                         channelType,
                         mentions
                     )
-                    val cdnBaseUrl = BuildConfig.MEZON_BASE_IMG_URL
-                    val uploadedAttachments = ArrayList<MessageAttachment>()
-
-                    for (item in attachments) {
-                        try {
-                            if (com.mezon.mobile.util.AttachmentUploader.isOverSizeLimit(item.size)) {
-                                Log.e(TAG, "Attachment too large, skipping: ${item.filename} size=${item.size}")
-                                continue
-                            }
-                            val timestamp = System.currentTimeMillis() / 1000
-                            val sanitizedName = item.filename.replace(FILENAME_SANITIZE_REGEX, "_")
-                            val uploadFilename = "${timestamp}_$sanitizedName"
-
-                            val presignResult = api.uploadAttachmentFile(
-                                session.apiUrl, session.token,
-                                uploadFilename, item.mimeType,
-                                item.size.toInt(), item.width, item.height
-                            )
-
-                            val fileBytes = com.mezon.mobile.util.AttachmentUploader.readUriBytesSafely(
-                                contentResolver, item.uri, item.mimeType, appContext.cacheDir
-                            )
-                            if (fileBytes == null) {
-                                Log.e(TAG, "Failed to read file or over size: ${item.filename}")
-                                continue
-                            }
-
-                            api.putFileToPresignedUrl(presignResult.url, fileBytes, item.mimeType)
-
-                            val cdnUrl = "$cdnBaseUrl/${presignResult.filename}"
-                            val attachment = messageAttachment {
-                                this.filename = item.filename
-                                this.url = cdnUrl
-                                this.filetype = item.mimeType
-                                this.size = item.size.toInt()
-                                this.width = item.width
-                                this.height = item.height
-                                if (item.duration > 0) this.duration = item.duration
-                            }
-                            uploadedAttachments.add(attachment)
-                            Log.d(TAG, "Uploaded: ${item.filename} → $cdnUrl")
-                        } catch (e: Exception) {
-                            Log.e(TAG, "Failed to upload attachment: ${item.filename}", e)
-                        }
-                    }
-
-                    if (uploadedAttachments.isNotEmpty()) {
-                        val request = channelMessageSend {
-                            this.clanId = clanId
-                            this.channelId = channelId
-                            this.mode = mode
-                            this.isPublic = isPublic
-                            this.content = wireBase
-                            this.attachments.addAll(uploadedAttachments)
-                            protoMentions?.let { this.mentions.addAll(it) }
-                            references?.let { this.references.addAll(it) }
-                            this.mentionEveryone = mentionEveryone
-                            if (anon) this.anonymousMessage = true
-                            if (topicId != 0L) this.topicId = topicId
-                        }
-                        val ack = channelSend(session.apiUrl, session.token, request)
-                        markForwardTargetUsed(channelId, channelType)
-                        notificationCenter.postNotificationOnMainThread(
-                            NotificationCenter.pendingMessageSent, cacheKey, tempId, ack.messageId
-                        )
-                    } else {
-                        notificationCenter.postNotificationOnMainThread(
-                            NotificationCenter.pendingMessageError, cacheKey, tempId
-                        )
-                    }
+                    sendAttachmentsIncrementally(
+                        IncrementalAttachmentSendParams(
+                            tempId = tempId,
+                            cacheKey = cacheKey,
+                            channelId = channelId,
+                            clanId = clanId,
+                            channelType = channelType,
+                            mode = mode,
+                            isPublic = isPublic,
+                            wireContent = wireBase,
+                            protoMentions = protoMentions,
+                            references = references,
+                            mentionEveryone = mentionEveryone,
+                            anon = anon,
+                            topicId = topicId,
+                            allItems = attachments,
+                        ),
+                        contentResolver,
+                        session.apiUrl,
+                        session.token,
+                    )
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to send message with attachments", e)
@@ -1487,89 +1554,36 @@ class ChatController @Inject constructor(
         notificationCenter.postNotificationOnMainThread(
             NotificationCenter.didReceiveNewMessages, channelId, optimistic
         )
+        synchronized(this) {
+            pendingAttachmentEntityByTempId.put(tempId, optimistic)
+        }
 
         appScope.launch(ioDispatcher) {
             try {
                 sessionManager.withAutoRefresh { session ->
                     ensureActiveArchivedThreadIfNeeded(session.apiUrl, session.token, channelId, clanId, channelType)
-                    val cdnBaseUrl = BuildConfig.MEZON_BASE_IMG_URL
-                    val uploadedAttachments = ArrayList<MessageAttachment>()
-
-                    for (item in attachments) {
-                        if (com.mezon.mobile.util.AttachmentUploader.isOverSizeLimit(item.size)) {
-                            Log.e(TAG, "shareMedia: attachment too large, skipping ${item.filename} size=${item.size}")
-                            continue
-                        }
-                        var uploaded = false
-                        for (attempt in 1..SHARE_MAX_RETRIES) {
-                            try {
-                                val timestamp = System.currentTimeMillis() / 1000
-                                val sanitizedName = item.filename.replace(FILENAME_SANITIZE_REGEX, "_")
-                                val uploadFilename = "${timestamp}_$sanitizedName"
-
-                                val presignResult = api.uploadAttachmentFile(
-                                    session.apiUrl, session.token,
-                                    uploadFilename, item.mimeType,
-                                    item.size.toInt(), item.width, item.height
-                                )
-
-                                val fileBytes = com.mezon.mobile.util.AttachmentUploader.readUriBytesSafely(
-                                    contentResolver, item.uri, item.mimeType, appContext.cacheDir
-                                )
-                                if (fileBytes == null) {
-                                    Log.e(TAG, "shareMedia: Failed to read file or over size: ${item.filename}")
-                                    break
-                                }
-
-                                api.putFileToPresignedUrl(presignResult.url, fileBytes, item.mimeType)
-
-                                val cdnUrl = "$cdnBaseUrl/${presignResult.filename}"
-                                val attachment = messageAttachment {
-                                    this.filename = item.filename
-                                    this.url = cdnUrl
-                                    this.filetype = item.mimeType
-                                    this.size = item.size.toInt()
-                                    this.width = item.width
-                                    this.height = item.height
-                                    if (item.duration > 0) this.duration = item.duration
-                                }
-                                uploadedAttachments.add(attachment)
-                                uploaded = true
-                                Log.d(TAG, "shareMedia: Uploaded ${item.filename} → $cdnUrl (attempt $attempt)")
-                                break
-                            } catch (e: Exception) {
-                                Log.e(TAG, "shareMedia: Upload attempt $attempt failed for ${item.filename}", e)
-                                if (attempt < SHARE_MAX_RETRIES) {
-                                    delay(SHARE_RETRY_DELAY_MS)
-                                }
-                            }
-                        }
-                        if (!uploaded) {
-                            Log.e(TAG, "shareMedia: All retries exhausted for ${item.filename}")
-                        }
-                    }
-
-                    if (uploadedAttachments.isNotEmpty()) {
-                        val request = channelMessageSend {
-                            this.clanId = clanId
-                            this.channelId = channelId
-                            this.mode = mode
-                            this.isPublic = isPublic
-                            this.content = baseContent
-                            this.attachments.addAll(uploadedAttachments)
-                            if (anon) this.anonymousMessage = true
-                        }
-                        val ack = channelSend(session.apiUrl, session.token, request)
-                        markForwardTargetUsed(channelId, channelType)
-                        notificationCenter.postNotificationOnMainThread(
-                            NotificationCenter.pendingMessageSent, channelId, tempId, ack.messageId
-                        )
-                        Log.d(TAG, "shareMedia: Sent ${uploadedAttachments.size}/${attachments.size} attachments to channel $channelId")
-                    } else {
-                        notificationCenter.postNotificationOnMainThread(
-                            NotificationCenter.pendingMessageError, channelId, tempId
-                        )
-                    }
+                    sendAttachmentsIncrementally(
+                        IncrementalAttachmentSendParams(
+                            tempId = tempId,
+                            cacheKey = channelId,
+                            channelId = channelId,
+                            clanId = clanId,
+                            channelType = channelType,
+                            mode = mode,
+                            isPublic = isPublic,
+                            wireContent = baseContent,
+                            protoMentions = null,
+                            references = null,
+                            mentionEveryone = false,
+                            anon = anon,
+                            topicId = 0L,
+                            allItems = attachments,
+                            maxRetriesPerFile = SHARE_MAX_RETRIES,
+                        ),
+                        contentResolver,
+                        session.apiUrl,
+                        session.token,
+                    )
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "shareMedia: Failed", e)
@@ -1578,6 +1592,649 @@ class ChatController @Inject constructor(
                 )
             }
         }
+    }
+
+    private suspend fun sendAttachmentsIncrementally(
+        params: IncrementalAttachmentSendParams,
+        contentResolver: android.content.ContentResolver,
+        apiUrl: String,
+        token: String,
+    ) {
+        val items: List<AttachmentPickerItem?> = params.allItems.map { item ->
+            if (com.mezon.mobile.util.AttachmentUploader.isOverSizeLimit(item.size)) {
+                Log.e(TAG, "Attachment too large, skipping: ${item.filename} size=${item.size}")
+                null
+            } else {
+                item
+            }
+        }
+        if (items.isEmpty() || items.none { it != null }) {
+            notificationCenter.postNotificationOnMainThread(
+                NotificationCenter.pendingMessageError, params.cacheKey, params.tempId
+            )
+            return
+        }
+
+        val job = IncrementalAttachmentJob(
+            tempId = params.tempId,
+            cacheKey = params.cacheKey,
+            totalCount = params.allItems.size,
+        )
+        synchronized(this) {
+            attachmentJobsByTempId.put(params.tempId, job)
+        }
+
+        val cdnBaseUrl = BuildConfig.MEZON_BASE_IMG_URL
+        val uploadedByIndex = arrayOfNulls<MessageAttachment>(items.size)
+        val failedIndices = HashSet<Int>()
+        var messageSent = false
+        var realMessageId = 0L
+        var lastSyncedUploadCount = 0
+
+        suspend fun flushAttachmentUpdate(updateError: Boolean = false) {
+            if (!messageSent || realMessageId == 0L) return
+            val uploadedList = uploadedByIndex.filterNotNull()
+            val uploadedCount = uploadedList.size
+            val hasFailure = failedIndices.isNotEmpty()
+            if (!updateError && uploadedCount == lastSyncedUploadCount && !hasFailure) return
+            if (uploadedCount > 1) {
+                try {
+                    channelUpdate(
+                        apiUrl, token,
+                        params.clanId, params.channelId, params.mode, params.isPublic,
+                        realMessageId, params.wireContent, params.protoMentions, uploadedList,
+                        topicId = params.topicId,
+                    )
+                    lastSyncedUploadCount = uploadedCount
+                } catch (e: Exception) {
+                    Log.e(TAG, "Incremental send: attachment batch update failed messageId=$realMessageId", e)
+                    applyLocalOrderedAttachmentUpdate(
+                        params.cacheKey, realMessageId, params.allItems,
+                        uploadedByIndex.toList(), failedIndices, updateError = true,
+                    )
+                    return
+                }
+            }
+            applyLocalOrderedAttachmentUpdate(
+                params.cacheKey, realMessageId, params.allItems,
+                uploadedByIndex.toList(), failedIndices, updateError = updateError,
+            )
+        }
+
+        suspend fun dispatchFirstMessage(attachment: MessageAttachment, index: Int) {
+            val request = channelMessageSend {
+                this.clanId = params.clanId
+                this.channelId = params.channelId
+                this.mode = params.mode
+                this.isPublic = params.isPublic
+                this.content = params.wireContent
+                this.attachments.add(attachment)
+                params.protoMentions?.let { this.mentions.addAll(it) }
+                params.references?.let { this.references.addAll(it) }
+                this.mentionEveryone = params.mentionEveryone
+                if (params.anon) this.anonymousMessage = true
+                if (params.topicId != 0L) this.topicId = params.topicId
+            }
+            val ack = channelSend(apiUrl, token, request)
+            realMessageId = ack.messageId
+            messageSent = true
+            job.realMessageId = realMessageId
+            lastSyncedUploadCount = 1
+            synchronized(this) {
+                attachmentJobsByRealId.put(realMessageId, job)
+            }
+            markForwardTargetUsed(params.channelId, params.channelType)
+            val updatedEntity = applyLocalAfterFirstSendOrdered(
+                params.cacheKey, params.tempId, realMessageId,
+                params.allItems, uploadedByIndex.toList(), failedIndices,
+            )
+            notificationCenter.postNotificationOnMainThread(
+                NotificationCenter.pendingMessageSent, params.cacheKey, params.tempId, realMessageId
+            )
+            notificationCenter.postNotificationOnMainThread(
+                NotificationCenter.messageDidUpdate, params.cacheKey, updatedEntity,
+                NotificationCenter.UPDATE_MASK_ATTACHMENTS,
+            )
+        }
+
+        val uploadSlots = Semaphore(ATTACHMENT_UPLOAD_PARALLELISM)
+        val resultMutex = Mutex()
+
+        suspend fun recordResult(index: Int, attachment: MessageAttachment?) {
+            resultMutex.withLock {
+                if (attachment == null) {
+                    failedIndices.add(index)
+                    job.failedCount = failedIndices.size
+                } else {
+                    uploadedByIndex[index] = attachment
+                    job.uploadedCount = uploadedByIndex.count { it != null }
+                    if (!messageSent) dispatchFirstMessage(attachment, index)
+                }
+                if (messageSent &&
+                    uploadedByIndex.count { it != null } - lastSyncedUploadCount >= ATTACHMENT_UPLOAD_PARALLELISM
+                ) {
+                    flushAttachmentUpdate()
+                }
+            }
+        }
+
+        try {
+            coroutineScope {
+                items.forEachIndexed { index, item ->
+                    launch(ioDispatcher) {
+                        val attachment = if (item == null) {
+                            null
+                        } else {
+                            uploadSlots.withPermit {
+                                loadAndUploadAttachment(
+                                    item, contentResolver, apiUrl, token, cdnBaseUrl, params.maxRetriesPerFile,
+                                )
+                            }
+                        }
+                        recordResult(index, attachment)
+                    }
+                }
+            }
+            if (messageSent) flushAttachmentUpdate()
+
+            if (!messageSent) {
+                notificationCenter.postNotificationOnMainThread(
+                    NotificationCenter.pendingMessageError, params.cacheKey, params.tempId
+                )
+            }
+        } finally {
+            synchronized(this) {
+                attachmentJobsByTempId.remove(params.tempId)
+                if (realMessageId != 0L) attachmentJobsByRealId.remove(realMessageId)
+            }
+        }
+    }
+
+    private suspend fun loadAndUploadAttachment(
+        item: AttachmentPickerItem,
+        contentResolver: android.content.ContentResolver,
+        apiUrl: String,
+        token: String,
+        cdnBaseUrl: String,
+        maxRetries: Int,
+    ): MessageAttachment? {
+        val uploader = com.mezon.mobile.util.AttachmentUploader
+        var uploadItem = item
+        var bytes: ByteArray? = null
+
+        if (!item.isVideo && uploader.isCompressibleImage(item.mimeType)) {
+            val compressed = uploader.compressImageFromUri(
+                contentResolver, item.uri, item.mimeType, item.filename, item.size,
+            )
+            if (compressed != null) {
+                bytes = compressed.bytes
+                uploadItem = item.copy(
+                    filename = compressed.filename,
+                    mimeType = compressed.mimeType,
+                    width = compressed.width,
+                    height = compressed.height,
+                    size = compressed.bytes.size.toLong(),
+                )
+            }
+        }
+
+        if (bytes == null) {
+            bytes = uploader.readUriBytesSafely(
+                contentResolver, item.uri, item.mimeType, appContext.cacheDir,
+            )
+        }
+        if (bytes == null) {
+            Log.e(TAG, "Failed to read file or over size: ${item.filename}")
+            return null
+        }
+        return uploadCachedAttachment(
+            CachedAttachment(uploadItem, bytes), apiUrl, token, cdnBaseUrl, maxRetries,
+        )
+    }
+
+    private suspend fun uploadCachedAttachment(
+        cached: CachedAttachment,
+        apiUrl: String,
+        token: String,
+        cdnBaseUrl: String,
+        maxRetries: Int,
+    ): MessageAttachment? {
+        val item = cached.item
+        for (attempt in 1..maxRetries) {
+            try {
+                val timestamp = System.currentTimeMillis() / 1000
+                val sanitizedName = item.filename.replace(FILENAME_SANITIZE_REGEX, "_")
+                val uploadFilename = "${timestamp}_$sanitizedName"
+                val uploadResult = com.mezon.mobile.util.AttachmentUploader.uploadAttachmentBytes(
+                    api, apiUrl, token, uploadFilename, item.mimeType, cached.bytes,
+                    item.width, item.height, cdnBaseUrl,
+                )
+                return messageAttachment {
+                    this.filename = item.filename
+                    this.url = uploadResult.cdnUrl
+                    this.filetype = item.mimeType
+                    this.size = item.size.toInt()
+                    this.width = item.width
+                    this.height = item.height
+                    if (item.duration > 0) this.duration = item.duration
+                }
+            } catch (e: Exception) {
+                if (maxRetries > 1) {
+                    Log.e(TAG, "Upload attempt $attempt failed for ${item.filename}", e)
+                } else {
+                    Log.e(TAG, "Failed to upload attachment: ${item.filename}", e)
+                }
+                if (attempt < maxRetries) delay(SHARE_RETRY_DELAY_MS)
+            }
+        }
+        if (maxRetries > 1) {
+            Log.e(TAG, "All retries exhausted for ${item.filename}")
+        }
+        return null
+    }
+
+    private fun buildExtraAttachmentsJson(
+        uploadedTail: List<MessageAttachment>,
+        pendingLocal: List<AttachmentPickerItem>,
+    ): String {
+        if (uploadedTail.isEmpty() && pendingLocal.isEmpty()) return ""
+        val arr = org.json.JSONArray()
+        for (att in uploadedTail) {
+            val obj = org.json.JSONObject()
+            obj.put("url", att.url)
+            obj.put("thumb", att.thumbnail)
+            obj.put("width", att.width)
+            obj.put("height", att.height)
+            obj.put("filename", att.filename)
+            obj.put("filetype", att.filetype)
+            obj.put("size", att.size)
+            obj.put("duration", att.duration)
+            arr.put(obj)
+        }
+        for (item in pendingLocal) {
+            val obj = org.json.JSONObject()
+            obj.put("url", item.uri.toString())
+            obj.put("thumb", "")
+            obj.put("width", item.width)
+            obj.put("height", item.height)
+            obj.put("filename", item.filename)
+            obj.put("filetype", item.mimeType)
+            obj.put("size", item.size.toInt())
+            obj.put("duration", item.duration)
+            arr.put(obj)
+        }
+        return arr.toString()
+    }
+
+    private fun buildOrderedAttachmentFields(
+        allItems: List<AttachmentPickerItem>,
+        uploadedByIndex: List<MessageAttachment?>,
+        failedIndices: Set<Int>,
+    ): AttachmentFields {
+        if (allItems.isEmpty()) {
+            return AttachmentFields("", "", 0, 0, "", "", 0, 0, "", MessageEntity.TYPE_TEXT)
+        }
+        fun slotObject(index: Int): org.json.JSONObject {
+            val item = allItems[index]
+            val uploaded = uploadedByIndex.getOrNull(index)
+            val obj = org.json.JSONObject()
+            when {
+                uploaded != null -> {
+                    obj.put("url", uploaded.url)
+                    obj.put("thumb", uploaded.thumbnail)
+                    obj.put("width", uploaded.width)
+                    obj.put("height", uploaded.height)
+                    obj.put("filename", uploaded.filename)
+                    obj.put("filetype", uploaded.filetype)
+                    obj.put("size", uploaded.size)
+                    obj.put("duration", uploaded.duration)
+                }
+                index in failedIndices -> {
+                    obj.put("url", item.uri.toString())
+                    obj.put("thumb", "")
+                    obj.put("width", item.width)
+                    obj.put("height", item.height)
+                    obj.put("filename", item.filename)
+                    obj.put("filetype", item.mimeType)
+                    obj.put("size", item.size.toInt())
+                    obj.put("duration", item.duration)
+                    obj.put("upload_error", true)
+                }
+                else -> {
+                    obj.put("url", item.uri.toString())
+                    obj.put("thumb", "")
+                    obj.put("width", item.width)
+                    obj.put("height", item.height)
+                    obj.put("filename", item.filename)
+                    obj.put("filetype", item.mimeType)
+                    obj.put("size", item.size.toInt())
+                    obj.put("duration", item.duration)
+                }
+            }
+            return obj
+        }
+        val firstItem = allItems.first()
+        val messageType = when {
+            uploadedByIndex.getOrNull(0) != null -> resolveOptimisticTypeFromMime(uploadedByIndex[0]!!.filetype)
+            else -> resolveOptimisticType(firstItem)
+        }
+        val extraArr = org.json.JSONArray()
+        for (i in 1 until allItems.size) {
+            extraArr.put(slotObject(i))
+        }
+        val firstUploadedAtt = uploadedByIndex.getOrNull(0)
+        return AttachmentFields(
+            attachmentUrl = firstUploadedAtt?.url ?: firstItem.uri.toString(),
+            attachmentThumb = firstUploadedAtt?.thumbnail.orEmpty(),
+            attachmentWidth = firstUploadedAtt?.width ?: firstItem.width,
+            attachmentHeight = firstUploadedAtt?.height ?: firstItem.height,
+            attachmentFilename = firstUploadedAtt?.filename ?: firstItem.filename,
+            attachmentFiletype = firstUploadedAtt?.filetype ?: firstItem.mimeType,
+            attachmentSize = firstUploadedAtt?.size ?: firstItem.size.toInt(),
+            attachmentDuration = firstUploadedAtt?.duration ?: firstItem.duration,
+            extraAttachmentsJson = if (allItems.size > 1) extraArr.toString() else "",
+            messageType = messageType,
+        )
+    }
+
+    private fun attachmentFieldsFromUploaded(
+        uploaded: List<MessageAttachment>,
+        pendingLocal: List<AttachmentPickerItem>,
+    ): AttachmentFields {
+        val first = uploaded.firstOrNull()
+        val tail = if (uploaded.size > 1) uploaded.subList(1, uploaded.size) else emptyList()
+        val firstItem = pendingLocal.firstOrNull()
+        val messageType = when {
+            first != null -> resolveOptimisticTypeFromMime(first.filetype)
+            firstItem != null -> resolveOptimisticType(firstItem)
+            else -> MessageEntity.TYPE_TEXT
+        }
+        return AttachmentFields(
+            attachmentUrl = first?.url.orEmpty(),
+            attachmentThumb = first?.thumbnail.orEmpty(),
+            attachmentWidth = first?.width ?: firstItem?.width ?: 0,
+            attachmentHeight = first?.height ?: firstItem?.height ?: 0,
+            attachmentFilename = first?.filename ?: firstItem?.filename.orEmpty(),
+            attachmentFiletype = first?.filetype ?: firstItem?.mimeType.orEmpty(),
+            attachmentSize = first?.size ?: firstItem?.size?.toInt() ?: 0,
+            attachmentDuration = first?.duration ?: firstItem?.duration ?: 0,
+            extraAttachmentsJson = buildExtraAttachmentsJson(tail, if (first != null) pendingLocal else pendingLocal.drop(1)),
+            messageType = messageType,
+        )
+    }
+
+    private data class AttachmentFields(
+        val attachmentUrl: String,
+        val attachmentThumb: String,
+        val attachmentWidth: Int,
+        val attachmentHeight: Int,
+        val attachmentFilename: String,
+        val attachmentFiletype: String,
+        val attachmentSize: Int,
+        val attachmentDuration: Int,
+        val extraAttachmentsJson: String,
+        val messageType: Int,
+    )
+
+    private fun resolveOptimisticTypeFromMime(mimeType: String): Int {
+        val ft = mimeType.lowercase()
+        return when {
+            ft.startsWith("image/gif") -> MessageEntity.TYPE_GIF
+            ft.startsWith("image/") -> MessageEntity.TYPE_PHOTO
+            ft.startsWith("video/") -> MessageEntity.TYPE_VIDEO
+            else -> MessageEntity.TYPE_FILE
+        }
+    }
+
+    private fun entityAttachmentFieldsFromProto(attachments: List<MessageAttachment>): AttachmentFields {
+        return attachmentFieldsFromUploaded(attachments, emptyList())
+    }
+
+    private suspend fun applyLocalAfterFirstSendOrdered(
+        cacheKey: Long,
+        tempId: Long,
+        realMessageId: Long,
+        allItems: List<AttachmentPickerItem>,
+        uploadedByIndex: List<MessageAttachment?>,
+        failedIndices: Set<Int>,
+    ): MessageEntity {
+        val existing = synchronized(this) { pendingAttachmentEntityByTempId.get(tempId) }
+            ?: withContext(ioDispatcher) { messageDao.getById(cacheKey, realMessageId) }
+        val fields = buildOrderedAttachmentFields(allItems, uploadedByIndex, failedIndices)
+        val hasError = failedIndices.isNotEmpty()
+        val updated = (existing ?: MessageEntity(
+            id = realMessageId,
+            channelId = cacheKey,
+            senderId = 0L,
+            senderName = "",
+            senderAvatar = "",
+            content = "",
+            timestampSeconds = System.currentTimeMillis() / 1000,
+            code = MessageEntity.CODE_CHAT,
+            isMe = true,
+        )).copy(
+            id = realMessageId,
+            attachmentUrl = fields.attachmentUrl,
+            attachmentThumb = fields.attachmentThumb,
+            attachmentWidth = fields.attachmentWidth,
+            attachmentHeight = fields.attachmentHeight,
+            attachmentFilename = fields.attachmentFilename,
+            attachmentFiletype = fields.attachmentFiletype,
+            attachmentSize = fields.attachmentSize,
+            attachmentDuration = fields.attachmentDuration,
+            extraAttachmentsJson = fields.extraAttachmentsJson,
+            messageType = fields.messageType,
+            sendState = MessageEntity.SEND_STATE_SENT,
+            isError = hasError,
+        )
+        appScope.launch(ioDispatcher) { messageDao.upsert(updated) }
+        synchronized(this) {
+            pendingAttachmentEntityByTempId.put(tempId, updated)
+            if (realMessageId > lastMessageByChannel.get(cacheKey, 0L)) {
+                lastMessageByChannel.put(cacheKey, realMessageId)
+            }
+            dialogMessage.put(cacheKey, updated)
+        }
+        return updated
+    }
+
+    private suspend fun applyLocalOrderedAttachmentUpdate(
+        cacheKey: Long,
+        messageId: Long,
+        allItems: List<AttachmentPickerItem>,
+        uploadedByIndex: List<MessageAttachment?>,
+        failedIndices: Set<Int>,
+        updateError: Boolean = false,
+    ) {
+        val existing = withContext(ioDispatcher) { messageDao.getById(cacheKey, messageId) } ?: return
+        val fields = buildOrderedAttachmentFields(allItems, uploadedByIndex, failedIndices)
+        val hasError = failedIndices.isNotEmpty() || updateError
+        val updated = existing.copy(
+            attachmentUrl = fields.attachmentUrl,
+            attachmentThumb = fields.attachmentThumb,
+            attachmentWidth = fields.attachmentWidth,
+            attachmentHeight = fields.attachmentHeight,
+            attachmentFilename = fields.attachmentFilename,
+            attachmentFiletype = fields.attachmentFiletype,
+            attachmentSize = fields.attachmentSize,
+            attachmentDuration = fields.attachmentDuration,
+            extraAttachmentsJson = fields.extraAttachmentsJson,
+            messageType = fields.messageType,
+            sendState = MessageEntity.SEND_STATE_SENT,
+            isError = hasError,
+        )
+        appScope.launch(ioDispatcher) { messageDao.upsert(updated) }
+        synchronized(this) {
+            val last = dialogMessage.get(cacheKey)
+            if (last != null && last.id == messageId) {
+                dialogMessage.put(cacheKey, updated)
+            }
+        }
+        val mask = if (hasError) {
+            NotificationCenter.UPDATE_MASK_ATTACHMENTS or NotificationCenter.UPDATE_MASK_SEND_STATE
+        } else {
+            NotificationCenter.UPDATE_MASK_ATTACHMENTS
+        }
+        notificationCenter.postNotificationOnMainThread(
+            NotificationCenter.messageDidUpdate, cacheKey, updated, mask
+        )
+    }
+
+    private suspend fun applyLocalAfterFirstSend(
+        cacheKey: Long,
+        tempId: Long,
+        realMessageId: Long,
+        uploaded: List<MessageAttachment>,
+        pendingLocal: List<AttachmentPickerItem>,
+    ) {
+        val existing = synchronized(this) { pendingAttachmentEntityByTempId.get(tempId) }
+            ?: withContext(ioDispatcher) { messageDao.getById(cacheKey, realMessageId) }
+        val fields = attachmentFieldsFromUploaded(uploaded, pendingLocal)
+        val updated = (existing ?: MessageEntity(
+            id = realMessageId,
+            channelId = cacheKey,
+            senderId = 0L,
+            senderName = "",
+            senderAvatar = "",
+            content = "",
+            timestampSeconds = System.currentTimeMillis() / 1000,
+            code = MessageEntity.CODE_CHAT,
+            isMe = true,
+        )).copy(
+            id = realMessageId,
+            attachmentUrl = fields.attachmentUrl,
+            attachmentThumb = fields.attachmentThumb,
+            attachmentWidth = fields.attachmentWidth,
+            attachmentHeight = fields.attachmentHeight,
+            attachmentFilename = fields.attachmentFilename,
+            attachmentFiletype = fields.attachmentFiletype,
+            attachmentSize = fields.attachmentSize,
+            attachmentDuration = fields.attachmentDuration,
+            extraAttachmentsJson = fields.extraAttachmentsJson,
+            messageType = fields.messageType,
+            sendState = MessageEntity.SEND_STATE_SENT,
+        )
+        appScope.launch(ioDispatcher) { messageDao.upsert(updated) }
+        synchronized(this) {
+            pendingAttachmentEntityByTempId.put(tempId, updated)
+            if (realMessageId > lastMessageByChannel.get(cacheKey, 0L)) {
+                lastMessageByChannel.put(cacheKey, realMessageId)
+            }
+            dialogMessage.put(cacheKey, updated)
+        }
+    }
+
+    private suspend fun applyLocalAttachmentUpdate(
+        cacheKey: Long,
+        messageId: Long,
+        uploaded: List<MessageAttachment>,
+        pendingLocal: List<AttachmentPickerItem>,
+    ) {
+        val existing = withContext(ioDispatcher) { messageDao.getById(cacheKey, messageId) } ?: return
+        val fields = attachmentFieldsFromUploaded(uploaded, pendingLocal)
+        val updated = existing.copy(
+            attachmentUrl = fields.attachmentUrl,
+            attachmentThumb = fields.attachmentThumb,
+            attachmentWidth = fields.attachmentWidth,
+            attachmentHeight = fields.attachmentHeight,
+            attachmentFilename = fields.attachmentFilename,
+            attachmentFiletype = fields.attachmentFiletype,
+            attachmentSize = fields.attachmentSize,
+            attachmentDuration = fields.attachmentDuration,
+            extraAttachmentsJson = fields.extraAttachmentsJson,
+            messageType = fields.messageType,
+            sendState = MessageEntity.SEND_STATE_SENT,
+        )
+        appScope.launch(ioDispatcher) { messageDao.upsert(updated) }
+        synchronized(this) {
+            val last = dialogMessage.get(cacheKey)
+            if (last != null && last.id == messageId) {
+                dialogMessage.put(cacheKey, updated)
+            }
+        }
+        notificationCenter.postNotificationOnMainThread(
+            NotificationCenter.messageDidUpdate, cacheKey, updated,
+            NotificationCenter.UPDATE_MASK_ATTACHMENTS
+        )
+    }
+
+    private fun isLocalAttachmentUrl(url: String): Boolean {
+        return url.startsWith("content:") || url.startsWith("file:")
+    }
+
+    private fun hasAnyLocalAttachmentUrl(entity: MessageEntity): Boolean {
+        if (isLocalAttachmentUrl(entity.attachmentUrl)) return true
+        if (entity.extraAttachmentsJson.isBlank()) return false
+        return entity.extraAttachmentsJson.contains("content:") || entity.extraAttachmentsJson.contains("file:")
+    }
+
+    private fun resolveEchoContent(existing: String, incoming: String): String {
+        if (incoming.isBlank()) return existing
+        if (existing.isBlank()) return incoming
+        if (messageHasExplicitTextBody(existing) && !messageHasExplicitTextBody(incoming)) return existing
+        if (existing.contains("\"references\"") && !incoming.contains("\"references\"")) return existing
+        if (existing.contains("\"mentions\"") && !incoming.contains("\"mentions\"")) return existing
+        return incoming
+    }
+
+    private fun mergeIncomingAttachmentEntity(existing: MessageEntity?, incoming: MessageEntity): MessageEntity {
+        val base = existing ?: incoming
+        val job = synchronized(this) { attachmentJobsByRealId.get(incoming.id) }
+        val incomingCount = incoming.allAttachmentsInfo.size
+        val existingCount = existing?.allAttachmentsInfo?.size ?: 0
+        val expectedTotal = job?.totalCount ?: existingCount
+        val preserveLocalAttachments = existing != null && (
+            (job != null && incomingCount < job.totalCount) ||
+            existingCount > incomingCount ||
+            (expectedTotal > incomingCount && hasAnyLocalAttachmentUrl(existing))
+        )
+        if (!preserveLocalAttachments) {
+            return incoming.copy(content = resolveEchoContent(incoming.content, base.content))
+        }
+        val incomingFields = entityAttachmentFieldsFromProto(
+            incoming.allAttachmentsInfo.map { att ->
+                messageAttachment {
+                    filename = att.filename
+                    url = att.url
+                    filetype = att.filetype
+                    size = att.size
+                    width = att.width
+                    height = att.height
+                    thumbnail = att.thumb
+                    duration = att.duration
+                }
+            }
+        )
+        val primaryUrl = when {
+            incomingFields.attachmentUrl.isNotBlank() && isLocalAttachmentUrl(base.attachmentUrl) ->
+                incomingFields.attachmentUrl
+            incomingFields.attachmentUrl.isNotBlank() -> incomingFields.attachmentUrl
+            else -> base.attachmentUrl
+        }
+        return base.copy(
+            content = resolveEchoContent(base.content, incoming.content),
+            updateTimeSeconds = incoming.updateTimeSeconds,
+            hideEditted = incoming.hideEditted,
+            code = incoming.code,
+            attachmentUrl = primaryUrl,
+            attachmentThumb = incomingFields.attachmentThumb.ifBlank { base.attachmentThumb },
+            attachmentWidth = if (incomingFields.attachmentWidth > 0) incomingFields.attachmentWidth else base.attachmentWidth,
+            attachmentHeight = if (incomingFields.attachmentHeight > 0) incomingFields.attachmentHeight else base.attachmentHeight,
+            attachmentFilename = incomingFields.attachmentFilename.ifBlank { base.attachmentFilename },
+            attachmentFiletype = incomingFields.attachmentFiletype.ifBlank { base.attachmentFiletype },
+            attachmentSize = if (incomingFields.attachmentSize > 0) incomingFields.attachmentSize else base.attachmentSize,
+            attachmentDuration = if (incomingFields.attachmentDuration > 0) incomingFields.attachmentDuration else base.attachmentDuration,
+            extraAttachmentsJson = if (incomingCount >= expectedTotal) {
+                incomingFields.extraAttachmentsJson
+            } else {
+                base.extraAttachmentsJson
+            },
+            messageType = if (primaryUrl.isNotEmpty()) {
+                if (incomingFields.attachmentUrl.isNotEmpty()) incomingFields.messageType else base.messageType
+            } else {
+                base.messageType
+            },
+        )
     }
 
     private fun resolveOptimisticType(item: AttachmentPickerItem?): Int {
@@ -1828,17 +2485,22 @@ class ChatController @Inject constructor(
 
             when (msg.code) {
                 CODE_CHAT_UPDATE -> {
+                    if (synchronized(this) { attachmentJobsByRealId.get(entity.id) } != null) {
+                        return@collect
+                    }
                     if (msg.topicId != 0L) {
                         appScope.launch(ioDispatcher) {
                             val topicEntity = remapForCache(entity, msg.topicId)
-                            messageDao.updateContent(
-                                topicEntity.channelId, topicEntity.id, topicEntity.content,
-                                topicEntity.updateTimeSeconds, topicEntity.hideEditted, topicEntity.code
-                            )
-                            val merged = messageDao.getById(topicEntity.channelId, topicEntity.id) ?: topicEntity
-                            notificationCenter.postNotificationOnMainThread(
-                                NotificationCenter.messageDidUpdate, topicEntity.channelId, merged,
+                            val existing = messageDao.getById(topicEntity.channelId, topicEntity.id)
+                            val merged = mergeIncomingAttachmentEntity(existing, topicEntity)
+                            messageDao.upsert(merged)
+                            val mask = if (topicEntity.allAttachmentsInfo.isNotEmpty()) {
+                                NotificationCenter.UPDATE_MASK_ATTACHMENTS or NotificationCenter.UPDATE_MASK_MESSAGE_TEXT
+                            } else {
                                 NotificationCenter.UPDATE_MASK_MESSAGE_TEXT
+                            }
+                            notificationCenter.postNotificationOnMainThread(
+                                NotificationCenter.messageDidUpdate, topicEntity.channelId, merged, mask
                             )
                         }
                         return@collect
@@ -1846,15 +2508,23 @@ class ChatController @Inject constructor(
                     if (BuildConfig.DEBUG) {
                         Log.d(TAG, "incoming CHANNEL_MESSAGE as update id=${entity.id} channel=${entity.channelId}")
                     }
-                    appScope.launch {
-                        messageDao.updateContent(
-                            entity.channelId, entity.id, entity.content,
-                            entity.updateTimeSeconds, entity.hideEditted, entity.code
-                        )
-                        val merged = messageDao.getById(entity.channelId, entity.id) ?: entity
-                        notificationCenter.postNotificationOnMainThread(
-                            NotificationCenter.messageDidUpdate, merged.channelId, merged,
+                    appScope.launch(ioDispatcher) {
+                        val existing = messageDao.getById(entity.channelId, entity.id)
+                        val merged = mergeIncomingAttachmentEntity(existing, entity)
+                        messageDao.upsert(merged)
+                        synchronized(this@ChatController) {
+                            val last = dialogMessage.get(merged.channelId)
+                            if (last != null && last.id == merged.id) {
+                                dialogMessage.put(merged.channelId, merged)
+                            }
+                        }
+                        val mask = if (entity.allAttachmentsInfo.isNotEmpty()) {
+                            NotificationCenter.UPDATE_MASK_ATTACHMENTS or NotificationCenter.UPDATE_MASK_MESSAGE_TEXT
+                        } else {
                             NotificationCenter.UPDATE_MASK_MESSAGE_TEXT
+                        }
+                        notificationCenter.postNotificationOnMainThread(
+                            NotificationCenter.messageDidUpdate, merged.channelId, merged, mask
                         )
                     }
                 }
@@ -1999,29 +2669,42 @@ class ChatController @Inject constructor(
             val updateTime = System.currentTimeMillis() / 1000L
             appScope.launch(ioDispatcher) {
                 val existing = messageDao.getById(update.channelId, update.messageId) ?: return@launch
-                val updated = existing.copy(
+                var updated = existing.copy(
                     content = mergedContent,
                     updateTimeSeconds = updateTime,
                     hideEditted = update.hideEditted,
                     code = CODE_CHAT_UPDATE
                 )
-                messageDao.updateContent(
-                    updated.channelId,
-                    updated.id,
-                    updated.content,
-                    updated.updateTimeSeconds,
-                    updated.hideEditted,
-                    updated.code
-                )
+                if (update.attachmentsCount > 0) {
+                    val fields = entityAttachmentFieldsFromProto(update.attachmentsList)
+                    updated = updated.copy(
+                        attachmentUrl = fields.attachmentUrl,
+                        attachmentThumb = fields.attachmentThumb,
+                        attachmentWidth = fields.attachmentWidth,
+                        attachmentHeight = fields.attachmentHeight,
+                        attachmentFilename = fields.attachmentFilename,
+                        attachmentFiletype = fields.attachmentFiletype,
+                        attachmentSize = fields.attachmentSize,
+                        attachmentDuration = fields.attachmentDuration,
+                        extraAttachmentsJson = fields.extraAttachmentsJson,
+                        messageType = fields.messageType,
+                    )
+                    updated = mergeIncomingAttachmentEntity(existing, updated)
+                }
+                messageDao.upsert(updated)
                 synchronized(this@ChatController) {
                     val last = dialogMessage.get(updated.channelId)
                     if (last != null && last.id == updated.id) {
                         dialogMessage.put(updated.channelId, updated)
                     }
                 }
-                notificationCenter.postNotificationOnMainThread(
-                    NotificationCenter.messageDidUpdate, updated.channelId, updated,
+                val mask = if (update.attachmentsCount > 0) {
+                    NotificationCenter.UPDATE_MASK_ATTACHMENTS or NotificationCenter.UPDATE_MASK_MESSAGE_TEXT
+                } else {
                     NotificationCenter.UPDATE_MASK_MESSAGE_TEXT
+                }
+                notificationCenter.postNotificationOnMainThread(
+                    NotificationCenter.messageDidUpdate, updated.channelId, updated, mask
                 )
             }
         }

@@ -26,6 +26,7 @@ import com.mezon.mobile.network.apiCacheKey
 import com.mezon.mobile.session.SessionManager
 import com.mezon.mobile.util.avatarImgproxyUrl
 import com.mezon.mobile.util.createImgproxyUrl
+import com.mezon.mobile.util.AttachmentUploader
 import com.mezon.mobile.home.BadgeCoordinator
 import com.mezon.mobile.home.TopicBadgeTracker
 import com.mezon.mobile.home.clans.channelapp.ChannelAppController
@@ -442,17 +443,17 @@ class ClansController @Inject constructor(
                 val ts = System.currentTimeMillis() / 1000
                 val filename = "${ts}_banner.jpg"
                 val mime = "image/jpeg"
-                val presign = api.uploadAttachmentFile(
+                AttachmentUploader.uploadAttachmentBytes(
+                    api,
                     session.apiUrl,
                     session.token,
                     filename,
                     mime,
-                    jpegBytes.size,
+                    jpegBytes,
                     1920,
                     1080,
-                )
-                api.putFileToPresignedUrl(presign.url, jpegBytes, mime)
-                "${BuildConfig.MEZON_BASE_IMG_URL}/${presign.filename}"
+                    BuildConfig.MEZON_BASE_IMG_URL,
+                ).cdnUrl
             }
         }
     }
@@ -811,17 +812,17 @@ class ClansController @Inject constructor(
             withContext(ioDispatcher) {
                 val ts = System.currentTimeMillis() / 1000
                 val name = "${ts}_wh.jpg"
-                val presign = api.uploadAttachmentFile(
+                AttachmentUploader.uploadAttachmentBytes(
+                    api,
                     session.apiUrl,
                     session.token,
                     name,
                     mimeType,
-                    bytes.size,
+                    bytes,
                     512,
                     512,
-                )
-                api.putFileToPresignedUrl(presign.url, bytes, mimeType)
-                "${BuildConfig.MEZON_BASE_IMG_URL}/${presign.filename}"
+                    BuildConfig.MEZON_BASE_IMG_URL,
+                ).cdnUrl
             }
         }
     }
@@ -837,17 +838,17 @@ class ClansController @Inject constructor(
                     else -> "jpg"
                 }
                 val name = "${ts}_role.$ext"
-                val presign = api.uploadAttachmentFile(
+                AttachmentUploader.uploadAttachmentBytes(
+                    api,
                     session.apiUrl,
                     session.token,
                     name,
                     mimeType,
-                    bytes.size,
+                    bytes,
                     512,
                     512,
-                )
-                api.putFileToPresignedUrl(presign.url, bytes, mimeType)
-                "${BuildConfig.MEZON_BASE_IMG_URL}/${presign.filename}"
+                    BuildConfig.MEZON_BASE_IMG_URL,
+                ).cdnUrl
             }
         }
     }
