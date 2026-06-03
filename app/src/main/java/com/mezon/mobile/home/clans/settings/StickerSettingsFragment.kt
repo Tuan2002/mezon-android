@@ -55,7 +55,7 @@ import java.io.File
 private class StickerTileViews(
     val imageView: ImageView,
     val nameTv: TextView,
-    val forSaleBadge: TextView,
+    val forSaleBadge: ImageView,
     val manageOverlay: LinearLayout,
     val editBtn: ImageView,
     val deleteBtn: ImageView,
@@ -665,21 +665,14 @@ class StickerSettingsFragment : BaseFragment() {
                 Gravity.BOTTOM,
             ))
 
-            val forSaleBadge = TextView(ctx).apply {
-                text = "★"
-                textSize = 11f
-                setTextColor(0xFFFFD700.toInt())
-                setPadding(LayoutHelper.dp(3f), LayoutHelper.dp(1f), LayoutHelper.dp(3f), LayoutHelper.dp(1f))
-                background = android.graphics.drawable.GradientDrawable().apply {
-                    shape = android.graphics.drawable.GradientDrawable.RECTANGLE
-                    cornerRadius = LayoutHelper.dpf(4f)
-                    setColor(0x99000000.toInt())
-                }
+            val forSaleBadge = ImageView(ctx).apply {
+                setImageDrawable(MezonIcon.saleIcon.getDrawable(ctx))
+                scaleType = ImageView.ScaleType.FIT_CENTER
                 visibility = View.GONE
             }
             root.addView(forSaleBadge, FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.WRAP_CONTENT,
-                FrameLayout.LayoutParams.WRAP_CONTENT,
+                LayoutHelper.dp(24f),
+                LayoutHelper.dp(24f),
                 Gravity.TOP or Gravity.END,
             ).apply {
                 setMargins(0, LayoutHelper.dp(5f), LayoutHelper.dp(5f), 0)
