@@ -88,6 +88,7 @@ class CreateChannelFragment : BaseFragment() {
             setBackButtonImage(MezonIcon.closeLargeIcon.resId)
             setTitle(getString(R.string.channel_creator_screen_title))
             setTitleColor(themeColors.textStrong)
+            setCenterTitle(true)
             createMenu().addItem(1, "").also { cell ->
                 cell.addView(
                     saveButtonText,
@@ -292,7 +293,8 @@ class CreateChannelFragment : BaseFragment() {
 
         val row = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
+            gravity = Gravity.TOP
+            isBaselineAligned = false
             isClickable = true
             isFocusable = true
             setPadding(rowPad, rowPad, rowPad, rowPad)
@@ -308,7 +310,15 @@ class CreateChannelFragment : BaseFragment() {
             setImageDrawable(icon.getDrawable(context, themeColors.textStrong))
             scaleType = ImageView.ScaleType.FIT_CENTER
         }
-        row.addView(iconView, LayoutHelper.createLinear(24, 24).apply { rightMargin = LayoutHelper.dp(12) })
+        row.addView(
+            iconView,
+            LayoutHelper.createLinear(
+                width = 24,
+                height = LayoutHelper.MATCH_PARENT,
+                gravity = Gravity.CENTER_VERTICAL,
+                rightMargin = 12f
+            )
+        )
 
         val texts = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
@@ -326,7 +336,14 @@ class CreateChannelFragment : BaseFragment() {
             }, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT))
         }
         row.addView(texts, LayoutHelper.createLinear(0, LayoutHelper.WRAP_CONTENT, 1f))
-        row.addView(radio, LayoutHelper.createLinear(LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT))
+        row.addView(
+            radio,
+            LayoutHelper.createLinear(
+                width = LayoutHelper.WRAP_CONTENT,
+                height = LayoutHelper.WRAP_CONTENT,
+                gravity = Gravity.CENTER_VERTICAL
+            )
+        )
         parent.addView(row, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT))
     }
 
@@ -373,6 +390,12 @@ class CreateChannelFragment : BaseFragment() {
             creating = true
             loadingOverlay.visibility = View.VISIBLE
             try {
+                val isDuplicate = channelController.checkDuplicateChannelName(name, 2, categoryId).getOrDefault(false)
+                if (isDuplicate) {
+                    showToast(getString(R.string.channel_creator_channel_name_duplicate_error))
+                    return@launch
+                }
+
                 val desc = channelController.createClanChannel(
                     clanId,
                     categoryId,
@@ -393,15 +416,17 @@ class CreateChannelFragment : BaseFragment() {
 
     private fun afterCreateSuccess(channelId: Long, label: String, clanIdParam: Long, channelType: Int) {
         fragmentView?.post {
-            finishFragment()
             val act = getParentActivity() as? MainActivity ?: return@post
             when (channelType) {
-                CHANNEL_TYPE_VOICE, CHANNEL_TYPE_STREAMING -> Unit
+                CHANNEL_TYPE_VOICE, CHANNEL_TYPE_STREAMING -> {
+                    finishFragment()
+                }
                 else -> act.openChat(
                     channelId = channelId,
                     channelName = label,
                     clanId = clanIdParam,
-                    channelType = CHANNEL_TYPE_CHANNEL
+                    channelType = CHANNEL_TYPE_CHANNEL,
+                    replaceLastFragment = true
                 )
             }
         }

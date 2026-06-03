@@ -1009,8 +1009,9 @@
 
     <string name="channel_creator_action_create">Tạo</string>
     <string name="channel_creator_channel_name_title">Tên kênh</string>
-    <string name="channel_creator_channel_name_placeholder">new-channel</string>
+    <string name="channel_creator_channel_name_placeholder">Nhập tên kênh</string>
     <string name="channel_creator_channel_name_error">Vui lòng nhập tên kênh (tối đa 64 ký tự, chỉ chữ, số, _ hoặc -).</string>
+    <string name="channel_creator_channel_name_duplicate_error">Tên kênh đã tồn tại. Vui lòng nhập tên khác.</string>
     <string name="channel_creator_channel_type_title">Loại kênh</string>
     <string name="channel_creator_type_text_title">Văn bản</string>
     <string name="channel_creator_type_text_desc">Đăng ảnh, GIF, nhãn dán, ý kiến và câu đùa</string>
