@@ -85,6 +85,7 @@ enum class MezonIcon(@DrawableRes val resId: Int) {
     chevronSmallRightIcon(R.drawable.ic_chevron_right_small_icon),
     lockUnlockIcon(R.drawable.ic_lock_unlock_icon),
     lockIcon(R.drawable.ic_lock_icon),
+    saleIcon(R.drawable.ic_sale),
     moreHorizontalIcon(R.drawable.ic_more_horizontal_icon),
     messagePlusIcon(R.drawable.ic_message_plus_icon),
     keyboardIcon(R.drawable.ic_keyboard_icon),
@@ -261,6 +262,7 @@ enum class MezonIcon(@DrawableRes val resId: Int) {
                 }
                 loadDrawable(context, resId)
             }
+
             scanQR -> {
                 val resId = if (themeColors.resolvedMode == ThemeMode.LIGHT) {
                     R.drawable.ic_qr_scan_light
@@ -269,6 +271,7 @@ enum class MezonIcon(@DrawableRes val resId: Int) {
                 }
                 loadDrawable(context, resId)
             }
+
             else -> getDrawable(context)
         }
 
