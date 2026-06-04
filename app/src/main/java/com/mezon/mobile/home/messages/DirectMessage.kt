@@ -83,6 +83,23 @@ data class DirectMessage(
     }
 }
 
+private const val PREVIEW_MAX_UTF8_BYTES = 32
+private const val PREVIEW_ELLIPSIS_THRESHOLD_BYTES = PREVIEW_MAX_UTF8_BYTES - 3
+private const val PREVIEW_ELLIPSIS = "..."
+
+fun formatDirectMessagePreview(preview: String): String {
+    if (preview.isEmpty() || preview.endsWith(PREVIEW_ELLIPSIS)) return preview
+
+    val bytes = preview.toByteArray(Charsets.UTF_8)
+    if (bytes.size <= PREVIEW_MAX_UTF8_BYTES) {
+        return if (bytes.size >= PREVIEW_ELLIPSIS_THRESHOLD_BYTES) preview + PREVIEW_ELLIPSIS else preview
+    }
+
+    var end = PREVIEW_MAX_UTF8_BYTES
+    while (end > 0 && (bytes[end - 1].toInt() and 0xC0) == 0x80) end--
+    if (end > 0 && (bytes[end - 1].toInt() and 0x80) != 0) end--
+    return String(bytes, 0, end, Charsets.UTF_8) + PREVIEW_ELLIPSIS
+}
 
 fun ChannelDescription.toDirectMessage(currentUserId: Long, previewContext: android.content.Context? = null): DirectMessage {
     val isGroup = type == CHANNEL_TYPE_GROUP
@@ -140,8 +157,9 @@ fun ChannelDescription.toDirectMessage(currentUserId: Long, previewContext: andr
                 previewContext,
                 lastSentMessage.content
             )
+        } else {
+            parseContentPreview(lastSentMessage.content)
         }
-        else parseContentPreview(lastSentMessage.content)
     } else ""
 
     val groupCreatorId = if (type == CHANNEL_TYPE_GROUP) creatorId else 0L
@@ -153,7 +171,7 @@ fun ChannelDescription.toDirectMessage(currentUserId: Long, previewContext: andr
         avatarUrl = avatarUrl,
         displayName = displayName,
         username = if (isGroup) displayName else username,
-        lastMessageContent = lastMsgContent,
+        lastMessageContent = formatDirectMessagePreview(lastMsgContent),
         unreadCount = countMessUnread,
         isOnline = false,
         isMute = isMute,
@@ -181,7 +199,7 @@ fun ChannelMessage.toDirectMessageFromIncoming(
         !isFromMe -> senderName.ifBlank { channelLabel }
         else -> channelLabel.ifBlank { senderName }
     }
-    val preview = messagePreviewForDialog(previewContext, content, attachments, code)
+    val preview = formatDirectMessagePreview(messagePreviewForDialog(previewContext, content, attachments, code))
     val ts = createTimeSeconds.toLong() and 0xFFFF_FFFFL
     val unread = when {
         isOpen -> 0

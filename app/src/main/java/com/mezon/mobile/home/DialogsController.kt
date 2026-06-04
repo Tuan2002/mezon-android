@@ -20,6 +20,7 @@ import com.mezon.mobile.home.chat.MessageEntity
 import com.mezon.mobile.home.messages.DirectMessage
 import com.mezon.mobile.home.messages.DmParticipant
 import com.mezon.mobile.home.messages.extractParticipants
+import com.mezon.mobile.home.messages.formatDirectMessagePreview
 import com.mezon.mobile.home.messages.toDirectMessage
 import com.mezon.mobile.home.messages.toDirectMessageFromIncoming
 import com.mezon.mobile.network.ApiCacheTracker
@@ -892,8 +893,12 @@ class DialogsController @Inject constructor(
                 }
                 val newPreview = if (!isContentMutation ||
                     msg.code == CODE_CHAT_UPDATE ||
-                    msg.code == MessageEntity.CODE_UPDATE_EPHEMERAL)
-                    messagePreviewForDialog(appContext, msg.content, msg.attachments, msg.code) else baseDm.lastMessageContent
+                    msg.code == MessageEntity.CODE_UPDATE_EPHEMERAL
+                ) {
+                    formatDirectMessagePreview(messagePreviewForDialog(appContext, msg.content, msg.attachments, msg.code))
+                } else {
+                    baseDm.lastMessageContent
+                }
 
                 val canAdvanceTimeline = !isContentMutation && !isEphemeralControl && msg.messageId > 0L
 
@@ -1044,7 +1049,7 @@ class DialogsController @Inject constructor(
                 val sameTsHeader = m.id == 0L && ts > 0L && ts == next.lastSentMessageTs
                 val needsPreview = next.lastMessageContent.isBlank() || sameLastMessage || sameTsHeader || isNewer
                 if (needsPreview) {
-                    val preview = messagePreviewForDialog(appContext, m.content)
+                    val preview = formatDirectMessagePreview(messagePreviewForDialog(appContext, m.content))
                     if (preview.isNotBlank() && preview != next.lastMessageContent) {
                         changed = true
                         next = next.copy(lastMessageContent = preview)
