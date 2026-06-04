@@ -66,7 +66,10 @@ import com.mezon.mobile.home.DialogsController
 import com.mezon.mobile.home.MemberResolver
 import com.mezon.mobile.home.UserClanController
 import com.mezon.mobile.home.friends.FRIEND_STATE_BLOCKED
+import com.mezon.mobile.home.friends.FRIEND_STATE_FRIEND
+import com.mezon.mobile.home.friends.FRIEND_STATE_INVITE_SENT
 import com.mezon.mobile.home.friends.FriendController
+import com.mezon.mobile.home.call.CallFragment
 import com.mezon.mobile.util.ShareContactData
 import com.mezon.mobile.util.isShareContactMessage
 import com.mezon.mobile.home.clans.CLAN_CREATE_LIMIT
@@ -279,6 +282,7 @@ open class ChatFragment : BaseFragment() {
     private val pendingAttachments = ArrayList<AttachmentPickerItem>()
     private var mediaPermissionDeniedOnce = false
     private val pendingAttachmentThumbTasks = ArrayList<Runnable?>()
+    private var attachmentProgressReloadRunnable: Runnable? = null
     private var buzzMediaPlayer: android.media.MediaPlayer? = null
 
     private var voiceRecorder: VoiceRecorder? = null
@@ -680,12 +684,19 @@ open class ChatFragment : BaseFragment() {
                     val existingMaxId = messages.maxOfOrNull { it.id } ?: 0L
                     val hasOverlap = messages.isNotEmpty() &&
                         apiMinId <= existingMaxId && apiMaxId >= existingMinId
+                    val outgoingSending = messages.filter { it.isMe && it.isSending }
 
                     if (hasOverlap) {
                         for (m in loadedMessages) messagesDict.put(m.id, m)
                     } else {
                         messagesDict.clear()
                         for (m in loadedMessages) messagesDict.put(m.id, m)
+                    }
+                    for (m in outgoingSending) {
+                        if (messagesDict.get(m.id) == null) messagesDict.put(m.id, m)
+                    }
+                    for (m in chatController.getActivePendingAttachmentMessages(messageListKey)) {
+                        messagesDict.put(m.id, m)
                     }
                     messages.clear()
                     val all = ArrayList<MessageEntity>(messagesDict.size())
@@ -857,15 +868,7 @@ open class ChatFragment : BaseFragment() {
                 )
             }
             if (entity.isSending) {
-                if (isViewingOlder || hasMoreBottom) {
-                    if (BuildConfig.DEBUG) {
-                        Log.d(TAG, "didReceiveNewMessages sending jumpToPresent id=${entity.id}")
-                    }
-                    jumpToPresent()
-                    return@observe
-                }
-                messagesDict.put(entity.id, entity)
-                messages.add(0, entity)
+                val insertIndex = insertSendingOptimisticMessage(entity)
                 if (fragmentView != null) {
                     if (messages.size == 1) {
                         refreshUI()
@@ -876,13 +879,20 @@ open class ChatFragment : BaseFragment() {
                         if (recyclerView.visibility != View.VISIBLE && !needScrollRestore) {
                             recyclerView.visibility = View.VISIBLE
                         }
-                        adapter.notifyMessageInsertedAt(0)
+                        adapter.notifyMessageInsertedAt(insertIndex)
                         updateUnreadDividerPosition()
                     }
-                    forceScrollToBottom()
                 }
-                if (BuildConfig.DEBUG) {
-                    Log.d(TAG, "didReceiveNewMessages inserted sending id=${entity.id}")
+                if (isViewingOlder || hasMoreBottom) {
+                    if (BuildConfig.DEBUG) {
+                        Log.d(
+                            TAG,
+                            "didReceiveNewMessages sending jumpToPresent id=${entity.id} index=$insertIndex"
+                        )
+                    }
+                    jumpToPresent()
+                } else if (fragmentView != null) {
+                    forceScrollToBottom()
                 }
                 return@observe
             }
@@ -997,6 +1007,19 @@ open class ChatFragment : BaseFragment() {
                 messagesDict.put(tempId, updated)
                 if (fragmentView != null) updateVisibleRows(NotificationCenter.UPDATE_MASK_SEND_STATE)
             }
+        }
+
+        observe(NotificationCenter.attachmentUploadProgress) { _, _, args ->
+            if (isPaused || fragmentView == null) return@observe
+            val key = args.firstOrNull() as? String ?: return@observe
+            if (!messageListHasPendingUploadKey(key)) return@observe
+            if (attachmentProgressReloadRunnable != null) return@observe
+            val work = Runnable {
+                attachmentProgressReloadRunnable = null
+                updateVisibleRows(NotificationCenter.UPDATE_MASK_UPLOAD_PROGRESS)
+            }
+            attachmentProgressReloadRunnable = work
+            AndroidUtilities.runOnUIThread(work, 250L)
         }
 
         observe(NotificationCenter.messageDidUpdate) { _, _, args ->
@@ -2018,13 +2041,13 @@ open class ChatFragment : BaseFragment() {
             override fun didClickEmbedComponentButton(cell: ChatMessageCell, msg: MessageEntity, buttonId: String) {
                 submitEmbedComponentButton(msg, buttonId)
             }
-            override fun didTapShareContactProfile(cell: ChatMessageCell, msg: MessageEntity, data: com.mezon.mobile.util.ShareContactData) {
+            override fun didTapShareContactProfile(cell: ChatMessageCell, msg: MessageEntity, data: ShareContactData) {
                 showShareContactProfile(data)
             }
-            override fun didTapShareContactMessage(cell: ChatMessageCell, msg: MessageEntity, data: com.mezon.mobile.util.ShareContactData) {
+            override fun didTapShareContactMessage(cell: ChatMessageCell, msg: MessageEntity, data: ShareContactData) {
                 openShareContactDm(data)
             }
-            override fun didTapShareContactCall(cell: ChatMessageCell, msg: MessageEntity, data: com.mezon.mobile.util.ShareContactData) {
+            override fun didTapShareContactCall(cell: ChatMessageCell, msg: MessageEntity, data: ShareContactData) {
                 startShareContactCall(data)
             }
         })
@@ -2685,6 +2708,8 @@ open class ChatFragment : BaseFragment() {
         sentByApiRealIds.clear()
         for (t in pendingAttachmentThumbTasks) ThumbnailCache.cancel(t)
         pendingAttachmentThumbTasks.clear()
+        attachmentProgressReloadRunnable?.let { AndroidUtilities.cancelRunOnUIThread(it) }
+        attachmentProgressReloadRunnable = null
         pendingAttachments.clear()
         replyingToMessage = null
         editingMessage = null
@@ -2808,6 +2833,19 @@ open class ChatFragment : BaseFragment() {
             }
         }
         finishFragment()
+    }
+
+    private fun insertSendingOptimisticMessage(entity: MessageEntity): Int {
+        val existingIndex = messages.indexOfFirst { it.id == entity.id }
+        if (existingIndex >= 0) {
+            messages[existingIndex] = entity
+            messagesDict.put(entity.id, entity)
+            return existingIndex
+        }
+        messagesDict.put(entity.id, entity)
+        val insertIndex = insertIndexForMessage(entity)
+        messages.add(insertIndex, entity)
+        return insertIndex
     }
 
     private fun refreshUI() {
@@ -3583,6 +3621,17 @@ open class ChatFragment : BaseFragment() {
         viewer.updateGallery(urls, photoViewerSelectedUrl)
     }
 
+    private fun messageListHasPendingUploadKey(key: String): Boolean {
+        if (key.isEmpty()) return false
+        for (msg in messages) {
+            if (msg.attachmentUrl == key && msg.isAttachmentUploadPending(key)) return true
+            for (extra in msg.extraAttachments) {
+                if (extra.url == key && msg.isAttachmentUploadPending(extra.url)) return true
+            }
+        }
+        return false
+    }
+
     private fun updateVisibleRows(mask: Int = 0) {
         if (isPaused) return
         if (scrollingManually && mask != 0) {
@@ -3697,7 +3746,7 @@ open class ChatFragment : BaseFragment() {
             !isUnreadDivider &&
             !isEphemeral &&
             !isSending &&
-            !isError
+            (!isError || hasPartialAttachmentUploadFailure)
     }
 
     private fun sortMessagesByIdDesc(list: MutableList<MessageEntity>) {
@@ -4507,6 +4556,12 @@ open class ChatFragment : BaseFragment() {
             override fun onFilesRequested() {
                 if (!ensureCanSendMessageOrNotify()) return
                 launchDocumentPicker()
+            }
+
+            override fun onSendRequested() {
+                if (pendingAttachments.isEmpty()) return
+                updateAttachmentPreview()
+                updateSendButtonState()
             }
         }
         alert.setDrawNavigationBar(true)
@@ -5785,6 +5840,99 @@ open class ChatFragment : BaseFragment() {
         return kotlin.math.abs(newer.timestampSeconds - older.timestampSeconds) <= FORWARD_NEARBY_WINDOW_SECONDS
     }
 
+    private fun openProfileDm(userId: Long, displayName: String, username: String) {
+        if (userId == 0L) return
+        fragmentScope.launch {
+            val dmId = withContext(ioDispatcher) { dialogsController.getOrCreateDm(userId) }
+            withContext(mainDispatcher) {
+                if (dmId == 0L) {
+                    MezonToast.show(this@ChatFragment, ToastOverlay.ToastType.ERROR, getString(R.string.contact_shared_error))
+                    return@withContext
+                }
+                (getParentActivity() as? MainActivity)?.openChat(
+                    dmId,
+                    displayName.ifBlank { username },
+                    0L,
+                    CHANNEL_TYPE_DM
+                )
+            }
+        }
+    }
+
+    private fun startProfileVoiceCall(
+        userId: Long,
+        displayName: String,
+        username: String,
+        avatarUrl: String
+    ) {
+        if (userId == 0L) return
+        val myId = chatController.getCurrentUserId()
+        if (userId == myId) {
+            MezonToast.show(this, ToastOverlay.ToastType.ERROR, getString(R.string.cannot_call_yourself))
+            return
+        }
+        if (friendController.isUserBlocked(userId)) {
+            MezonToast.show(this, ToastOverlay.ToastType.ERROR, getString(R.string.no_permission_call_blocked))
+            return
+        }
+        if (callController.isCallSessionActive()) return
+        requestCallPermissions(needsCamera = false, reason = "profileVoiceCall") {
+            runOutgoingCallAfterFullScreenIntentPrompt {
+                fragmentScope.launch {
+                    val dmId = withContext(ioDispatcher) { dialogsController.getOrCreateDm(userId) }
+                    withContext(mainDispatcher) {
+                        if (dmId == 0L) {
+                            MezonToast.show(this@ChatFragment, ToastOverlay.ToastType.ERROR, getString(R.string.contact_shared_error))
+                            return@withContext
+                        }
+                        callController.startCall(
+                            userId,
+                            displayName.ifBlank { username }.ifBlank { "Unknown" },
+                            avatarUrl.ifBlank { null },
+                            dmId,
+                            0L,
+                            CHANNEL_TYPE_DM,
+                            false,
+                            isVideo = false,
+                            peerUsername = username
+                        )
+                        presentFragment(CallFragment())
+                    }
+                }
+            }
+        }
+    }
+
+    private fun sendProfileFriendRequest(userId: Long, username: String) {
+        if (userId == 0L || userId == chatController.getCurrentUserId()) return
+        if (friendController.isUserBlocked(userId)) {
+            MezonToast.show(this, ToastOverlay.ToastType.ERROR, getString(R.string.friends_toast_blocked_user))
+            return
+        }
+        when (friendController.findFriendByUserId(userId)?.state) {
+            FRIEND_STATE_FRIEND -> {
+                MezonToast.show(this, ToastOverlay.ToastType.INFO, getString(R.string.friends_toast_already_friend))
+                return
+            }
+            FRIEND_STATE_INVITE_SENT -> {
+                MezonToast.show(this, ToastOverlay.ToastType.INFO, getString(R.string.friends_toast_wait_accept))
+                return
+            }
+            FRIEND_STATE_BLOCKED -> {
+                MezonToast.show(this, ToastOverlay.ToastType.ERROR, getString(R.string.friends_toast_blocked_user))
+                return
+            }
+            else -> Unit
+        }
+        friendController.sendFriendRequest(userId, username) { success ->
+            val type = if (success) ToastOverlay.ToastType.SUCCESS else ToastOverlay.ToastType.ERROR
+            val message = getString(
+                if (success) R.string.friends_toast_send_success else R.string.friends_toast_send_fail
+            )
+            MezonToast.show(this, type, message)
+        }
+    }
+
     private fun showShareContactProfile(data: ShareContactData) {
         val ctx = getContext() ?: return
         val activity = getParentActivity() ?: return
@@ -5802,13 +5950,13 @@ open class ChatFragment : BaseFragment() {
             isDM = true,
             listener = object : UserProfileBottomSheet.UserProfileListener {
                 override fun onSendMessage(userId: Long) {
-                    openShareContactDm(data)
+                    openProfileDm(data.userId, data.displayName, data.username)
                 }
                 override fun onVoiceCall(userId: Long) {
-                    startShareContactCall(data)
+                    startProfileVoiceCall(data.userId, data.displayName, data.username, data.avatarUrl)
                 }
                 override fun onAddFriend(userId: Long) {
-                    showAddFriendBottomSheet()
+                    sendProfileFriendRequest(data.userId, data.username)
                 }
             }
         )
@@ -5817,62 +5965,11 @@ open class ChatFragment : BaseFragment() {
     }
 
     private fun openShareContactDm(data: ShareContactData) {
-        fragmentScope.launch {
-            val dmId = dialogsController.getOrCreateDm(data.userId)
-            withContext(mainDispatcher) {
-                if (dmId == 0L) {
-                    MezonToast.show(this@ChatFragment, ToastOverlay.ToastType.ERROR, getString(R.string.contact_shared_error))
-                    return@withContext
-                }
-                (getParentActivity() as? MainActivity)?.openChat(
-                    dmId,
-                    data.displayName.ifBlank { data.username },
-                    0L,
-                    CHANNEL_TYPE_DM
-                )
-            }
-        }
+        openProfileDm(data.userId, data.displayName, data.username)
     }
 
     private fun startShareContactCall(data: ShareContactData) {
-        val myId = chatController.getCurrentUserId()
-        if (data.userId == myId) {
-            MezonToast.show(this, ToastOverlay.ToastType.ERROR, getString(R.string.cannot_call_yourself))
-            return
-        }
-        val blocked = friendController.allFriendRelations.value.any {
-            it.user.id == data.userId && it.state == FRIEND_STATE_BLOCKED
-        }
-        if (blocked) {
-            MezonToast.show(this, ToastOverlay.ToastType.ERROR, getString(R.string.no_permission_call_blocked))
-            return
-        }
-        if (callController.isCallSessionActive()) return
-        requestCallPermissions(needsCamera = false, reason = "shareContactCall") {
-            runOutgoingCallAfterFullScreenIntentPrompt {
-                fragmentScope.launch {
-                    val dmId = dialogsController.getOrCreateDm(data.userId)
-                    withContext(mainDispatcher) {
-                        if (dmId == 0L) {
-                            MezonToast.show(this@ChatFragment, ToastOverlay.ToastType.ERROR, getString(R.string.contact_shared_error))
-                            return@withContext
-                        }
-                        callController.startCall(
-                            data.userId,
-                            data.displayName,
-                            data.avatarUrl.ifBlank { null },
-                            dmId,
-                            0L,
-                            CHANNEL_TYPE_DM,
-                            true,
-                            isVideo = false,
-                            peerUsername = data.username
-                        )
-                        presentFragment(com.mezon.mobile.home.call.CallFragment())
-                    }
-                }
-            }
-        }
+        startProfileVoiceCall(data.userId, data.displayName, data.username, data.avatarUrl)
     }
 
     private fun profileRolesFor(member: ClanMember?): List<UserProfileBottomSheet.UserProfileRole> {
@@ -5943,32 +6040,13 @@ open class ChatFragment : BaseFragment() {
             roles = profileRolesFor(member),
             listener = object : UserProfileBottomSheet.UserProfileListener {
                 override fun onSendMessage(userId: Long) {
-                    MezonToast.show(this@ChatFragment, ToastOverlay.ToastType.INFO, getString(R.string.feature_coming_soon))
+                    openProfileDm(msg.senderId, displayName, usernameLine)
                 }
                 override fun onVoiceCall(userId: Long) {
-                    val senderName = msg.senderName ?: "Unknown"
-                    val senderAvatar = msg.senderAvatar
-                    requestCallPermissions(needsCamera = false) {
-                        runOutgoingCallAfterFullScreenIntentPrompt(
-                            {
-                                callController.startCall(
-                                    userId,
-                                    senderName,
-                                    senderAvatar.ifBlank { null },
-                                    channelId,
-                                    clanId,
-                                    channelType,
-                                    resolveChannelPrivate(),
-                                    isVideo = false,
-                                    peerUsername = msg.senderUsername
-                                )
-                                presentFragment(com.mezon.mobile.home.call.CallFragment())
-                            }
-                        )
-                    }
+                    startProfileVoiceCall(msg.senderId, displayName, usernameLine, avatarForUi)
                 }
                 override fun onAddFriend(userId: Long) {
-                    showAddFriendBottomSheet()
+                    sendProfileFriendRequest(msg.senderId, usernameLine)
                 }
             }
         )
@@ -6024,13 +6102,13 @@ open class ChatFragment : BaseFragment() {
             roles = profileRolesFor(member),
             listener = object : UserProfileBottomSheet.UserProfileListener {
                 override fun onSendMessage(userId: Long) {
-                    MezonToast.show(this@ChatFragment, ToastOverlay.ToastType.INFO, getString(R.string.feature_coming_soon))
+                    openProfileDm(userId, displayName, usernameLine)
                 }
                 override fun onVoiceCall(userId: Long) {
-                    MezonToast.show(this@ChatFragment, ToastOverlay.ToastType.INFO, getString(R.string.feature_coming_soon))
+                    startProfileVoiceCall(userId, displayName, usernameLine, avatarForUi)
                 }
                 override fun onAddFriend(userId: Long) {
-                    showAddFriendBottomSheet()
+                    sendProfileFriendRequest(userId, usernameLine)
                 }
             }
         )
