@@ -18,6 +18,7 @@ import com.mezon.mobile.core.LayoutHelper
 import com.mezon.mobile.core.ThemeColors
 import com.mezon.mobile.ui.cells.MezonIcon
 import com.mezon.mobile.util.MentionColors
+import com.mezon.mobile.util.firstReferenceMessageId
 import com.mezon.mobile.util.formatRelativeTime
 import com.mezon.mobile.util.parseContentText
 import com.mezon.mobile.util.parseContentToSpannable
@@ -30,6 +31,8 @@ class SystemMessageCell(context: Context, private val theme: ThemeColors) : Line
         fun onOpenThread(threadChannelId: Long, threadTitle: String)
         fun onSeeAllThreads()
         fun onMentionClick(userId: String?, roleId: String?)
+        fun onJumpToPinnedMessage(messageRefId: Long)
+        fun onSeeAllPins()
     }
 
     var delegate: Delegate? = null
@@ -72,6 +75,24 @@ class SystemMessageCell(context: Context, private val theme: ThemeColors) : Line
                 Log.d(TAG, "all_threads_click hasDelegate=${delegate != null}")
             }
             delegate?.onSeeAllThreads()
+        }
+
+        override fun onJumpToPinnedMessage(messageRefId: Long) {
+            if (BuildConfig.DEBUG) {
+                Log.d(TAG, "pin_message_click refId=$messageRefId hasDelegate=${delegate != null}")
+            }
+            delegate?.onJumpToPinnedMessage(messageRefId)
+        }
+
+        override fun onAllPinsClick() {
+            if (BuildConfig.DEBUG) {
+                Log.d(TAG, "all_pins_click hasDelegate=${delegate != null}")
+            }
+            delegate?.onSeeAllPins()
+        }
+
+        override fun onMentionClick(userId: String?, roleId: String?) {
+            delegate?.onMentionClick(userId, roleId)
         }
     }
 
@@ -175,6 +196,20 @@ class SystemMessageCell(context: Context, private val theme: ThemeColors) : Line
                 resolveThreadCreatorName(msg)
             )
             timeTextView.text = timeStr
+        } else if (msg.code == MessageEntity.CODE_CREATE_PIN) {
+            highlightTextView.visibility = View.VISIBLE
+            plainMessageTextView.visibility = View.GONE
+            timeTextView.visibility = View.GONE
+            val pinCreator = resolvePinCreatorMention(msg, textStr)
+            highlightTextView.setPinCreatedHighlight(
+                highlightBridge,
+                pinCreator.label,
+                pinCreator.userId,
+                firstReferenceMessageId(msg.content),
+                mentionColors,
+                theme
+            )
+            highlightTextView.text = appendInlineTime(highlightTextView.text, timeStr)
         } else {
             highlightTextView.visibility = View.GONE
             plainMessageTextView.visibility = View.VISIBLE
@@ -285,6 +320,40 @@ class SystemMessageCell(context: Context, private val theme: ThemeColors) : Line
 
     private fun formatCreatorName(value: String): String {
         return value.removePrefix("@").trim()
+    }
+
+    private data class PinCreatorMention(val label: String, val userId: String?)
+
+    private fun resolvePinCreatorMention(msg: MessageEntity, textStr: String): PinCreatorMention {
+        val fromContent = resolvePinCreatorMentionFromContent(msg, textStr)
+        if (fromContent != null) return fromContent
+        val resolvedName = resolveThreadCreatorName(msg)
+        if (resolvedName.isNotEmpty()) {
+            val userId = msg.senderId.takeIf { it != 0L }?.toString()
+            return PinCreatorMention("@$resolvedName", userId)
+        }
+        return PinCreatorMention("", null)
+    }
+
+    private fun resolvePinCreatorMentionFromContent(msg: MessageEntity, textStr: String): PinCreatorMention? {
+        return runCatching {
+            val obj = JSONObject(msg.content)
+            val mentions = obj.optJSONArray("mentions") ?: return@runCatching null
+            if (mentions.length() == 0) return@runCatching null
+            val item = mentions.optJSONObject(0) ?: return@runCatching null
+            val userId = item.optString("user_id").takeIf { it.isNotBlank() }
+            val s = item.optInt("s", -1)
+            val e = item.optInt("e", -1)
+            val label = when {
+                s >= 0 && e > s && e <= textStr.length -> textStr.substring(s, e).trim()
+                else -> item.optString("username")
+                    .ifBlank { item.optString("display") }
+                    .trim()
+            }
+            if (label.isEmpty()) return@runCatching null
+            val display = if (label.startsWith("@")) label else "@$label"
+            PinCreatorMention(display, userId)
+        }.getOrNull()
     }
 
     private fun systemFallbackText(msg: MessageEntity): String = when (msg.code) {

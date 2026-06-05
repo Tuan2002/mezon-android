@@ -499,6 +499,11 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
     private var lastBoundContentHash = 0
     private var lastBoundCombined = false
 
+    fun resetForRebind() {
+        lastBoundId = 0L
+        lastBoundContentHash = 0
+    }
+
     fun update(mask: Int, newMsg: MessageEntity? = null): Boolean {
         val msg = newMsg ?: messageEntity ?: return false
         var rebuildLayout = false

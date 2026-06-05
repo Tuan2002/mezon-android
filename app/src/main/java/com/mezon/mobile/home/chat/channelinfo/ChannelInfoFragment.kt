@@ -51,6 +51,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import com.mezon.mobile.home.chat.thread.ThreadListFragment
 import com.mezon.mobile.home.messages.NewGroupFragment
+import com.mezon.mobile.home.ChatController
 import com.mezon.mobile.home.PinMessageController
 import com.mezon.mobile.MainActivity
 import com.mezon.mobile.search.GlobalSearchFragment
@@ -69,6 +70,8 @@ class ChannelInfoFragment : BaseFragment() {
         private const val ARG_CHANNEL_TYPE = "channelType"
         private const val ARG_CHANNEL_PRIVATE = "channelPrivate"
         private const val ARG_PARENT_ID = "parentId"
+        private const val ARG_INITIAL_TAB = "initialTab"
+        const val TAB_INDEX_PINS = 3
         private const val REQUEST_CODE_PICK_GROUP_AVATAR = 9124
         private const val MAX_GROUP_AVATAR_BYTES = 8 * 1024 * 1024
         private const val GROUP_AVATAR_PREVIEW_MAX_SIDE = 512
@@ -79,7 +82,8 @@ class ChannelInfoFragment : BaseFragment() {
             clanId: Long,
             channelType: Int,
             isChannelPrivate: Boolean = false,
-            parentId: Long = 0L
+            parentId: Long = 0L,
+            initialTabIndex: Int = -1
         ): ChannelInfoFragment = ChannelInfoFragment().apply {
             arguments = Bundle().apply {
                 putLong(ARG_CHANNEL_ID, channelId)
@@ -88,6 +92,7 @@ class ChannelInfoFragment : BaseFragment() {
                 putInt(ARG_CHANNEL_TYPE, channelType)
                 if (isChannelPrivate) putBoolean(ARG_CHANNEL_PRIVATE, true)
                 if (parentId != 0L) putLong(ARG_PARENT_ID, parentId)
+                if (initialTabIndex >= 0) putInt(ARG_INITIAL_TAB, initialTabIndex)
             }
         }
     }
@@ -98,12 +103,14 @@ class ChannelInfoFragment : BaseFragment() {
     private var channelType = 0
     private var routeChannelPrivate = false
     private var routeParentId = 0L
+    private var initialTabIndex = -1
 
     private lateinit var memberResolver: MemberResolver
     private lateinit var userClanController: UserClanController
     private lateinit var dialogsController: DialogsController
     private lateinit var userController: UserController
     private lateinit var pinMessageController: PinMessageController
+    private lateinit var chatController: ChatController
     private lateinit var channelController: ChannelController
     private lateinit var channelPermissionController: ChannelPermissionController
     private lateinit var permissionPolicy: PermissionPolicy
@@ -136,6 +143,7 @@ class ChannelInfoFragment : BaseFragment() {
         channelType = arguments?.getInt(ARG_CHANNEL_TYPE) ?: 0
         routeChannelPrivate = arguments?.getBoolean(ARG_CHANNEL_PRIVATE) ?: false
         routeParentId = arguments?.getLong(ARG_PARENT_ID) ?: 0L
+        initialTabIndex = arguments?.getInt(ARG_INITIAL_TAB, -1) ?: -1
         val initialEntity = channelController.findChannelById(channelId, clanId)
             ?: channelController.findChannelById(channelId)
         if (!isDm && !initialEntity?.channelLabel.isNullOrBlank()) {
@@ -176,7 +184,9 @@ class ChannelInfoFragment : BaseFragment() {
         observe(NotificationCenter.pinMessageRemoved) { _, _, args ->
             if (isPaused) return@observe
             val ch = args.firstOrNull() as? Long ?: return@observe
-            if (ch == channelId) pinsTab?.reload()
+            if (ch != channelId) return@observe
+            val messageId = args.getOrNull(1) as? Long ?: 0L
+            if (messageId != 0L) pinsTab?.onPinRemoved(messageId) else pinsTab?.reload()
         }
 
         observe(NotificationCenter.channelFilesDidLoad) { _, _, args ->
@@ -238,6 +248,7 @@ class ChannelInfoFragment : BaseFragment() {
         dialogsController = entryPoint.dialogsController()
         userController = entryPoint.userController()
         pinMessageController = entryPoint.pinMessageController()
+        chatController = entryPoint.chatController()
         channelController = entryPoint.channelController()
         channelPermissionController = entryPoint.channelPermissionController()
         permissionPolicy = entryPoint.permissionPolicy()
@@ -308,6 +319,12 @@ class ChannelInfoFragment : BaseFragment() {
             })
 
             viewPager.fillTabs(tabsView)
+
+            val pinsPagerPosition = viewPagerPositionForTab(TAB_INDEX_PINS)
+            if (initialTabIndex == TAB_INDEX_PINS && pinsPagerPosition >= 0) {
+                viewPager.setPosition(pinsPagerPosition)
+                tabsView.selectTabByPosition(pinsPagerPosition)
+            }
 
             viewPager.onPageChangeListener = object : ViewPagerFixed.OnPageChangeListener {
                 override fun onPageSelected(position: Int, forward: Boolean) {
@@ -509,6 +526,11 @@ class ChannelInfoFragment : BaseFragment() {
         }
     }
 
+    private fun viewPagerPositionForTab(actualIndex: Int): Int {
+        if (actualIndex != TAB_INDEX_PINS) return -1
+        return if (isSelfDm) 2 else 3
+    }
+
     private fun buildTabContent(context: Context, actualIndex: Int): View {
         return when (actualIndex) {
             0 -> buildMembersTab(context)
@@ -656,6 +678,8 @@ class ChannelInfoFragment : BaseFragment() {
             channelType = channelType,
             themeColors = themeColors,
             pinMessageController = pinMessageController,
+            chatController = chatController,
+            scope = fragmentScope,
             memberResolver = memberResolver,
             notificationCenter = notificationCenter,
             hostActivity = act,
