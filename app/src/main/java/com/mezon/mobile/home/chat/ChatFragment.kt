@@ -507,9 +507,6 @@ open class ChatFragment : BaseFragment() {
         } else if (channelType == CHANNEL_TYPE_GROUP) {
             dialogsController.loadDmParticipants(channelId)
         }
-        if (!isTopicMode) {
-            pinMessageController.loadPinMessages(channelId, clanId)
-        }
         if (clanId != 0L && !isTopicMode) {
             topicController.loadTopics(clanId)
         }
@@ -1336,9 +1333,9 @@ open class ChatFragment : BaseFragment() {
             }
         }
 
-        observeGlobal(NotificationCenter.channelGalleryDidLoad) { _, _, args ->
-            val cid = args.getOrNull(0) as? Long ?: return@observeGlobal
-            if (cid != channelId || activePhotoViewer == null) return@observeGlobal
+        observe(NotificationCenter.channelGalleryDidLoad) { _, _, args ->
+            val cid = args.getOrNull(0) as? Long ?: return@observe
+            if (cid != channelId || activePhotoViewer == null) return@observe
             refreshActivePhotoViewerGallery()
         }
 
@@ -2100,6 +2097,28 @@ open class ChatFragment : BaseFragment() {
                 if (uidStr == ChatController.ID_MENTION_HERE) return
                 val uid = uidStr.toLongOrNull() ?: return
                 showUserProfileFromMentionUserId(uid)
+            }
+
+            override fun onJumpToPinnedMessage(messageRefId: Long) {
+                if (messageRefId == 0L) return
+                scrollToReplyMessage(messageRefId)
+            }
+
+            override fun onSeeAllPins() {
+                val channelEntity = channelController.findChannelById(channelId)
+                val infoPrivate = channelEntity?.isPrivate ?: resolveChannelPrivate()
+                val infoParentId = channelEntity?.parentId ?: routeParentId
+                presentFragment(
+                    com.mezon.mobile.home.chat.channelinfo.ChannelInfoFragment.newInstance(
+                        channelId = channelId,
+                        channelName = channelName,
+                        clanId = clanId,
+                        channelType = channelType,
+                        isChannelPrivate = infoPrivate,
+                        parentId = infoParentId,
+                        initialTabIndex = com.mezon.mobile.home.chat.channelinfo.ChannelInfoFragment.TAB_INDEX_PINS
+                    )
+                )
             }
         }
         adapter.loadLinkInvitePreview = { id -> mezonApi.getLinkInvitePreview(id) }
@@ -3606,11 +3625,10 @@ open class ChatFragment : BaseFragment() {
         val initial = buildPhotoViewerUrls(url, seedUrls)
         val idx = initial.indexOf(url).coerceAtLeast(0)
         viewer.show(url, gallery = initial, index = idx, thumbBitmap = thumbBmp)
-        val loaded = channelGalleryController.isInitialLoadFinished(channelId)
-        if (!loaded) {
-            channelGalleryController.clearAndReload(channelId, clanId)
-        } else {
+        if (channelGalleryController.isInitialLoadFinished(channelId)) {
             refreshActivePhotoViewerGallery()
+        } else {
+            channelGalleryController.ensureLoaded(channelId, clanId)
         }
     }
 
