@@ -251,7 +251,7 @@ class ChannelGalleryController @Inject constructor(
                             state.items.clear()
                             state.items.addAll(batchSorted)
                             state.initialLoadFinished = true
-                            state.hasMoreBefore = batchSorted.size >= PAGE_LIMIT
+                            state.hasMoreBefore = raw.attachmentsList.size >= PAGE_LIMIT
                         }
 
                         else -> {
@@ -316,6 +316,7 @@ class ChannelGalleryController @Inject constructor(
     }
 
     private fun tryPrependFromMessage(message: MessageEntity): Boolean {
+        if (!message.mightHaveGalleryMedia()) return false
         if (!message.isRenderable) return false
         if (message.code != MessageEntity.CODE_CHAT && message.code != MessageEntity.CODE_CHAT_UPDATE) return false
 
@@ -379,6 +380,13 @@ class ChannelGalleryController @Inject constructor(
             loadingChannels.clear()
         }
     }
+}
+
+private fun MessageEntity.mightHaveGalleryMedia(): Boolean {
+    if (attachmentUrl.isNotEmpty()) return true
+    val json = extraAttachmentsJson
+    if (json.isEmpty() || json == "[]") return false
+    return true
 }
 
 private fun MessageEntity.toGalleryMediaItems(): List<ChannelGalleryMediaItem> {

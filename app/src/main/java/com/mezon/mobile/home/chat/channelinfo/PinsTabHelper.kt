@@ -27,7 +27,6 @@ import com.mezon.mobile.ui.cells.MezonIcon
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 class PinsTabHelper(
     private val channelId: Long,
@@ -150,18 +149,20 @@ class PinsTabHelper(
             updateEmptyState()
             return
         }
-        scope.launch {
-            val messageIds = items.map { it.messageId }.filter { it != 0L }.distinct()
-            val missingIds = messageIds.filter { !cachedMessagesById.containsKey(it) }
-            if (missingIds.isNotEmpty()) {
-                cachedMessagesById.putAll(chatController.getMessagesByIds(channelId, missingIds))
-            }
+        val messageIds = items.map { it.messageId }.filter { it != 0L }.distinct()
+        val missingIds = messageIds.filter { !cachedMessagesById.containsKey(it) }
+        if (missingIds.isEmpty()) {
             cachedMessagesById.keys.retainAll(messageIds.toSet())
-            val snapshot = HashMap(cachedMessagesById)
-            withContext(Dispatchers.Main.immediate) {
-                adapter?.setData(items, snapshot, mergeMessages = true)
-                updateEmptyState()
-            }
+            adapter?.setData(items, HashMap(cachedMessagesById), mergeMessages = true)
+            updateEmptyState()
+            return
+        }
+        scope.launch(Dispatchers.Main.immediate) {
+            val fetched = chatController.getMessagesByIds(channelId, missingIds)
+            cachedMessagesById.putAll(fetched)
+            cachedMessagesById.keys.retainAll(messageIds.toSet())
+            adapter?.setData(items, HashMap(cachedMessagesById), mergeMessages = true)
+            updateEmptyState()
         }
     }
 

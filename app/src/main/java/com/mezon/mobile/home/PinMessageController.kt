@@ -297,8 +297,7 @@ class PinMessageController @Inject constructor(
     private fun removeFromCacheIfLoaded(channelId: Long, messageId: Long): Boolean {
         synchronized(this) {
             val list = pinMessagesByChannel[channelId] ?: return false
-            list.removeAll { it.messageId == messageId }
-            return true
+            return list.removeAll { it.messageId == messageId }
         }
     }
 
