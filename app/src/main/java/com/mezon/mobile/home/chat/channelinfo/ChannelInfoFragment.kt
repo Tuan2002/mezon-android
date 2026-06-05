@@ -72,6 +72,7 @@ class ChannelInfoFragment : BaseFragment() {
         private const val ARG_PARENT_ID = "parentId"
         private const val ARG_INITIAL_TAB = "initialTab"
         const val TAB_INDEX_PINS = 3
+        private const val TAB_INDEX_MEDIA = 1
         private const val REQUEST_CODE_PICK_GROUP_AVATAR = 9124
         private const val MAX_GROUP_AVATAR_BYTES = 8 * 1024 * 1024
         private const val GROUP_AVATAR_PREVIEW_MAX_SIDE = 512
@@ -215,16 +216,16 @@ class ChannelInfoFragment : BaseFragment() {
             if (changedClanId == clanId) updateSettingsActionVisibility()
         }
 
-        observeGlobal(NotificationCenter.channelGalleryDidLoad) { _, _, args ->
-            if (isPaused) return@observeGlobal
-            val ch = args.firstOrNull() as? Long ?: return@observeGlobal
-            if (ch != channelId) return@observeGlobal
+        observe(NotificationCenter.channelGalleryDidLoad) { _, _, args ->
+            if (fragmentView == null) return@observe
+            val ch = args.firstOrNull() as? Long ?: return@observe
+            if (ch != channelId) return@observe
             fragmentView?.context?.let { ctx -> mediaTab?.syncFromApi(ctx) }
         }
-        observeGlobal(NotificationCenter.channelGalleryLoadError) { _, _, args ->
-            if (isPaused) return@observeGlobal
-            val ch = args.firstOrNull() as? Long ?: return@observeGlobal
-            if (ch != channelId) return@observeGlobal
+        observe(NotificationCenter.channelGalleryLoadError) { _, _, args ->
+            if (fragmentView == null) return@observe
+            val ch = args.firstOrNull() as? Long ?: return@observe
+            if (ch != channelId) return@observe
             fragmentView?.context?.let { ctx -> mediaTab?.onGalleryLoadFailure(ctx) }
         }
 
@@ -233,6 +234,13 @@ class ChannelInfoFragment : BaseFragment() {
             channelPermissionController.loadChannelPermissionData(clanId, channelId, channelType)
         }
         return true
+    }
+
+    override fun onBecomeFullyVisible() {
+        super.onBecomeFullyVisible()
+        if (channelGalleryController.isInitialLoadFinished(channelId)) {
+            fragmentView?.context?.let { ctx -> mediaTab?.syncFromApi(ctx) }
+        }
     }
 
     override fun dismissDialogOnPause(dialog: Dialog): Boolean {
@@ -329,6 +337,9 @@ class ChannelInfoFragment : BaseFragment() {
             viewPager.onPageChangeListener = object : ViewPagerFixed.OnPageChangeListener {
                 override fun onPageSelected(position: Int, forward: Boolean) {
                     tabsView.selectTabByPosition(position)
+                    if (resolveTabIndex(position) == TAB_INDEX_MEDIA) {
+                        fragmentView?.context?.let { ctx -> mediaTab?.syncFromApi(ctx) }
+                    }
                 }
             }
 
@@ -552,8 +563,7 @@ class ChannelInfoFragment : BaseFragment() {
                 galleryController = channelGalleryController,
                 memberResolver = memberResolver,
                 getString = { resId -> getString(resId) },
-                hostContext = { fragmentView?.context },
-                hostIsPaused = { isPaused }
+                hostContext = { fragmentView?.context }
             )
         mediaTab = h
         return h.buildView(context)

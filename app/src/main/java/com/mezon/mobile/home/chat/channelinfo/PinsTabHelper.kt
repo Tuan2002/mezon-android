@@ -2,7 +2,6 @@ package com.mezon.mobile.home.chat.channelinfo
 
 import android.app.Activity
 import android.content.Context
-import android.util.Log
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
@@ -29,8 +28,6 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-
-private const val TAG = "PinsTabHelper"
 
 class PinsTabHelper(
     private val channelId: Long,

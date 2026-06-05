@@ -6,13 +6,11 @@ import android.text.SpannableStringBuilder
 import android.text.Spanned
 import android.text.style.ForegroundColorSpan
 import android.text.style.RelativeSizeSpan
-import android.util.Log
 import android.view.Gravity
 import android.view.View
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
-import com.mezon.mobile.BuildConfig
 import com.mezon.mobile.R
 import com.mezon.mobile.core.LayoutHelper
 import com.mezon.mobile.core.ThemeColors
@@ -64,30 +62,18 @@ class SystemMessageCell(context: Context, private val theme: ThemeColors) : Line
 
     private val highlightBridge = object : SystemThreadHighlightTextView.Listener {
         override fun onThreadTitleClick(threadChannelId: Long, threadTitle: String) {
-            if (BuildConfig.DEBUG) {
-                Log.d(TAG, "thread_title_click channelId=$threadChannelId title=$threadTitle hasDelegate=${delegate != null}")
-            }
             delegate?.onOpenThread(threadChannelId, threadTitle)
         }
 
         override fun onAllThreadsClick() {
-            if (BuildConfig.DEBUG) {
-                Log.d(TAG, "all_threads_click hasDelegate=${delegate != null}")
-            }
             delegate?.onSeeAllThreads()
         }
 
         override fun onJumpToPinnedMessage(messageRefId: Long) {
-            if (BuildConfig.DEBUG) {
-                Log.d(TAG, "pin_message_click refId=$messageRefId hasDelegate=${delegate != null}")
-            }
             delegate?.onJumpToPinnedMessage(messageRefId)
         }
 
         override fun onAllPinsClick() {
-            if (BuildConfig.DEBUG) {
-                Log.d(TAG, "all_pins_click hasDelegate=${delegate != null}")
-            }
             delegate?.onSeeAllPins()
         }
 
@@ -367,7 +353,6 @@ class SystemMessageCell(context: Context, private val theme: ThemeColors) : Line
     }
 
     companion object {
-        private const val TAG = "SystemMessageCell"
         private val ICON_SIZE_SMALL = LayoutHelper.dp(20)
         private val ICON_GAP = LayoutHelper.dp(8)
         private val PAD_H = LayoutHelper.dp(16)

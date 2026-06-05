@@ -93,16 +93,10 @@ class PinMessageController @Inject constructor(
                 createTimeSeconds = event.timestampSeconds,
                 attachments = parseAttachmentJson(event.messageAttachment)
             )
-            Log.d(
-                TAG,
-                "socket pin channel=$channelId msgId=${event.messageId} attLen=${event.messageAttachment.length} " +
-                    "parsedAtt=${parseAttachmentJson(event.messageAttachment).size}"
-            )
             clanHintByChannel[channelId] = event.clanId
             if (data.messageId != 0L) trackPinned(channelId, data.messageId)
             apiCacheTracker.invalidate(apiCacheKey("pinMessages", channelId))
             if (pushToCacheIfLoaded(channelId, data)) {
-                logPinList("socket after", channelId, pinMessagesByChannel[channelId].orEmpty())
                 notificationCenter.postNotificationOnMainThread(
                     NotificationCenter.pinMessageAdded, channelId
                 )
@@ -118,7 +112,6 @@ class PinMessageController @Inject constructor(
             apiCacheTracker.invalidate(apiCacheKey("pinMessages", channelId))
             val hadCache = removeFromCacheIfLoaded(channelId, messageId)
             if (hadCache) {
-                logPinList("unpin socket", channelId, pinMessagesByChannel[channelId].orEmpty())
                 notificationCenter.postNotificationOnMainThread(
                     NotificationCenter.pinMessageRemoved, channelId, messageId
                 )
@@ -129,7 +122,7 @@ class PinMessageController @Inject constructor(
     fun getPinMessages(channelId: Long): List<PinMessageData> {
         synchronized(this) {
             val list = pinMessagesByChannel[channelId] ?: return emptyList()
-            return dedupePinMessages(list, "get")
+            return dedupePinMessages(list)
         }
     }
 
@@ -149,16 +142,12 @@ class PinMessageController @Inject constructor(
         clanHintByChannel[channelId] = clanId
         val cacheKey = apiCacheKey("pinMessages", channelId)
         if (apiCacheTracker.shouldCall(cacheKey, noCache = noCache) == ApiCacheTracker.ShouldCall.SKIP) {
-            synchronized(this) {
-                logPinList("load SKIP apiCache", channelId, pinMessagesByChannel[channelId].orEmpty())
-            }
             notificationCenter.postNotificationOnMainThread(
                 NotificationCenter.pinMessagesDidLoad, channelId
             )
             return
         }
         val generation = pinListLoadGeneration.getOrPut(channelId) { AtomicLong(0) }.incrementAndGet()
-        Log.d(TAG, "loadPinMessages start channel=$channelId clanId=$clanId gen=$generation noCache=$noCache")
         appScope.launch {
             try {
                 val response = sessionManager.withAutoRefresh { session ->
@@ -167,16 +156,13 @@ class PinMessageController @Inject constructor(
                     }
                 }
                 val raw = response.pinMessagesListList.map { it.toPinMessageData() }
-                logPinList("api raw", channelId, raw, rawCount = raw.size)
-                val items = dedupePinMessages(raw, "api")
+                val items = dedupePinMessages(raw)
                 synchronized(this@PinMessageController) {
                     if (pinListLoadGeneration[channelId]?.get() != generation) {
-                        Log.d(TAG, "loadPinMessages stale gen=$generation channel=$channelId current=${pinListLoadGeneration[channelId]?.get()}")
                         return@synchronized
                     }
                     pinMessagesByChannel[channelId] = ArrayList(items)
                     syncPinnedIdsFromList(channelId, items)
-                    logPinList("load applied", channelId, items, rawCount = raw.size)
                 }
                 if (pinListLoadGeneration[channelId]?.get() != generation) return@launch
                 apiCacheTracker.markCalled(cacheKey)
@@ -224,7 +210,6 @@ class PinMessageController @Inject constructor(
                     attachments = parseAttachmentJson(messageAttachment)
                 )
                 if (pushToCacheIfLoaded(channelId, optimistic)) {
-                    logPinList("pin optimistic", channelId, pinMessagesByChannel[channelId].orEmpty())
                     notificationCenter.postNotificationOnMainThread(
                         NotificationCenter.pinMessageAdded, channelId
                     )
@@ -247,7 +232,6 @@ class PinMessageController @Inject constructor(
                     messageAttachment = messageAttachment,
                     messageCreatedTime = messageCreatedTime
                 )
-                Log.d(TAG, "Pinned message=$messageId in channel=$channelId")
             } catch (e: Exception) {
                 untrackPinned(channelId, messageId)
                 Log.e(TAG, "Failed to pin message=$messageId", e)
@@ -272,7 +256,6 @@ class PinMessageController @Inject constructor(
                         api.deletePinMessage(session.apiUrl, session.token, messageId, channelId, clanId)
                     }
                 }
-                Log.d(TAG, "Unpinned message=$messageId from channel=$channelId")
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to unpin message=$messageId", e)
                 if (hasPinListCache(channelId)) {
@@ -306,7 +289,7 @@ class PinMessageController @Inject constructor(
             val list = pinMessagesByChannel[channelId] ?: return false
             removeMatchingPins(list, data)
             list.add(0, data)
-            replacePinList(channelId, dedupePinMessages(list, "cache"))
+            replacePinList(channelId, dedupePinMessages(list))
             return true
         }
     }
@@ -321,29 +304,6 @@ class PinMessageController @Inject constructor(
 
     private fun replacePinList(channelId: Long, items: List<PinMessageData>) {
         pinMessagesByChannel[channelId] = ArrayList(items)
-    }
-
-    private fun logPinList(
-        stage: String,
-        channelId: Long,
-        items: List<PinMessageData>,
-        rawCount: Int? = null,
-        removed: Int? = null
-    ) {
-        val extra = buildString {
-            rawCount?.let { append(" raw=$it") }
-            removed?.let { append(" removed=$it") }
-        }
-        Log.d(TAG, "pinList[$stage] channel=$channelId count=${items.size}$extra")
-        items.forEachIndexed { index, item ->
-            val url = item.attachments.firstOrNull()?.url.orEmpty()
-            val urlShort = if (url.length <= 72) url else url.take(72) + "…"
-            Log.d(
-                TAG,
-                "  pin[$index] pinId=${item.id} msgId=${item.messageId} key=${item.pinDedupeKey()} " +
-                    "att=${item.attachments.size} url=$urlShort"
-            )
-        }
     }
 
     fun cleanup() {
@@ -369,7 +329,7 @@ private fun shouldPreferPinEntry(candidate: PinMessageData, existing: PinMessage
     return false
 }
 
-private fun dedupePinMessages(items: List<PinMessageData>, stage: String): List<PinMessageData> {
+private fun dedupePinMessages(items: List<PinMessageData>): List<PinMessageData> {
     if (items.size <= 1) return items
     val indexByKey = LinkedHashMap<String, Int>()
     val out = ArrayList<PinMessageData>(items.size)
@@ -387,22 +347,8 @@ private fun dedupePinMessages(items: List<PinMessageData>, stage: String): List<
         }
         val existing = out[existingIdx]
         if (shouldPreferPinEntry(item, existing)) {
-            Log.d(
-                TAG,
-                "dedupe[$stage] replace key=$key kept pinId=${item.id} msgId=${item.messageId} " +
-                    "dropped pinId=${existing.id} msgId=${existing.messageId}"
-            )
             out[existingIdx] = item
-        } else {
-            Log.d(
-                TAG,
-                "dedupe[$stage] drop key=$key pinId=${item.id} msgId=${item.messageId} " +
-                    "kept pinId=${existing.id} msgId=${existing.messageId}"
-            )
         }
-    }
-    if (out.size < items.size) {
-        Log.d(TAG, "dedupe[$stage] ${items.size} -> ${out.size}")
     }
     return out
 }

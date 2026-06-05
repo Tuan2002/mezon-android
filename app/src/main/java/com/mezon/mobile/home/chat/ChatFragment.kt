@@ -1333,9 +1333,9 @@ open class ChatFragment : BaseFragment() {
             }
         }
 
-        observeGlobal(NotificationCenter.channelGalleryDidLoad) { _, _, args ->
-            val cid = args.getOrNull(0) as? Long ?: return@observeGlobal
-            if (cid != channelId || activePhotoViewer == null) return@observeGlobal
+        observe(NotificationCenter.channelGalleryDidLoad) { _, _, args ->
+            val cid = args.getOrNull(0) as? Long ?: return@observe
+            if (cid != channelId || activePhotoViewer == null) return@observe
             refreshActivePhotoViewerGallery()
         }
 
@@ -3625,11 +3625,10 @@ open class ChatFragment : BaseFragment() {
         val initial = buildPhotoViewerUrls(url, seedUrls)
         val idx = initial.indexOf(url).coerceAtLeast(0)
         viewer.show(url, gallery = initial, index = idx, thumbBitmap = thumbBmp)
-        val loaded = channelGalleryController.isInitialLoadFinished(channelId)
-        if (!loaded) {
-            channelGalleryController.clearAndReload(channelId, clanId)
-        } else {
+        if (channelGalleryController.isInitialLoadFinished(channelId)) {
             refreshActivePhotoViewerGallery()
+        } else {
+            channelGalleryController.ensureLoaded(channelId, clanId)
         }
     }
 
