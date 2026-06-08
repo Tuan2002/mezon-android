@@ -313,6 +313,32 @@ class ChannelController @Inject constructor(
         }
     }
 
+    suspend fun createAppChannel(
+        clanId: Long,
+        categoryId: Long,
+        channelLabel: String,
+        appId: Long,
+    ): ChannelDescription {
+        return sessionManager.withAutoRefresh { session ->
+            val desc = withContext(ioDispatcher) {
+                api.createChannelDesc(
+                    apiUrl = session.apiUrl,
+                    token = session.token,
+                    type = CHANNEL_TYPE_APP,
+                    userIds = emptyList(),
+                    clanId = clanId,
+                    channelPrivate = 0,
+                    channelLabel = channelLabel.trim(),
+                    categoryId = categoryId,
+                    parentId = 0L,
+                    appId = appId
+                )
+            }
+            upsertChannel(desc.toClanChannelEntity())
+            desc
+        }
+    }
+
     suspend fun updateChannelDescSettings(
         clanId: Long,
         channelId: Long,

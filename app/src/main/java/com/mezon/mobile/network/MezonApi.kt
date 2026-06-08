@@ -83,6 +83,9 @@ import com.mezon.mezon.api.ListChannelAppsResponse
 import com.mezon.mezon.api.GenerateHashChannelAppsResponse
 import com.mezon.mezon.api.listChannelAppsRequest
 import com.mezon.mezon.api.generateHashChannelAppsRequest
+import com.mezon.mezon.api.App
+import com.mezon.mezon.api.appId
+import com.mezon.mezon.api.appClan
 import com.mezon.mezon.api.ListChannelBadgeCountResponse
 import com.mezon.mezon.api.ListClanBadgeCountResponse
 import com.mezon.mezon.api.listChannelBadgeCountRequest
@@ -2603,6 +2606,31 @@ class MezonApi @Inject constructor(
         }
         val bytes = rpc(apiUrl, token, "GenerateHashChannelApps", request.toByteArray())
         return GenerateHashChannelAppsResponse.parseFrom(bytes)
+    }
+
+    suspend fun getApp(
+        apiUrl: String,
+        token: String,
+        appId: Long
+    ): App {
+        val request = appId {
+            id = appId
+        }
+        val bytes = rpc(apiUrl, token, "GetApp", request.toByteArray())
+        return App.parseFrom(bytes)
+    }
+
+    suspend fun addAppToClan(
+        apiUrl: String,
+        token: String,
+        appId: Long,
+        clanId: Long
+    ) {
+        val request = appClan {
+            this.appId = appId
+            this.clanId = clanId
+        }
+        rpc(apiUrl, token, "AddAppToClan", request.toByteArray())
     }
 
     suspend fun updateChannelDesc(
