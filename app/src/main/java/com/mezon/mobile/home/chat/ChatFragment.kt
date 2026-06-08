@@ -4761,7 +4761,6 @@ open class ChatFragment : BaseFragment() {
             return
         }
 
-        // Lần đầu request
         locationPermissionAskedBefore = true
         activity.requestPermissions(
             arrayOf(Manifest.permission.ACCESS_FINE_LOCATION),
