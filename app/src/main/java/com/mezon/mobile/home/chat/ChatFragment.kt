@@ -1020,6 +1020,13 @@ open class ChatFragment : BaseFragment() {
             AndroidUtilities.runOnUIThread(work, 250L)
         }
 
+        observe(NotificationCenter.attachmentUploadFinished) { _, _, args ->
+            if (isPaused || fragmentView == null) return@observe
+            val cdnUrl = args.firstOrNull() as? String ?: return@observe
+            if (!messageListHasAttachmentUrl(cdnUrl)) return@observe
+            updateVisibleRows(NotificationCenter.UPDATE_MASK_UPLOAD_PROGRESS)
+        }
+
         observe(NotificationCenter.messageDidUpdate) { _, _, args ->
             if (args.size < 2 || args[0] != messageListKey) return@observe
             val updateEntity = args[1] as? MessageEntity ?: return@observe
@@ -3647,6 +3654,15 @@ open class ChatFragment : BaseFragment() {
             for (extra in msg.extraAttachments) {
                 if (extra.url == key && msg.isAttachmentUploadPending(extra.url)) return true
             }
+        }
+        return false
+    }
+
+    private fun messageListHasAttachmentUrl(url: String): Boolean {
+        if (url.isEmpty()) return false
+        for (msg in messages) {
+            if (msg.attachmentUrl == url) return true
+            if (msg.extraAttachments.any { it.url == url }) return true
         }
         return false
     }
