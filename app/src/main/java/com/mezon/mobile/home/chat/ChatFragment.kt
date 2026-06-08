@@ -281,6 +281,7 @@ open class ChatFragment : BaseFragment() {
 
     private val pendingAttachments = ArrayList<AttachmentPickerItem>()
     private var mediaPermissionDeniedOnce = false
+    private var locationPermissionAskedBefore = false
     private val pendingAttachmentThumbTasks = ArrayList<Runnable?>()
     private var attachmentProgressReloadRunnable: Runnable? = null
     private var buzzMediaPlayer: android.media.MediaPlayer? = null
@@ -4736,11 +4737,19 @@ open class ChatFragment : BaseFragment() {
             return
         }
 
-        if (activity.shouldShowRequestPermissionRationale(Manifest.permission.ACCESS_FINE_LOCATION)) {
+        val canShowRationale = activity.shouldShowRequestPermissionRationale(Manifest.permission.ACCESS_FINE_LOCATION)
+
+        if (!canShowRationale && locationPermissionAskedBefore) {
+            showOpenLocationSettingsDialog()
+            return
+        }
+
+        if (canShowRationale) {
             com.mezon.mobile.core.AlertDialog.Builder(activity)
                 .setTitle(getString(R.string.share_location_title, ""))
                 .setMessage(getString(R.string.permission_no_location))
                 .setPositiveButton(getString(R.string.common_ok)) { _, _ ->
+                    locationPermissionAskedBefore = true
                     activity.requestPermissions(
                         arrayOf(Manifest.permission.ACCESS_FINE_LOCATION),
                         REQUEST_CODE_LOCATION_PERMISSION
@@ -4752,6 +4761,7 @@ open class ChatFragment : BaseFragment() {
             return
         }
 
+        locationPermissionAskedBefore = true
         activity.requestPermissions(
             arrayOf(Manifest.permission.ACCESS_FINE_LOCATION),
             REQUEST_CODE_LOCATION_PERMISSION
