@@ -39,6 +39,7 @@ import com.mezon.mobile.session.SessionManager
 import com.mezon.mobile.BuildConfig
 import com.mezon.mobile.util.AttachmentUploadProgressStore
 import com.mezon.mobile.util.AttachmentUploader
+import com.mezon.mobile.util.PresignFinishContent
 import com.mezon.mobile.util.MENTION_HERE_USER_ID
 import com.mezon.mobile.util.MezonSnowflake
 import com.mezon.mobile.util.firstReferenceMessageId
@@ -1309,6 +1310,7 @@ class ChatController @Inject constructor(
         private const val SHARE_MAX_RETRIES = 5
         private const val SHARE_RETRY_DELAY_MS = 4000L
         private const val ATTACHMENT_UPLOAD_PARALLELISM = 4
+        private const val PRESIGN_EDIT_BATCH_SIZE = 4
         private const val IMAGE_COMPRESSION_PARALLELISM = 2
         private const val LARGE_ATTACHMENT_BYTES = 50L * 1024 * 1024
         private const val LARGE_ATTACHMENT_PARALLELISM = 3
@@ -1412,9 +1414,11 @@ class ChatController @Inject constructor(
             hasContentExtras -> buildTextContentWithEmojis(text, null, emojiMarkers, null, hashtags, ogpMarker)
             else -> buildTextContent(text)
         }
-        val optimisticContent = mergePendingMentionsIntoContent(
-            mergeRefsIntoOptimisticContent(wireBase, references),
-            mentions
+        val optimisticContent = PresignFinishContent.injectEmptyPresignFinish(
+            mergePendingMentionsIntoContent(
+                mergeRefsIntoOptimisticContent(wireBase, references),
+                mentions
+            )
         )
         val mentionEveryone = mentions?.any { it.userId == ID_MENTION_HERE } == true
         val protoMentions = mentions?.map { m ->
@@ -1701,6 +1705,7 @@ class ChatController @Inject constructor(
             }
 
             val attachmentsToSend = preparedSlots.map { it.attachment }
+            val contentWithPresign = PresignFinishContent.injectEmptyPresignFinish(params.wireContent)
             preparedSlots.forEach { slot ->
                 Log.d(TAG, "presign ready index=${slot.index} filename=${slot.attachment.filename} cdnUrl=${slot.attachment.url} thumb=${slot.attachment.thumbnail}")
             }
@@ -1710,7 +1715,7 @@ class ChatController @Inject constructor(
                 this.channelId = params.channelId
                 this.mode = params.mode
                 this.isPublic = params.isPublic
-                this.content = params.wireContent
+                this.content = contentWithPresign
                 this.attachments.addAll(attachmentsToSend)
                 params.protoMentions?.let { this.mentions.addAll(it) }
                 params.references?.let { this.references.addAll(it) }
@@ -1730,23 +1735,96 @@ class ChatController @Inject constructor(
             val uploadedByIndex: List<MessageAttachment?> = items.indices.map { preparedByIndex[it]?.attachment }
             val updatedEntity = applyLocalAfterFirstSendOrdered(
                 params.cacheKey, params.tempId, realMessageId,
-                params.allItems, uploadedByIndex, presignFailedIndices,
+                params.allItems, uploadedByIndex, presignFailedIndices, contentWithPresign,
             )
             notificationCenter.postNotificationOnMainThread(
                 NotificationCenter.pendingMessageSent, params.cacheKey, params.tempId, realMessageId
             )
             notificationCenter.postNotificationOnMainThread(
                 NotificationCenter.messageDidUpdate, params.cacheKey, updatedEntity,
-                NotificationCenter.UPDATE_MASK_ATTACHMENTS,
+                NotificationCenter.UPDATE_MASK_ATTACHMENTS or NotificationCenter.UPDATE_MASK_MESSAGE_TEXT,
             )
+
+            val presignFinishedKeys = ArrayList<String>()
+            var lastSyncedPresignCount = 0
+            val presignMutex = Mutex()
+            var isPresignSyncInFlight = false
+
+            suspend fun applyLocalPresignFinishSnapshot() {
+                val snapshot = presignMutex.withLock { presignFinishedKeys.toList() }
+                if (snapshot.isEmpty()) return
+                val content = PresignFinishContent.injectPresignFinish(params.wireContent, snapshot)
+                applyLocalPresignContentUpdate(params.cacheKey, realMessageId, content)
+            }
+
+            suspend fun maybeSyncPresignFinishToServer(forceFlush: Boolean) {
+                val snapshot: List<String>
+                val pendingNew: Int
+                presignMutex.withLock {
+                    if (presignFinishedKeys.isEmpty()) return
+                    pendingNew = presignFinishedKeys.size - lastSyncedPresignCount
+                    if (!forceFlush && pendingNew < PRESIGN_EDIT_BATCH_SIZE) return
+                    if (isPresignSyncInFlight) return
+                    isPresignSyncInFlight = true
+                    snapshot = presignFinishedKeys.toList()
+                }
+                try {
+                    val content = PresignFinishContent.injectPresignFinish(params.wireContent, snapshot)
+                    val maxAttempts = if (forceFlush) 2 else 1
+                    var synced = false
+                    for (attempt in 1..maxAttempts) {
+                        try {
+                            channelUpdate(
+                                apiUrl, token,
+                                params.clanId, params.channelId, params.mode, params.isPublic,
+                                realMessageId, content, params.protoMentions, attachmentsToSend,
+                                hideEditted = true, topicId = params.topicId,
+                            )
+                            synced = true
+                            break
+                        } catch (e: Exception) {
+                            if (attempt == maxAttempts) {
+                                Log.e(TAG, "presign_finish sync failed messageId=$realMessageId", e)
+                            }
+                        }
+                    }
+                    if (synced) {
+                        presignMutex.withLock {
+                            lastSyncedPresignCount = snapshot.size
+                            job.uploadedCount = snapshot.size
+                        }
+                    }
+                } finally {
+                    presignMutex.withLock { isPresignSyncInFlight = false }
+                }
+            }
 
             val backgroundUploadFailed = coroutineScope {
                 preparedSlots.map { slot ->
                     async(ioDispatcher) {
-                        executeBackgroundAttachmentUpload(slot, apiUrl, token, params.maxRetriesPerFile)
+                        val ok = executeBackgroundAttachmentUpload(slot, apiUrl, token, params.maxRetriesPerFile)
+                        if (ok) {
+                            val key = PresignFinishContent.presignKey(slot.attachment.url)
+                            if (key.isNotEmpty()) {
+                                var shouldApplyLocal = false
+                                presignMutex.withLock {
+                                    if (!presignFinishedKeys.contains(key)) {
+                                        presignFinishedKeys.add(key)
+                                        shouldApplyLocal = true
+                                    }
+                                }
+                                if (shouldApplyLocal) {
+                                    applyLocalPresignFinishSnapshot()
+                                }
+                                maybeSyncPresignFinishToServer(forceFlush = false)
+                            }
+                        }
+                        !ok
                     }
-                }.awaitAll().any { !it }
+                }.awaitAll().any { it }
             }
+            maybeSyncPresignFinishToServer(forceFlush = true)
+            preparedSlots.forEach { AttachmentUploadProgressStore.clear(it.progressKey) }
             if (backgroundUploadFailed) {
                 applyLocalBackgroundUploadFailure(params.cacheKey, realMessageId)
             }
@@ -1779,7 +1857,7 @@ class ChatController @Inject constructor(
     }
 
     private fun clearAttachmentUploadProgress(progressKey: String) {
-        AttachmentUploadProgressStore.clear(progressKey)
+        AttachmentUploadProgressStore.clearProgress(progressKey)
     }
 
     private suspend fun prepareAndPresignAttachment(
@@ -1854,7 +1932,7 @@ class ChatController @Inject constructor(
         }
         return PreparedAttachmentSlot(
             index = index,
-            progressKey = item.uri.toString(),
+            progressKey = presigned.cdnUrl,
             attachment = attachment,
             plan = presigned.plan,
             bytes = bytes,
@@ -1890,7 +1968,7 @@ class ChatController @Inject constructor(
         }
         return PreparedAttachmentSlot(
             index = index,
-            progressKey = item.uri.toString(),
+            progressKey = presigned.cdnUrl,
             attachment = attachment,
             plan = presigned.plan,
             file = file,
@@ -1934,6 +2012,21 @@ class ChatController @Inject constructor(
         }
     }
 
+    private suspend fun uploadVideoThumbnailIfPresent(
+        slot: PreparedAttachmentSlot,
+        apiUrl: String,
+        token: String,
+    ) {
+        val thumb = slot.thumbPlan ?: return
+        try {
+            AttachmentUploader.executeUploadPlan(
+                api, apiUrl, token, thumb.plan, bytes = thumb.bytes,
+            )
+        } catch (e: Exception) {
+            Log.w(TAG, "Video thumbnail upload failed for ${slot.attachment.filename}", e)
+        }
+    }
+
     private suspend fun executeBackgroundAttachmentUpload(
         slot: PreparedAttachmentSlot,
         apiUrl: String,
@@ -1949,11 +2042,11 @@ class ChatController @Inject constructor(
                         api, apiUrl, token, slot.plan,
                         bytes = slot.bytes, file = slot.file, onProgress = onProgress,
                     )
-                    slot.thumbPlan?.let { thumb ->
-                        AttachmentUploader.executeUploadPlan(
-                            api, apiUrl, token, thumb.plan, bytes = thumb.bytes,
-                        )
-                    }
+                    uploadVideoThumbnailIfPresent(slot, apiUrl, token)
+                    AttachmentUploadProgressStore.markUploadComplete(slot.progressKey)
+                    notificationCenter.postNotificationOnMainThread(
+                        NotificationCenter.attachmentUploadFinished, slot.progressKey,
+                    )
                     Log.d(TAG, "Background upload done: ${slot.attachment.filename} → ${slot.attachment.url}")
                     return true
                 } catch (e: Exception) {
@@ -2141,6 +2234,31 @@ class ChatController @Inject constructor(
         return attachmentFieldsFromUploaded(attachments, emptyList())
     }
 
+    private suspend fun applyLocalPresignContentUpdate(
+        cacheKey: Long,
+        messageId: Long,
+        content: String,
+    ) {
+        val existing = withContext(ioDispatcher) { messageDao.getById(cacheKey, messageId) } ?: return
+        val presignOnly = PresignFinishContent.isPresignFinishOnlyChange(content, existing.content)
+        val updated = existing.copy(
+            content = content,
+            hideEditted = true,
+            updateTimeSeconds = if (presignOnly) 0L else existing.updateTimeSeconds,
+        )
+        appScope.launch(ioDispatcher) { messageDao.upsert(updated) }
+        synchronized(this) {
+            val last = dialogMessage.get(cacheKey)
+            if (last != null && last.id == messageId) {
+                dialogMessage.put(cacheKey, updated)
+            }
+        }
+        notificationCenter.postNotificationOnMainThread(
+            NotificationCenter.messageDidUpdate, cacheKey, updated,
+            NotificationCenter.UPDATE_MASK_MESSAGE_TEXT or NotificationCenter.UPDATE_MASK_ATTACHMENTS,
+        )
+    }
+
     private suspend fun applyLocalAfterFirstSendOrdered(
         cacheKey: Long,
         tempId: Long,
@@ -2148,6 +2266,7 @@ class ChatController @Inject constructor(
         allItems: List<AttachmentPickerItem>,
         uploadedByIndex: List<MessageAttachment?>,
         failedIndices: Set<Int>,
+        contentWithPresign: String = "",
     ): MessageEntity {
         val existing = synchronized(this) { pendingAttachmentEntityByTempId.get(tempId) }
             ?: withContext(ioDispatcher) { messageDao.getById(cacheKey, realMessageId) }
@@ -2165,6 +2284,7 @@ class ChatController @Inject constructor(
             isMe = true,
         )).copy(
             id = realMessageId,
+            content = contentWithPresign.ifBlank { existing?.content.orEmpty() },
             attachmentUrl = fields.attachmentUrl,
             attachmentThumb = fields.attachmentThumb,
             attachmentWidth = fields.attachmentWidth,
@@ -2176,6 +2296,7 @@ class ChatController @Inject constructor(
             extraAttachmentsJson = fields.extraAttachmentsJson,
             messageType = fields.messageType,
             sendState = MessageEntity.SEND_STATE_SENT,
+            hideEditted = true,
             isError = hasError,
         )
         appScope.launch(ioDispatcher) { messageDao.upsert(updated) }
@@ -2339,13 +2460,19 @@ class ChatController @Inject constructor(
             existingCount > incomingCount ||
             (expectedTotal > incomingCount && hasAnyLocalAttachmentUrl(existing))
         )
+        val mergedContent = PresignFinishContent.mergePresignFinishContent(base.content, incoming.content)
+        val presignOnly = PresignFinishContent.isPresignFinishOnlyChange(mergedContent, base.content)
         if (!preserveLocalAttachments) {
-            return incoming.copy(content = resolveEchoContent(incoming.content, base.content))
+            return incoming.copy(
+                content = resolveEchoContent(mergedContent, base.content),
+                updateTimeSeconds = if (presignOnly) base.updateTimeSeconds else incoming.updateTimeSeconds,
+                hideEditted = incoming.hideEditted || presignOnly,
+            )
         }
         return base.copy(
-            content = resolveEchoContent(base.content, incoming.content),
-            updateTimeSeconds = incoming.updateTimeSeconds,
-            hideEditted = incoming.hideEditted,
+            content = resolveEchoContent(base.content, mergedContent),
+            updateTimeSeconds = if (presignOnly) base.updateTimeSeconds else incoming.updateTimeSeconds,
+            hideEditted = incoming.hideEditted || presignOnly,
             code = incoming.code,
         )
     }

@@ -15,6 +15,7 @@ import com.mezon.mobile.network.STREAM_MODE_CHANNEL
 import com.mezon.mobile.network.STREAM_MODE_THREAD
 import com.mezon.mobile.util.AttachmentUploadProgressStore
 import com.mezon.mobile.util.MENTION_HERE_USER_ID
+import com.mezon.mobile.util.PresignFinishContent
 
 data class AttachmentInfo(
     val url: String,
@@ -317,11 +318,27 @@ data class MessageEntity(
         return url.startsWith("content://") || url.startsWith("file://")
     }
 
+    fun presignFinishKeys(): List<String>? = PresignFinishContent.parseKeys(content)
+
+    fun isPresignAttachmentPending(url: String): Boolean {
+        if (isMe) return false
+        val keys = presignFinishKeys() ?: return false
+        if (isLocalAttachmentUrl(url)) return false
+        val key = PresignFinishContent.presignKey(url)
+        return key.isNotEmpty() && !keys.contains(key)
+    }
+
     fun isAttachmentUploadPending(url: String): Boolean {
-        if (!isLocalAttachmentUrl(url)) return false
         if (attachmentUploadFailed(url)) return false
-        if (url == attachmentUrl && isError) return false
-        return true
+        if (isLocalAttachmentUrl(url)) {
+            if (url == attachmentUrl && isError) return false
+            return true
+        }
+        if (!isMe) return false
+        val keys = presignFinishKeys() ?: return false
+        val key = PresignFinishContent.presignKey(url)
+        if (key.isEmpty() || keys.contains(key)) return false
+        return !AttachmentUploadProgressStore.isUploadComplete(url)
     }
 
     fun attachmentUploadProgress(url: String): Float =
@@ -346,10 +363,19 @@ data class MessageEntity(
 
     private fun isMediaUploadPending(att: AttachmentInfo, index: Int, errorUrls: Set<String>): Boolean {
         val url = att.url
-        if (!isLocalAttachmentUrl(url)) return false
+        if (isPresignAttachmentPending(url)) return false
+        if (!isLocalAttachmentUrl(url)) {
+            return isAttachmentUploadPending(url)
+        }
         if (url in errorUrls) return false
         if (index == 0 && attachmentUrl == url && isError) return false
         return true
+    }
+
+    fun mediaPresignPendingFlags(): List<Boolean> {
+        val media = allImageAttachments
+        if (media.isEmpty()) return emptyList()
+        return media.map { isPresignAttachmentPending(it.url) }
     }
 
     fun isMediaAttachmentUploadPending(mediaIndex: Int): Boolean {
