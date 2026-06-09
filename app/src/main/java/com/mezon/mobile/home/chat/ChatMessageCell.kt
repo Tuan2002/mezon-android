@@ -1397,21 +1397,7 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
             val layout = StaticLayout.Builder.obtain(charSeq, 0, charSeq.length, currentContentPaint, contentLayoutW)
                 .setLineSpacing(LayoutHelper.dpf(2f), 1f)
                 .build()
-            val spannedText = charSeq as? Spanned
-            if (spannedText != null) {
-                val codeFenceSpans = spannedText.getSpans(0, spannedText.length, CodeFenceSpan::class.java)
-                for (span in codeFenceSpans) {
-                    val spanStart = spannedText.getSpanStart(span)
-                    val spanEnd = spannedText.getSpanEnd(span)
-                    val firstContent = (spanStart until spanEnd).firstOrNull { spannedText[it] != '\n' } ?: spanStart
-                    val lastContent = (spanEnd - 1 downTo spanStart).firstOrNull { spannedText[it] != '\n' }
-                        ?: (spanEnd - 1).coerceAtLeast(spanStart)
-                    val a = firstContent.coerceAtMost(lastContent)
-                    val b = lastContent.coerceAtLeast(firstContent)
-                    span.spanFirstLine = layout.getLineForOffset(a)
-                    span.spanLastLine = layout.getLineForOffset(b)
-                }
-            }
+            (charSeq as? Spanned)?.let { CodeFenceSpan.bindLineBounds(it, layout) }
             layout
         } else null
 
