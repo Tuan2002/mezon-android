@@ -167,12 +167,6 @@ class ChatController @Inject constructor(
         val plan: AttachmentUploader.UploadExecutionPlan,
         val bytes: ByteArray? = null,
         val file: java.io.File? = null,
-        val thumbPlan: PreparedThumbUpload? = null,
-    )
-
-    private class PreparedThumbUpload(
-        val plan: AttachmentUploader.UploadExecutionPlan,
-        val bytes: ByteArray,
     )
 
     private data class IncrementalAttachmentSendParams(
@@ -1951,7 +1945,9 @@ class ChatController @Inject constructor(
         val timestamp = System.currentTimeMillis() / 1000
         val sanitizedName = item.filename.replace(FILENAME_SANITIZE_REGEX, "_")
         val uploadFilename = "${timestamp}_$sanitizedName"
-        val thumbSlot = presignVideoThumbnailIfNeeded(item, file, apiUrl, token, cdnBaseUrl, timestamp, sanitizedName)
+        val thumbCdnUrl = uploadVideoThumbnailIfNeeded(
+            item, file, apiUrl, token, cdnBaseUrl, timestamp, sanitizedName,
+        )
         val presigned = AttachmentUploader.presignAttachmentFromFile(
             api, apiUrl, token, uploadFilename, item.mimeType, fileSize,
             item.width, item.height, cdnBaseUrl,
@@ -1964,7 +1960,7 @@ class ChatController @Inject constructor(
             this.width = item.width
             this.height = item.height
             if (item.duration > 0) this.duration = item.duration
-            if (thumbSlot != null) thumbnail = thumbSlot.cdnUrl
+            if (!thumbCdnUrl.isNullOrEmpty()) thumbnail = thumbCdnUrl
         }
         return PreparedAttachmentSlot(
             index = index,
@@ -1972,16 +1968,10 @@ class ChatController @Inject constructor(
             attachment = attachment,
             plan = presigned.plan,
             file = file,
-            thumbPlan = thumbSlot?.upload,
         )
     }
 
-    private data class PresignedVideoThumb(
-        val cdnUrl: String,
-        val upload: PreparedThumbUpload,
-    )
-
-    private suspend fun presignVideoThumbnailIfNeeded(
+    private suspend fun uploadVideoThumbnailIfNeeded(
         item: AttachmentPickerItem,
         file: java.io.File,
         apiUrl: String,
@@ -1989,7 +1979,7 @@ class ChatController @Inject constructor(
         cdnBaseUrl: String,
         timestamp: Long,
         sanitizedName: String,
-    ): PresignedVideoThumb? {
+    ): String? {
         if (!item.isVideo && !AttachmentUploader.isVideoMimeType(item.mimeType)) {
             return null
         }
@@ -2002,28 +1992,14 @@ class ChatController @Inject constructor(
                 api, apiUrl, token, thumbFilename, thumb.mimeType, thumb.bytes.size.toLong(),
                 thumb.width, thumb.height, cdnBaseUrl,
             )
-            PresignedVideoThumb(
-                cdnUrl = presigned.cdnUrl,
-                upload = PreparedThumbUpload(presigned.plan, thumb.bytes),
-            )
-        } catch (e: Exception) {
-            Log.w(TAG, "Video thumbnail presign failed for ${item.filename}", e)
-            null
-        }
-    }
-
-    private suspend fun uploadVideoThumbnailIfPresent(
-        slot: PreparedAttachmentSlot,
-        apiUrl: String,
-        token: String,
-    ) {
-        val thumb = slot.thumbPlan ?: return
-        try {
             AttachmentUploader.executeUploadPlan(
-                api, apiUrl, token, thumb.plan, bytes = thumb.bytes,
+                api, apiUrl, token, presigned.plan, bytes = thumb.bytes,
             )
+            Log.d(TAG, "Video thumbnail uploaded cdnUrl=${presigned.cdnUrl} file=${item.filename}")
+            presigned.cdnUrl
         } catch (e: Exception) {
-            Log.w(TAG, "Video thumbnail upload failed for ${slot.attachment.filename}", e)
+            Log.w(TAG, "Video thumbnail upload failed for ${item.filename}", e)
+            null
         }
     }
 
@@ -2042,7 +2018,6 @@ class ChatController @Inject constructor(
                         api, apiUrl, token, slot.plan,
                         bytes = slot.bytes, file = slot.file, onProgress = onProgress,
                     )
-                    uploadVideoThumbnailIfPresent(slot, apiUrl, token)
                     AttachmentUploadProgressStore.markUploadComplete(slot.progressKey)
                     notificationCenter.postNotificationOnMainThread(
                         NotificationCenter.attachmentUploadFinished, slot.progressKey,

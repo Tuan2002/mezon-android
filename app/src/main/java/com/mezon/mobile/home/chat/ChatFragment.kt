@@ -125,6 +125,7 @@ import com.mezon.mobile.util.resolveStickerSourceUrl
 import com.mezon.mobile.util.firstReferenceMessageId
 import com.mezon.mobile.util.createImgproxyUrl
 import com.mezon.mobile.util.OgpMarker
+import com.mezon.mobile.util.PresignFinishContent
 import com.mezon.mobile.core.SharedConfig
 import com.mezon.mobile.home.chat.poll.ChatPollBridge
 import com.mezon.mobile.home.chat.poll.CreatePollFragment
@@ -3650,9 +3651,10 @@ open class ChatFragment : BaseFragment() {
     private fun messageListHasPendingUploadKey(key: String): Boolean {
         if (key.isEmpty()) return false
         for (msg in messages) {
-            if (msg.attachmentUrl == key && msg.isAttachmentUploadPending(key)) return true
+            val filter = PresignFinishContent.PresignFilterContext.from(msg.content, msg.timestampSeconds)
+            if (msg.attachmentUrl == key && msg.isAttachmentUploadPending(key, filter)) return true
             for (extra in msg.extraAttachments) {
-                if (extra.url == key && msg.isAttachmentUploadPending(extra.url)) return true
+                if (extra.url == key && msg.isAttachmentUploadPending(extra.url, filter)) return true
             }
         }
         return false

@@ -313,6 +313,14 @@ class ChannelController @Inject constructor(
         }
     }
 
+    suspend fun addAppToClan(clanId: Long, appId: Long) {
+        sessionManager.withAutoRefresh { session ->
+            withContext(ioDispatcher) {
+                api.addAppToClan(session.apiUrl, session.token, appId, clanId)
+            }
+        }
+    }
+
     suspend fun createAppChannel(
         clanId: Long,
         categoryId: Long,
@@ -404,20 +412,11 @@ class ChannelController @Inject constructor(
     }
 
     private suspend fun fetchAllCategoriesFromApi(apiUrl: String, token: String, clanId: Long): List<ClanCategoryItem> {
-        val collected = LinkedHashMap<Long, ClanCategoryItem>()
-        var cursor = ""
-        repeat(MAX_CATEGORY_API_PAGES) {
-            val page = api.listCategoryDescs(apiUrl, token, limit = 100, cursor = cursor)
-            val rawList = page.categorydescList
-            if (rawList.isEmpty()) return collected.values.toList()
-            val batch = rawList.mapNotNull { desc ->
+        return runCatching {
+            api.listCategoryDescs(apiUrl, token, clanId).categorydescList.mapNotNull { desc ->
                 normalizeCategoryItem(desc.toClanCategoryItem(), clanId)
             }
-            for (item in batch) collected[item.categoryId] = item
-            if (rawList.size < 100) return collected.values.toList()
-            cursor = rawList.last().categoryId.toString()
-        }
-        return collected.values.toList()
+        }.getOrElse { emptyList() }
     }
 
     private fun categoriesDerivedFromChannels(clanId: Long): List<ClanCategoryItem> {

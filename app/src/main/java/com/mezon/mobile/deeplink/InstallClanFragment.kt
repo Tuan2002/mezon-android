@@ -23,21 +23,22 @@ import com.mezon.mobile.MainActivity
 import com.mezon.mobile.R
 import com.mezon.mobile.core.BaseFragment
 import com.mezon.mobile.core.LayoutHelper
+import com.mezon.mobile.core.NotificationCenter
 import com.mezon.mobile.di.FragmentEntryPoint
-import com.mezon.mobile.home.chat.ChatFragment
-import com.mezon.mobile.home.chat.MezonImageLoader
 import com.mezon.mobile.home.clans.CHANNEL_TYPE_APP
 import com.mezon.mobile.home.clans.ClanCategoryItem
 import com.mezon.mobile.home.clans.ClanEntity
 import com.mezon.mobile.home.clans.ChannelController
 import com.mezon.mobile.home.clans.ClansController
 import com.mezon.mobile.home.profile.UserController
+import com.mezon.mezon.api.App
+import com.mezon.mobile.network.HttpRpcStatusException
 import com.mezon.mobile.network.MezonApi
 import com.mezon.mobile.session.SessionManager
+import com.mezon.mobile.util.NetworkErrorMessages
 import com.mezon.mobile.ui.MezonToast
 import com.mezon.mobile.ui.cells.MezonIcon
 import com.mezon.mobile.ui.cells.ToastOverlay
-import com.mezon.mobile.util.avatarImgproxyUrl
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -45,18 +46,22 @@ import java.text.DateFormat
 import java.text.Normalizer
 import java.util.Date
 import java.util.Locale
-import kotlin.math.max
 
 class InstallClanFragment : BaseFragment() {
 
     companion object {
         private const val ARG_APP_ID = "appId"
+        private const val ARG_INSTALL_KIND = "installKind"
+        private const val ARG_SOURCE_URL = "sourceUrl"
         private val CHANNEL_LABEL_REGEX = Regex("[^\\p{L}\\p{M}\\p{N} \\-_]")
+        private const val DUPLICATE_CHECK_TYPE_CHANNEL = 2
 
-        fun newInstance(appId: Long): InstallClanFragment {
+        fun newInstance(appId: Long, installKind: InstallKind, sourceUrl: String? = null): InstallClanFragment {
             return InstallClanFragment().apply {
                 arguments = Bundle().apply {
                     putLong(ARG_APP_ID, appId)
+                    putInt(ARG_INSTALL_KIND, installKind.ordinal)
+                    sourceUrl?.let { putString(ARG_SOURCE_URL, it) }
                 }
             }
         }
@@ -69,6 +74,7 @@ class InstallClanFragment : BaseFragment() {
     private lateinit var userController: UserController
 
     private var appId = 0L
+    private var installKind = InstallKind.BOT
     private var appName = ""
     private var appCreateTimeSeconds = 0
     private var selectedClan: ClanEntity? = null
@@ -83,6 +89,7 @@ class InstallClanFragment : BaseFragment() {
     private var clanPickerValueView: TextView? = null
     private var clanErrorView: TextView? = null
     private var categorySection: LinearLayout? = null
+    private var channelNameSection: LinearLayout? = null
     private var categoryPickerValueView: TextView? = null
     private var categoryErrorView: TextView? = null
     private var channelNameInput: EditText? = null
@@ -91,9 +98,9 @@ class InstallClanFragment : BaseFragment() {
     private var authorizeButton: TextView? = null
     private var loadingView: ProgressBar? = null
     private var formScroll: ScrollView? = null
+    private var successOpenChannelButton: TextView? = null
     private var successContainer: LinearLayout? = null
-    private var logoView: ImageView? = null
-    private var logoLoad: MezonImageLoader.Cancellable? = null
+    private var logoView: DeeplinkLogoView? = null
 
     override fun onInject(entryPoint: FragmentEntryPoint) {
         api = entryPoint.mezonApi()
@@ -106,13 +113,29 @@ class InstallClanFragment : BaseFragment() {
     override fun onFragmentCreate(): Boolean {
         super.onFragmentCreate()
         appId = arguments?.getLong(ARG_APP_ID) ?: 0L
+        installKind = readInstallKindFromArguments()
         clansController.loadClans()
         return true
+    }
+
+    private fun readInstallKindFromArguments(): InstallKind {
+        val sourceUrl = arguments?.getString(ARG_SOURCE_URL)
+        val fromUrl = DeepLinkParser.installKindFromUrl(sourceUrl)
+        val fromArg = when (arguments?.getInt(ARG_INSTALL_KIND, InstallKind.BOT.ordinal)) {
+            InstallKind.APP.ordinal -> InstallKind.APP
+            else -> InstallKind.BOT
+        }
+        return when {
+            fromUrl == InstallKind.APP || fromArg == InstallKind.APP -> InstallKind.APP
+            fromUrl == InstallKind.BOT -> InstallKind.BOT
+            else -> fromArg
+        }
     }
 
     override fun createView(context: Context): View {
         actionBar = createActionBar(context).apply {
             setTitle(getString(R.string.deeplink_install_authorize))
+            setBackClickListener { finishToHome() }
         }
 
         val root = LinearLayout(context).apply {
@@ -138,16 +161,9 @@ class InstallClanFragment : BaseFragment() {
             setPadding(LayoutHelper.dp(24), LayoutHelper.dp(24), LayoutHelper.dp(24), LayoutHelper.dp(24))
         }
 
-        val logoSize = LayoutHelper.dp(100)
-        val logo = ImageView(context).apply {
-            scaleType = ImageView.ScaleType.CENTER_CROP
-            background = GradientDrawable().apply {
-                cornerRadius = LayoutHelper.dp(16f).toFloat()
-                setColor(themeColors.surfaceVariant)
-            }
-        }
+        val logo = DeeplinkLogoView(context, themeColors, sizeDp = 100, cornerRadiusDp = 16f)
         logoView = logo
-        card.addView(logo, LinearLayout.LayoutParams(logoSize, logoSize))
+        card.addView(logo, LinearLayout.LayoutParams(LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT))
 
         val appName = TextView(context).apply {
             setTextColor(themeColors.onSurface)
@@ -220,7 +236,11 @@ class InstallClanFragment : BaseFragment() {
         categoryBlock.addView(categoryError, fieldErrorMargin())
         card.addView(categoryBlock, fieldBlockMargin())
 
-        card.addView(formLabel(context, getString(R.string.deeplink_install_channel_name)), fieldLabelMargin())
+        val channelNameBlock = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+        }
+        channelNameSection = channelNameBlock
+        channelNameBlock.addView(formLabel(context, getString(R.string.deeplink_install_channel_name)), fieldLabelMargin())
         val channelName = EditText(context).apply {
             setTextColor(themeColors.onSurface)
             setHintTextColor(themeColors.onSurfaceVariant)
@@ -230,7 +250,10 @@ class InstallClanFragment : BaseFragment() {
             minimumHeight = LayoutHelper.dp(44)
         }
         channelNameInput = channelName
-        card.addView(channelName, fieldRowMargin())
+        channelNameBlock.addView(channelName, fieldRowMargin())
+        card.addView(channelNameBlock, fieldBlockMargin())
+
+        applyInstallKindUi()
 
         card.addView(buildMetaTextRow(context, MezonIcon.lockIcon) { privacyFooterView = it }, metaRowMargin())
         card.addView(buildMetaTextRow(context, MezonIcon.clockIcon) { activeSinceView = it }, fieldRowMargin())
@@ -255,8 +278,7 @@ class InstallClanFragment : BaseFragment() {
     }
 
     override fun onFragmentDestroy() {
-        logoLoad?.cancel()
-        logoLoad = null
+        logoView?.cancelLoad()
         super.onFragmentDestroy()
     }
 
@@ -284,23 +306,34 @@ class InstallClanFragment : BaseFragment() {
                 formScroll?.visibility = View.VISIBLE
                 appName = app.appname
                 appCreateTimeSeconds = app.createTimeSeconds
+                installKind = resolveInstallKindFromApp(app)
                 appNameView?.text = app.appname.ifBlank { getString(R.string.deeplink_install_unknown_app) }
                 updateAccessRequestText()
                 updateSignedInText()
                 updateFooterTexts()
                 channelNameInput?.setText(app.appname)
-                val logo = logoView
-                if (logo != null && app.applogo.isNotBlank()) {
-                    val px = max(LayoutHelper.dp(100) * 2, 200)
-                    logoLoad = MezonImageLoader.getInstance(logo.context).load(
-                        avatarImgproxyUrl(app.applogo, px),
-                        px,
-                        px,
-                        onSuccess = { bmp -> logo.setImageBitmap(bmp) }
-                    )
-                }
+                val displayName = app.appname.ifBlank { getString(R.string.deeplink_install_unknown_app) }
+                logoView?.bind(
+                    fallbackKey = appId,
+                    displayName = displayName,
+                    logoUrl = app.applogo.takeIf { it.isNotBlank() },
+                    fallbackStyle = DeeplinkLogoView.FallbackStyle.AVATAR_DEFAULT,
+                )
+                applyInstallKindUi()
             }
         }
+    }
+
+    private fun resolveInstallKindFromApp(app: App): InstallKind {
+        if (installKind == InstallKind.APP) return InstallKind.APP
+        return if (app.appUrl.isNotBlank()) InstallKind.APP else InstallKind.BOT
+    }
+
+    private fun applyInstallKindUi() {
+        val isAppInstall = installKind == InstallKind.APP
+        categorySection?.visibility = if (isAppInstall) View.VISIBLE else View.GONE
+        channelNameSection?.visibility = if (isAppInstall) View.VISIBLE else View.GONE
+        updateAuthorizeState()
     }
 
     private fun updateAccessRequestText() {
@@ -370,15 +403,25 @@ class InstallClanFragment : BaseFragment() {
         categoryPickerValueView?.text = getString(R.string.deeplink_install_category_placeholder)
         categoryPickerValueView?.setTextColor(themeColors.onSurfaceVariant)
         clearCategoryError()
-        categorySection?.visibility = View.VISIBLE
         updateAuthorizeState()
-        loadCategories(clan.clanId)
+        if (installKind == InstallKind.APP) {
+            loadCategories(clan.clanId)
+            scrollToAppInstallFields()
+        }
+    }
+
+    private fun scrollToAppInstallFields() {
+        if (installKind != InstallKind.APP) return
+        val scroll = formScroll ?: return
+        val target = categorySection ?: return
+        scroll.post { scroll.smoothScrollTo(0, target.top) }
     }
 
     private fun loadCategories(clanId: Long) {
         fragmentScope.launch {
             val list = runCatching {
                 withContext(Dispatchers.IO) {
+                    runCatching { channelController.loadChannelsForClanSuspend(clanId, force = true) }
                     channelController.loadCategoriesForClan(clanId, force = true)
                 }
             }.getOrElse { emptyList() }
@@ -421,7 +464,10 @@ class InstallClanFragment : BaseFragment() {
     }
 
     private fun updateAuthorizeState() {
-        val enabled = selectedClan != null && selectedCategory != null
+        val enabled = when (installKind) {
+            InstallKind.BOT -> selectedClan != null
+            InstallKind.APP -> selectedClan != null && selectedCategory != null
+        }
         authorizeButton?.isEnabled = enabled
         authorizeButton?.alpha = if (enabled) 1f else 0.5f
     }
@@ -430,26 +476,73 @@ class InstallClanFragment : BaseFragment() {
         clearClanError()
         clearCategoryError()
         val clan = selectedClan
-        val category = selectedCategory
         var hasError = false
         if (clan == null) {
             showClanError(getString(R.string.deeplink_install_select_clan_error))
             hasError = true
         }
-        if (category == null) {
-            showCategoryError(getString(R.string.deeplink_install_select_category_error))
-            hasError = true
+        if (installKind == InstallKind.APP) {
+            val category = selectedCategory
+            if (category == null) {
+                showCategoryError(getString(R.string.deeplink_install_select_category_error))
+                hasError = true
+            }
+            if (hasError) return
+            authorizeAppInstall(clan!!, category!!)
+            return
         }
         if (hasError) return
+        authorizeBotInstall(clan!!)
+    }
 
-        val channelLabel = sanitizeChannelLabel(channelNameInput?.text?.toString().orEmpty(), appName)
+    private fun authorizeBotInstall(clan: ClanEntity) {
         authorizeButton?.isEnabled = false
         fragmentScope.launch {
             val result = runCatching {
                 withContext(Dispatchers.IO) {
+                    channelController.addAppToClan(clan.clanId, appId)
+                }
+            }
+            withContext(Dispatchers.Main) {
+                if (fragmentView == null || isPaused) return@withContext
+                result.onSuccess {
+                    showSuccessState(clan)
+                }.onFailure {
+                    updateAuthorizeState()
+                    MezonToast.show(this@InstallClanFragment, ToastOverlay.ToastType.ERROR, getString(R.string.deeplink_install_error))
+                }
+            }
+        }
+    }
+
+    private fun authorizeAppInstall(clan: ClanEntity, category: ClanCategoryItem) {
+        val channelLabel = sanitizeChannelLabel(channelNameInput?.text?.toString().orEmpty(), appName)
+        authorizeButton?.isEnabled = false
+        fragmentScope.launch {
+            val duplicate = withContext(Dispatchers.IO) {
+                channelController.checkDuplicateChannelName(
+                    channelLabel,
+                    DUPLICATE_CHECK_TYPE_CHANNEL,
+                    category.categoryId,
+                ).getOrDefault(false)
+            }
+            if (duplicate) {
+                withContext(Dispatchers.Main) {
+                    if (fragmentView == null || isPaused) return@withContext
+                    updateAuthorizeState()
+                    MezonToast.show(
+                        this@InstallClanFragment,
+                        ToastOverlay.ToastType.ERROR,
+                        getString(R.string.channel_creator_channel_name_duplicate_error),
+                    )
+                }
+                return@launch
+            }
+            val result = runCatching {
+                withContext(Dispatchers.IO) {
                     channelController.createAppChannel(
-                        clanId = clan!!.clanId,
-                        categoryId = category!!.categoryId,
+                        clanId = clan.clanId,
+                        categoryId = category.categoryId,
                         channelLabel = channelLabel,
                         appId = appId
                     )
@@ -460,13 +553,33 @@ class InstallClanFragment : BaseFragment() {
                 result.onSuccess { desc ->
                     createdChannelId = desc.channelId
                     createdChannelLabel = desc.channelLabel.ifBlank { channelLabel }
-                    showSuccessState(clan!!)
-                }.onFailure {
+                    showSuccessState(clan)
+                }.onFailure { error ->
                     updateAuthorizeState()
-                    MezonToast.show(this@InstallClanFragment, ToastOverlay.ToastType.ERROR, getString(R.string.deeplink_install_error))
+                    MezonToast.show(
+                        this@InstallClanFragment,
+                        ToastOverlay.ToastType.ERROR,
+                        installErrorMessage(error),
+                    )
                 }
             }
         }
+    }
+
+    private fun installErrorMessage(error: Throwable): String {
+        val ctx = getContext() ?: return getString(R.string.deeplink_install_error)
+        val fallback = getString(R.string.deeplink_install_error)
+        if (error is HttpRpcStatusException && error.code == 400) {
+            val body = error.message?.substringAfter(": ")?.trim().orEmpty()
+            if (body.isEmpty() || body == "(empty)") {
+                return getString(R.string.channel_creator_channel_name_duplicate_error)
+            }
+            val parsed = body.removePrefix("RPC CreateChannelDesc failed (400): ").trim()
+            if (parsed.isNotEmpty() && parsed != body) {
+                return NetworkErrorMessages.userMessage(ctx, error, parsed)
+            }
+        }
+        return NetworkErrorMessages.userMessage(ctx, error, fallback)
     }
 
     private fun showSuccessState(clan: ClanEntity) {
@@ -480,6 +593,7 @@ class InstallClanFragment : BaseFragment() {
             appName.ifBlank { getString(R.string.deeplink_install_unknown_app) },
             clan.clanName
         )
+        successOpenChannelButton?.visibility = if (installKind == InstallKind.APP) View.VISIBLE else View.GONE
         MezonToast.show(this, ToastOverlay.ToastType.SUCCESS, getString(R.string.deeplink_install_success))
     }
 
@@ -489,20 +603,30 @@ class InstallClanFragment : BaseFragment() {
             finishToHome()
             return
         }
-        presentFragment(
-            ChatFragment.newInstance(
-                channelId = createdChannelId,
-                channelName = createdChannelLabel.ifBlank { appName },
-                clanId = clan.clanId,
-                channelType = CHANNEL_TYPE_APP,
-                isChannelPrivate = false
-            )
+        val activity = getParentActivity() as? MainActivity ?: return
+        clansController.selectClan(clan.clanId, force = true)
+        notificationCenter.postNotificationOnMainThread(NotificationCenter.navigateToClansTab)
+        activity.openChat(
+            channelId = createdChannelId,
+            channelName = createdChannelLabel.ifBlank { appName },
+            clanId = clan.clanId,
+            channelType = CHANNEL_TYPE_APP,
+            replaceLastFragment = true,
         )
-        finishFragment()
     }
 
     private fun finishToHome() {
-        finishFragment()
+        val activity = getParentActivity() as? MainActivity
+        if (activity != null) {
+            activity.popToMainTabsIfPresent()
+        } else {
+            finishFragment()
+        }
+    }
+
+    override fun onBackPressed(): Boolean {
+        finishToHome()
+        return false
     }
 
     private fun onNotYouClicked() {
@@ -619,7 +743,7 @@ class InstallClanFragment : BaseFragment() {
             addView(
                 buildPrimaryButton(context, getString(R.string.deeplink_install_open_channel)) {
                     openCreatedChannel()
-                },
+                }.also { successOpenChannelButton = it },
                 LinearLayout.LayoutParams(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT).apply {
                     topMargin = LayoutHelper.dp(24)
                 }

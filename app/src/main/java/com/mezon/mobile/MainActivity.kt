@@ -671,6 +671,26 @@ class MainActivity : BasePermissionsActivity(),
         }
     }
 
+    fun popToHomeTabs() {
+        showHome()
+    }
+
+    fun popToMainTabsIfPresent() {
+        val stack = actionBarLayout.getFragmentStack()
+        if (stack.none { it is MainTabsActivity }) {
+            showHome()
+            return
+        }
+        while (actionBarLayout.getFragmentStack().size > 1) {
+            val top = actionBarLayout.getLastFragment() ?: break
+            if (top is MainTabsActivity) break
+            val sizeBefore = actionBarLayout.getFragmentStack().size
+            actionBarLayout.closeLastFragment(animated = false, forceNoAnimation = true)
+            if (actionBarLayout.getFragmentStack().size >= sizeBefore) break
+        }
+        rewireTopFragmentCallbacks()
+    }
+
     private fun showHome() {
         val mainTabsActivity = MainTabsActivity().apply {
             onLogout = { switchToLogin() }
