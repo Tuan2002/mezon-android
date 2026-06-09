@@ -8,27 +8,24 @@ import android.os.Bundle
 import android.view.Gravity
 import android.view.View
 import android.widget.FrameLayout
-import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
+import com.mezon.mobile.MainActivity
 import com.mezon.mobile.R
 import com.mezon.mobile.core.AndroidUtilities
 import com.mezon.mobile.core.BaseFragment
 import com.mezon.mobile.core.LayoutHelper
 import com.mezon.mobile.core.NotificationCenter
 import com.mezon.mobile.di.FragmentEntryPoint
-import com.mezon.mobile.home.chat.MezonImageLoader
 import com.mezon.mobile.home.clans.ClansController
 import com.mezon.mobile.network.MezonApi
 import com.mezon.mobile.session.SessionManager
-import com.mezon.mobile.util.avatarImgproxyUrl
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlin.math.max
 
 class InviteClanFragment : BaseFragment() {
 
@@ -54,8 +51,7 @@ class InviteClanFragment : BaseFragment() {
     private var joinOriginalText: CharSequence = ""
     private var clanNameView: TextView? = null
     private var channelLabelView: TextView? = null
-    private var logoView: ImageView? = null
-    private var logoLoad: MezonImageLoader.Cancellable? = null
+    private var logoView: DeeplinkLogoView? = null
     private var pendingJoinClanId = 0L
     private var pendingJoinTimeout: Runnable? = null
     private var clansLoadedObserver: NotificationCenter.NotificationCenterDelegate? = null
@@ -73,16 +69,6 @@ class InviteClanFragment : BaseFragment() {
     }
 
     override fun createView(context: Context): View {
-        actionBar = createActionBar(context).apply {
-            setTitle(getString(R.string.clan_link_invite_title))
-        }
-
-        val root = LinearLayout(context).apply {
-            orientation = LinearLayout.VERTICAL
-            setBackgroundColor(themeColors.chatBackground)
-        }
-        root.addView(actionBar, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT))
-
         val scroll = ScrollView(context)
         val card = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
@@ -90,27 +76,11 @@ class InviteClanFragment : BaseFragment() {
             setPadding(LayoutHelper.dp(24), LayoutHelper.dp(32), LayoutHelper.dp(24), LayoutHelper.dp(32))
         }
 
-        val title = TextView(context).apply {
-            text = getString(R.string.clan_link_invite_title)
-            setTextColor(themeColors.onSurface)
-            textSize = 16f
-            typeface = Typeface.DEFAULT_BOLD
-            gravity = Gravity.CENTER
-        }
-        card.addView(title, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT))
-
-        val logoSize = LayoutHelper.dp(96)
-        val logo = ImageView(context).apply {
-            scaleType = ImageView.ScaleType.CENTER_CROP
-            background = GradientDrawable().apply {
-                shape = GradientDrawable.OVAL
-                setColor(themeColors.surfaceVariant)
-            }
-        }
+        val logo = DeeplinkLogoView(context, themeColors, sizeDp = 96, cornerRadiusDp = 14f)
         logoView = logo
         card.addView(
             logo,
-            LinearLayout.LayoutParams(logoSize, logoSize).apply {
+            LinearLayout.LayoutParams(LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT).apply {
                 topMargin = LayoutHelper.dp(24)
                 gravity = Gravity.CENTER_HORIZONTAL
             }
@@ -165,7 +135,7 @@ class InviteClanFragment : BaseFragment() {
         )
 
         val dismiss = buildSecondaryButton(context, getString(R.string.clan_link_invite_no_thanks))
-        dismiss.setOnClickListener { finishFragment() }
+        dismiss.setOnClickListener { dismissInvite() }
         card.addView(
             dismiss,
             LinearLayout.LayoutParams(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT).apply {
@@ -174,16 +144,30 @@ class InviteClanFragment : BaseFragment() {
         )
 
         scroll.addView(card, FrameLayout.LayoutParams(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT))
-        root.addView(scroll, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, 0, 1f))
 
+        val root = wrapWithActionBar(getString(R.string.clan_link_invite_title), scroll)
+        actionBar?.setBackClickListener { dismissInvite() }
         fragmentView = root
         loadPreview()
         return root
     }
 
+    private fun dismissInvite() {
+        val activity = getParentActivity() as? MainActivity
+        if (activity != null) {
+            activity.popToMainTabsIfPresent()
+        } else {
+            finishFragment()
+        }
+    }
+
+    override fun onBackPressed(): Boolean {
+        dismissInvite()
+        return false
+    }
+
     override fun onFragmentDestroy() {
-        logoLoad?.cancel()
-        logoLoad = null
+        logoView?.cancelLoad()
         clansLoadedObserver?.let {
             notificationCenter.removeObserver(it, NotificationCenter.clansDidLoad)
         }
@@ -201,25 +185,23 @@ class InviteClanFragment : BaseFragment() {
             }
             withContext(Dispatchers.Main) {
                 if (fragmentView == null || isPaused) return@withContext
-                if (preview == null) {
-                    clanNameView?.text = getString(R.string.clan_link_invite_unknown_clan)
-                    return@withContext
+                val clanName = if (preview == null) {
+                    getString(R.string.clan_link_invite_unknown_clan)
+                } else {
+                    preview.clanName.ifBlank { getString(R.string.clan_link_invite_unknown_clan) }
                 }
-                clanNameView?.text = preview.clanName.ifBlank { getString(R.string.clan_link_invite_unknown_clan) }
-                if (preview.channelLabel.isNotBlank()) {
+                clanNameView?.text = clanName
+                if (preview != null && preview.channelLabel.isNotBlank()) {
                     channelLabelView?.visibility = View.VISIBLE
                     channelLabelView?.text = getString(R.string.clan_link_invite_channel_prefix, preview.channelLabel)
                 } else {
                     channelLabelView?.visibility = View.GONE
                 }
-                val logo = logoView ?: return@withContext
-                if (preview.logoUrl.isBlank()) return@withContext
-                val px = max(LayoutHelper.dp(96) * 2, 192)
-                logoLoad = MezonImageLoader.getInstance(logo.context).load(
-                    avatarImgproxyUrl(preview.logoUrl, px),
-                    px,
-                    px,
-                    onSuccess = { bmp -> logo.setImageBitmap(bmp) }
+                logoView?.bind(
+                    fallbackKey = inviteId,
+                    displayName = clanName,
+                    logoUrl = preview?.logoUrl?.takeIf { it.isNotBlank() },
+                    fallbackStyle = DeeplinkLogoView.FallbackStyle.CLAN_LIST,
                 )
             }
         }

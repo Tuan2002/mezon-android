@@ -32,6 +32,7 @@ import com.mezon.mobile.deeplink.DeepLinkParser
 import com.mezon.mobile.deeplink.DeepLinkRouter
 import com.mezon.mobile.deeplink.InviteClanFragment
 import com.mezon.mobile.deeplink.InstallClanFragment
+import com.mezon.mobile.deeplink.InstallKind
 import com.mezon.mobile.MainActivity
 import com.mezon.mobile.di.FragmentEntryPoint
 import com.mezon.mobile.session.SessionExpiredException
@@ -310,7 +311,7 @@ class QrScanFragment : BaseFragment() {
                 val route = DeepLinkParser.parse(action.url)
                 val activity = getParentActivity() as? MainActivity
                 if (route != null && activity != null) {
-                    deepLinkRouter.dispatchRoute(activity, route)
+                    deepLinkRouter.dispatchRoute(activity, route, action.url)
                 } else {
                     handleUnsupportedQr(value)
                 }
@@ -324,7 +325,10 @@ class QrScanFragment : BaseFragment() {
                 presentFragment(InviteClanFragment.newInstance(inviteId))
             }
             is QrAction.BotInstall -> {
-                presentFragment(InstallClanFragment.newInstance(action.appId))
+                presentFragment(InstallClanFragment.newInstance(action.appId, InstallKind.BOT, value))
+            }
+            is QrAction.AppInstall -> {
+                presentFragment(InstallClanFragment.newInstance(action.appId, InstallKind.APP, value))
             }
             else -> {
                 handleUnsupportedQr(value)

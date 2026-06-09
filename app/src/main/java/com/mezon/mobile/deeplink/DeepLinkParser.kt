@@ -13,13 +13,20 @@ sealed class DeepLinkRoute {
     data class Invite(val inviteId: Long) : DeepLinkRoute()
     data class Profile(val username: String, val data: String?) : DeepLinkRoute()
     data class BotInstall(val appId: Long) : DeepLinkRoute()
+    data class AppInstall(val appId: Long) : DeepLinkRoute()
+}
+
+enum class InstallKind {
+    BOT,
+    APP,
 }
 
 object DeepLinkParser {
 
     private val CHANNEL_APP_REGEX = Regex("""channel-app/(\d+)/(\d+)(?:\?[^#]*)?""")
     private val INVITE_REGEX = Regex("""invite/(?:chat/)?(\d+)""")
-    private val BOT_INSTALL_REGEX = Regex("""bot/install/(\d+)""")
+    private val APP_INSTALL_REGEX = Regex("""(?:^|/)app/install/(\d+)""")
+    private val BOT_INSTALL_REGEX = Regex("""(?:^|/)bot/install/(\d+)""")
     private val CHAT_USERNAME_REGEX = Regex("""(?:^|/)chat/([^/?#]+)""")
     private val CODE_REGEX = Regex("""[?&]code=([^&]+)""")
     private val SUBPATH_REGEX = Regex("""[?&]subpath=([^&]+)""")
@@ -67,12 +74,26 @@ object DeepLinkParser {
             return DeepLinkRoute.Profile(username, data)
         }
 
+        if (trimmed.contains("app/install/")) {
+            val match = APP_INSTALL_REGEX.find(trimmed) ?: return null
+            val appId = match.groupValues[1].toLongOrNull() ?: return null
+            return DeepLinkRoute.AppInstall(appId)
+        }
+
         if (trimmed.contains("bot/install/")) {
             val match = BOT_INSTALL_REGEX.find(trimmed) ?: return null
             val appId = match.groupValues[1].toLongOrNull() ?: return null
             return DeepLinkRoute.BotInstall(appId)
         }
 
+        return null
+    }
+
+    fun installKindFromUrl(input: String?): InstallKind? {
+        val trimmed = input?.trim().orEmpty()
+        if (trimmed.isEmpty()) return null
+        if (trimmed.contains("app/install/")) return InstallKind.APP
+        if (trimmed.contains("bot/install/")) return InstallKind.BOT
         return null
     }
 }

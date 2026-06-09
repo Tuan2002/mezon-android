@@ -5,9 +5,80 @@ import org.json.JSONObject
 
 object PresignFinishContent {
     const val FIELD_KEY = "presign_finish"
+    const val FOR_10_MINUTES_SEC = 10 * 60
+    const val PRESIGN_PENDING_TICK_MS = 30_000L
+
+    class PresignFilterContext private constructor(
+        val hasPresignField: Boolean,
+        private val finishedKeys: List<String>?,
+        private val messageTimestampSeconds: Long,
+        val nowSeconds: Long,
+    ) {
+        companion object {
+            fun from(
+                content: String,
+                messageTimestampSeconds: Long,
+                nowSeconds: Long = System.currentTimeMillis() / 1000L,
+            ): PresignFilterContext {
+                if (!content.contains("\"$FIELD_KEY\"")) {
+                    return PresignFilterContext(false, null, messageTimestampSeconds, nowSeconds)
+                }
+                val keys = parseKeys(content)
+                return PresignFilterContext(
+                    hasPresignField = keys != null,
+                    finishedKeys = keys,
+                    messageTimestampSeconds = messageTimestampSeconds,
+                    nowSeconds = nowSeconds,
+                )
+            }
+        }
+
+        fun contentFingerprint(): Int = finishedKeys?.joinToString(",")?.hashCode() ?: 0
+
+        private val expirePending: Boolean
+            get() = hasPresignField && messageTimestampSeconds > 0L &&
+                nowSeconds - messageTimestampSeconds >= FOR_10_MINUTES_SEC
+
+        fun isUnfinished(url: String): Boolean {
+            if (url.isBlank()) return false
+            if (url.startsWith("content://") || url.startsWith("file://")) return false
+            val keys = finishedKeys ?: return false
+            val key = presignKey(url)
+            return key.isNotEmpty() && !keys.contains(key)
+        }
+
+        fun isExpired(url: String): Boolean {
+            if (!expirePending) return false
+            return isUnfinished(url)
+        }
+
+        fun <T> filterDisplayable(attachments: List<T>, urlSelector: (T) -> String): List<T> {
+            if (!expirePending) return attachments
+            return attachments.filter { !isExpired(urlSelector(it)) }
+        }
+
+        fun <T> hasDisplayable(attachments: List<T>, urlSelector: (T) -> String): Boolean {
+            if (attachments.isEmpty()) return false
+            if (!expirePending) return true
+            for (item in attachments) {
+                if (!isExpired(urlSelector(item))) return true
+            }
+            return false
+        }
+
+        fun <T> hasActivePending(attachments: List<T>, urlSelector: (T) -> String): Boolean {
+            if (!hasPresignField) return false
+            for (item in attachments) {
+                val url = urlSelector(item)
+                if (isUnfinished(url) && !isExpired(url)) return true
+            }
+            return false
+        }
+    }
 
     fun parseKeys(content: String): List<String>? {
         if (content.isBlank()) return null
+        if (!content.contains("\"$FIELD_KEY\"")) return null
         return try {
             val json = JSONObject(content)
             if (!json.has(FIELD_KEY)) return null
@@ -54,6 +125,7 @@ object PresignFinishContent {
 
     fun hasPresignFinishField(content: String): Boolean {
         if (content.isBlank()) return false
+        if (!content.contains("\"$FIELD_KEY\"")) return false
         return try {
             JSONObject(content).has(FIELD_KEY)
         } catch (_: Exception) {

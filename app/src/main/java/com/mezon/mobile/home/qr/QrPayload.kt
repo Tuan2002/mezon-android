@@ -11,6 +11,7 @@ sealed class QrAction {
     data class Invite(val code: String) : QrAction()
     data class Profile(val username: String, val data: String?) : QrAction()
     data class BotInstall(val appId: Long) : QrAction()
+    data class AppInstall(val appId: Long) : QrAction()
     data class LuckyMoney(val id: String) : QrAction()
     data class Transfer(val rawJson: String) : QrAction()
     data class Login(val loginId: Long) : QrAction()
@@ -40,6 +41,7 @@ object QrPayloadParser {
                 is DeepLinkRoute.Invite -> QrAction.Invite(route.inviteId.toString())
                 is DeepLinkRoute.Profile -> QrAction.Profile(route.username, route.data)
                 is DeepLinkRoute.BotInstall -> QrAction.BotInstall(route.appId)
+                is DeepLinkRoute.AppInstall -> QrAction.AppInstall(route.appId)
             }
         }
 

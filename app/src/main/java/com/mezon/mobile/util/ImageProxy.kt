@@ -1,11 +1,9 @@
 package com.mezon.mobile.util
 
-import android.util.Log
 import com.mezon.mobile.BuildConfig
 import java.net.URLDecoder
 import java.nio.charset.StandardCharsets
 
-private const val TAG = "ImageProxy"
 private const val IMGPROXY_BASE_URL = BuildConfig.MEZON_IMGPROXY_BASE_URL
 private const val IMGPROXY_KEY = BuildConfig.MEZON_IMGPROXY_KEY
 private const val MAX_BYTES = 2_097_152
@@ -26,9 +24,7 @@ fun createImgproxyUrl(
     val w = widthPx.coerceAtMost(cap)
     val h = heightPx.coerceAtMost(cap)
     val options = "rs:$resizeType:$w:$h:1/mb:$MAX_BYTES"
-    val proxyUrl = "$IMGPROXY_BASE_URL/$IMGPROXY_KEY/$options/plain/$sourceUrl@webp"
-    Log.d(TAG, "create resize=$resizeType ${w}x$h source=$sourceUrl proxy=$proxyUrl")
-    return proxyUrl
+    return "$IMGPROXY_BASE_URL/$IMGPROXY_KEY/$options/plain/$sourceUrl@webp"
 }
 
 fun plainSourceUrlFromImgproxy(processedUrl: String): String? {

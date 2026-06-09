@@ -146,6 +146,39 @@ data class MessageEntity(
             return extraAttachments.any { isMediaAttachment(it.filetype, it.url) }
         }
 
+    data class DisplayAttachmentSnapshot(
+        val filter: PresignFinishContent.PresignFilterContext,
+        val media: List<AttachmentInfo>,
+        val files: List<AttachmentInfo>,
+    ) {
+        val hasMedia: Boolean get() = media.isNotEmpty()
+        val hasFiles: Boolean get() = files.isNotEmpty()
+        val hasActivePresignPending: Boolean
+            get() = filter.hasActivePending(media, { it.url }) ||
+                filter.hasActivePending(files, { it.url })
+    }
+
+    fun displayAttachmentSnapshot(
+        nowSeconds: Long = System.currentTimeMillis() / 1000L,
+    ): DisplayAttachmentSnapshot {
+        val filter = PresignFinishContent.PresignFilterContext.from(content, timestampSeconds, nowSeconds)
+        val mediaSource = allImageAttachments
+        val filesSource = allFileAttachments
+        return DisplayAttachmentSnapshot(
+            filter = filter,
+            media = filter.filterDisplayable(mediaSource) { it.url },
+            files = filter.filterDisplayable(filesSource) { it.url },
+        )
+    }
+
+    fun hasPendingDisplayableMediaUploads(snapshot: DisplayAttachmentSnapshot): Boolean {
+        val media = snapshot.media
+        if (media.isEmpty()) return false
+        val errorUrls = parseUploadErrorUrls()
+        val filter = snapshot.filter
+        return media.indices.any { isMediaUploadPending(media[it], it, errorUrls, filter) }
+    }
+
     val isWelcomeMessage: Boolean
         get() = code == CODE_FIRST_MESSAGE || (
             code == CODE_WELCOME &&
@@ -320,24 +353,26 @@ data class MessageEntity(
 
     fun presignFinishKeys(): List<String>? = PresignFinishContent.parseKeys(content)
 
-    fun isPresignAttachmentPending(url: String): Boolean {
+    fun isPresignAttachmentPending(
+        url: String,
+        filter: PresignFinishContent.PresignFilterContext,
+    ): Boolean {
         if (isMe) return false
-        val keys = presignFinishKeys() ?: return false
         if (isLocalAttachmentUrl(url)) return false
-        val key = PresignFinishContent.presignKey(url)
-        return key.isNotEmpty() && !keys.contains(key)
+        return filter.isUnfinished(url)
     }
 
-    fun isAttachmentUploadPending(url: String): Boolean {
+    fun isAttachmentUploadPending(
+        url: String,
+        filter: PresignFinishContent.PresignFilterContext,
+    ): Boolean {
         if (attachmentUploadFailed(url)) return false
         if (isLocalAttachmentUrl(url)) {
             if (url == attachmentUrl && isError) return false
             return true
         }
         if (!isMe) return false
-        val keys = presignFinishKeys() ?: return false
-        val key = PresignFinishContent.presignKey(url)
-        if (key.isEmpty() || keys.contains(key)) return false
+        if (!filter.isUnfinished(url)) return false
         return !AttachmentUploadProgressStore.isUploadComplete(url)
     }
 
@@ -361,42 +396,33 @@ data class MessageEntity(
 
     fun attachmentUploadFailed(url: String): Boolean = url in parseUploadErrorUrls()
 
-    private fun isMediaUploadPending(att: AttachmentInfo, index: Int, errorUrls: Set<String>): Boolean {
+    private fun isMediaUploadPending(
+        att: AttachmentInfo,
+        index: Int,
+        errorUrls: Set<String>,
+        filter: PresignFinishContent.PresignFilterContext,
+    ): Boolean {
         val url = att.url
-        if (isPresignAttachmentPending(url)) return false
+        if (isPresignAttachmentPending(url, filter)) return false
         if (!isLocalAttachmentUrl(url)) {
-            return isAttachmentUploadPending(url)
+            return isAttachmentUploadPending(url, filter)
         }
         if (url in errorUrls) return false
         if (index == 0 && attachmentUrl == url && isError) return false
         return true
     }
 
-    fun mediaPresignPendingFlags(): List<Boolean> {
-        val media = allImageAttachments
-        if (media.isEmpty()) return emptyList()
-        return media.map { isPresignAttachmentPending(it.url) }
-    }
-
-    fun isMediaAttachmentUploadPending(mediaIndex: Int): Boolean {
-        val media = allImageAttachments
+    fun isMediaAttachmentUploadPending(
+        mediaIndex: Int,
+        snapshot: DisplayAttachmentSnapshot,
+    ): Boolean {
+        val media = snapshot.media
         if (mediaIndex !in media.indices) return false
-        return isMediaUploadPending(media[mediaIndex], mediaIndex, parseUploadErrorUrls())
+        return isMediaUploadPending(media[mediaIndex], mediaIndex, parseUploadErrorUrls(), snapshot.filter)
     }
 
-    fun mediaUploadPendingFlags(): List<Boolean> {
-        val media = allImageAttachments
-        if (media.isEmpty()) return emptyList()
-        val errorUrls = parseUploadErrorUrls()
-        return media.indices.map { isMediaUploadPending(media[it], it, errorUrls) }
-    }
-
-    fun hasPendingMediaAttachmentUploads(): Boolean {
-        val media = allImageAttachments
-        if (media.isEmpty()) return false
-        val errorUrls = parseUploadErrorUrls()
-        return media.indices.any { isMediaUploadPending(media[it], it, errorUrls) }
-    }
+    fun hasPendingMediaAttachmentUploads(snapshot: DisplayAttachmentSnapshot): Boolean =
+        hasPendingDisplayableMediaUploads(snapshot)
 
     val hasPartialAttachmentUploadFailure: Boolean
         get() = isError && sendState == SEND_STATE_SENT

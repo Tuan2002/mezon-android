@@ -230,6 +230,15 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
     private var drawSending = false
     private var hasPendingMediaUploads = false
     private var hasPendingFileUploads = false
+    private var displaySnapshot: MessageEntity.DisplayAttachmentSnapshot? = null
+    private var presignExpireTickScheduled = false
+    private val presignExpireTickRunnable = Runnable {
+        presignExpireTickScheduled = false
+        val msg = messageEntity ?: return@Runnable
+        if (!msg.displayAttachmentSnapshot().hasActivePresignPending) return@Runnable
+        update(NotificationCenter.UPDATE_MASK_ATTACHMENTS, msg)
+        schedulePresignExpireTick(msg)
+    }
     private val fileUploadPending = ArrayList<Boolean>()
     private val filePresignPending = ArrayList<Boolean>()
     private val fileUploadFailed = ArrayList<Boolean>()
@@ -381,6 +390,7 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
 
     override fun onDetachedFromWindow() {
         super.onDetachedFromWindow()
+        cancelPresignExpireTick()
         attachedToWindow = false
         photoImage.onDetachedFromWindow()
         extraPhotoImages.forEach { it.onDetachedFromWindow() }
@@ -394,6 +404,36 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
         senderRoleIconCancellable = null
         reactionEmojiCancellables.forEach { it?.cancel() }
         cancelEmojiLoads()
+    }
+
+    private fun applyDisplaySnapshot(
+        msg: MessageEntity,
+        snapshot: MessageEntity.DisplayAttachmentSnapshot,
+    ) {
+        displaySnapshot = snapshot
+        drawPhotoImage = snapshot.hasMedia
+        val isAudioAtt = msg.isAudioAttachment && !snapshot.hasMedia
+        drawAudioAttachment = isAudioAtt
+        drawFileAttachment = snapshot.hasFiles && !isAudioAtt
+        hasPendingMediaUploads = msg.hasPendingDisplayableMediaUploads(snapshot)
+        hasPendingFileUploads = snapshot.files.any {
+            msg.isAttachmentUploadPending(it.url, snapshot.filter)
+        }
+    }
+
+    private fun schedulePresignExpireTick(msg: MessageEntity) {
+        if (!msg.displayAttachmentSnapshot().hasActivePresignPending) {
+            cancelPresignExpireTick()
+            return
+        }
+        if (presignExpireTickScheduled) return
+        presignExpireTickScheduled = true
+        postDelayed(presignExpireTickRunnable, PresignFinishContent.PRESIGN_PENDING_TICK_MS)
+    }
+
+    private fun cancelPresignExpireTick() {
+        removeCallbacks(presignExpireTickRunnable)
+        presignExpireTickScheduled = false
     }
 
     private fun cancelEmojiLoads() {
@@ -506,6 +546,7 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
     fun resetForRebind() {
         lastBoundId = 0L
         lastBoundContentHash = 0
+        displaySnapshot = null
     }
 
     fun update(mask: Int, newMsg: MessageEntity? = null): Boolean {
@@ -514,7 +555,8 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
         var needInvalidate = false
 
         if (mask == 0) {
-            val presignHash = PresignFinishContent.parseKeys(msg.content)?.joinToString(",").orEmpty().hashCode()
+            val snapshot = msg.displayAttachmentSnapshot()
+            val presignHash = snapshot.filter.contentFingerprint()
             val contentHash = msg.content.hashCode() xor msg.timestampSeconds.hashCode() xor
                 msg.code xor (if (msg.isForwarded) 1 else 0) xor
                 msg.updateTimeSeconds.hashCode() xor (if (msg.hideEditted) 2 else 0) xor
@@ -532,10 +574,7 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
             parsedContent = parseContentText(msg.content)
             hasExplicitTextBody = messageHasExplicitTextBody(msg.content)
             timeText = formatRelativeTime(msg.timestampSeconds)
-            drawPhotoImage = msg.hasAnyMedia
-            val isAudioAtt = msg.isAudioAttachment && !msg.hasAnyMedia
-            drawAudioAttachment = isAudioAtt
-            drawFileAttachment = msg.hasFileAttachments && !isAudioAtt
+            applyDisplaySnapshot(msg, snapshot)
             audioIsPlaying = false
             audioIsLoading = false
             audioPositionMs = 0L
@@ -547,8 +586,6 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
             drawEphemeral = msg.isEphemeral
             drawError = msg.isError && !msg.hasPartialAttachmentUploadFailure
             drawSending = msg.isSending
-            hasPendingMediaUploads = msg.hasPendingMediaAttachmentUploads()
-            hasPendingFileUploads = msg.allFileAttachments.any { msg.isAttachmentUploadPending(it.url) }
             hasReply = if (isInPinMode) false else parseReply(msg)
             if (isInPinMode) {
                 drawForwardHeader = false
@@ -579,6 +616,7 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
             }
             requestLayout()
             invalidate()
+            schedulePresignExpireTick(msg)
             return true
         }
 
@@ -591,10 +629,11 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
                 rebuildLayout = true
             }
             if (drawPhotoImage && PresignFinishContent.hasPresignFinishField(msg.content)) {
-                hasPendingMediaUploads = msg.hasPendingMediaAttachmentUploads()
-                hasPendingFileUploads = msg.allFileAttachments.any { msg.isAttachmentUploadPending(it.url) }
+                val snapshot = msg.displayAttachmentSnapshot()
+                applyDisplaySnapshot(msg, snapshot)
                 loadPhotoImage(msg)
                 needInvalidate = true
+                schedulePresignExpireTick(msg)
             }
         }
 
@@ -602,8 +641,8 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
             val prevError = drawError
             drawSending = msg.isSending
             drawError = msg.isError && !msg.hasPartialAttachmentUploadFailure
-            hasPendingMediaUploads = msg.hasPendingMediaAttachmentUploads()
-            hasPendingFileUploads = msg.allFileAttachments.any { msg.isAttachmentUploadPending(it.url) }
+            val snapshot = msg.displayAttachmentSnapshot()
+            applyDisplaySnapshot(msg, snapshot)
             if (BuildConfig.DEBUG) {
                 Log.d(
                     TAG,
@@ -651,7 +690,8 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
         if ((mask and NotificationCenter.UPDATE_MASK_UPLOAD_PROGRESS) != 0) {
             val m = newMsg ?: messageEntity
             if (m != null && drawPhotoImage) {
-                hasPendingMediaUploads = m.hasPendingMediaAttachmentUploads()
+                val snapshot = displaySnapshot ?: m.displayAttachmentSnapshot()
+                applyDisplaySnapshot(m, snapshot)
                 loadPhotoImage(m)
             }
             needInvalidate = true
@@ -660,18 +700,15 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
         if ((mask and NotificationCenter.UPDATE_MASK_ATTACHMENTS) != 0) {
             val m = newMsg ?: messageEntity ?: return false
             if (newMsg != null) messageEntity = newMsg
-            hasPendingMediaUploads = m.hasPendingMediaAttachmentUploads()
-            hasPendingFileUploads = m.allFileAttachments.any { m.isAttachmentUploadPending(it.url) }
-            drawPhotoImage = m.hasAnyMedia
-            val isAudioAtt = m.isAudioAttachment && !m.hasAnyMedia
-            drawAudioAttachment = isAudioAtt
-            drawFileAttachment = m.hasFileAttachments && !isAudioAtt
+            val snapshot = m.displayAttachmentSnapshot()
+            applyDisplaySnapshot(m, snapshot)
             if (drawPhotoImage) computePhotoSize(m) else clearPhotoReceivers()
             buildLayouts(m)
             if (drawPhotoImage) loadPhotoImage(m) else clearPhotoReceivers()
             measuredCellHeight = computeHeight(m)
             requestLayout()
             invalidate()
+            schedulePresignExpireTick(m)
             return true
         }
 
@@ -693,17 +730,12 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
         if (rebuildLayout) {
             val m = messageEntity ?: return false
             timeText = formatRelativeTime(m.timestampSeconds)
-            drawPhotoImage = m.hasAnyMedia
-            val isAudioAtt = m.isAudioAttachment && !m.hasAnyMedia
-            drawAudioAttachment = isAudioAtt
-            drawFileAttachment = m.hasFileAttachments && !isAudioAtt
+            applyDisplaySnapshot(m, m.displayAttachmentSnapshot())
             drawForwardHeader = m.isForwarded
             drawEdited = m.isEdited && !m.hideEditted
             drawEphemeral = m.isEphemeral
             drawError = m.isError && !m.hasPartialAttachmentUploadFailure
             drawSending = m.isSending
-            hasPendingMediaUploads = m.hasPendingMediaAttachmentUploads()
-            hasPendingFileUploads = m.allFileAttachments.any { m.isAttachmentUploadPending(it.url) }
             updateColors(m)
             buildLayouts(m)
             if (!drawPhotoImage) clearPhotoReceivers()
@@ -742,8 +774,11 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
         return maxBubbleWidth(width).coerceIn(LayoutHelper.dp(120), cap)
     }
 
-    private fun buildMediaGroupLayout(msg: MessageEntity, maxW: Int): MediaGroupLayout.Result {
-        val media = msg.allImageAttachments
+    private fun buildMediaGroupLayout(
+        msg: MessageEntity,
+        media: List<AttachmentInfo>,
+        maxW: Int,
+    ): MediaGroupLayout.Result {
         val aspects = media.map { aspectRatioForAttachment(it) }
         val minSide = min(resources.displayMetrics.widthPixels, resources.displayMetrics.heightPixels)
         return MediaGroupLayout.calculate(
@@ -770,9 +805,10 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
         // Multi-image grids (2/3/4) use a fixed grid geometry instead of the first
         // image's aspect ratio: cells are square-ish and center-cropped, so deriving
         // height from a single image squeezes the thumbnails (issue mezonai/mezon#13176).
-        val gridCount = msg.allImageAttachments.size
+        val media = displaySnapshot?.media.orEmpty()
+        val gridCount = media.size
         if (gridCount > 1) {
-            val layout = buildMediaGroupLayout(msg, maxW)
+            val layout = buildMediaGroupLayout(msg, media, maxW)
             mediaGroupSlots = layout.slots
             photoWidth = layout.totalWidthPx
             photoHeight = layout.totalHeightPx
@@ -780,7 +816,7 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
         }
         mediaGroupSlots = emptyList()
 
-        val firstMedia = msg.allImageAttachments.firstOrNull()
+        val firstMedia = media.firstOrNull()
         var imgW = firstMedia?.width ?: msg.attachmentWidth
         var imgH = firstMedia?.height ?: msg.attachmentHeight
         if (imgW <= 0 || imgH <= 0) {
@@ -863,7 +899,9 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
     }
 
     private fun loadPhotoImage(msg: MessageEntity) {
-        val allMedia = msg.allImageAttachments
+        val snapshot = displaySnapshot ?: msg.displayAttachmentSnapshot().also { displaySnapshot = it }
+        val allMedia = snapshot.media
+        val filter = snapshot.filter
         mediaGridCount = allMedia.size
         ensureSlotCapacity(mediaGridCount)
         for (i in 0 until slotIsVideo.size) slotIsVideo[i] = false
@@ -874,18 +912,10 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
 
         if (mediaGridCount == 0) return
 
-        val presignPendingFlags = msg.mediaPresignPendingFlags()
-        val uploadPendingFlags = msg.mediaUploadPendingFlags()
-        val uploadFailedFlags = if (msg.hasPartialAttachmentUploadFailure) {
-            msg.mediaUploadFailedFlags()
-        } else {
-            emptyList()
-        }
-
         if (mediaGridCount > 1 && mediaGroupSlots.size != mediaGridCount) {
             val parentW = currentWidth()
             val maxW = albumMaxWidthPx(parentW)
-            val layout = buildMediaGroupLayout(msg, maxW)
+            val layout = buildMediaGroupLayout(msg, allMedia, maxW)
             mediaGroupSlots = layout.slots
             photoWidth = layout.totalWidthPx
             photoHeight = layout.totalHeightPx
@@ -906,9 +936,11 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
             val isLocalUri = att.url.startsWith("content://") || att.url.startsWith("file://")
             val isVideo = att.filetype.startsWith("video/", true)
             slotIsVideo[i] = isVideo
-            slotPresignPending[i] = presignPendingFlags.getOrElse(i) { false }
-            slotUploadPending[i] = !slotPresignPending[i] && uploadPendingFlags.getOrElse(i) { false }
-            slotUploadFailed[i] = uploadFailedFlags.getOrElse(i) { false }
+            slotPresignPending[i] = msg.isPresignAttachmentPending(att.url, filter)
+            slotUploadPending[i] = !slotPresignPending[i] && msg.isAttachmentUploadPending(att.url, filter)
+            slotUploadFailed[i] = msg.attachmentUploadFailed(att.url) ||
+                (att.url == msg.attachmentUrl && msg.isLocalAttachmentUrl(att.url) &&
+                    msg.isError && msg.hasPartialAttachmentUploadFailure)
             mediaSlotUrls[i] = att.url
             if (slotPresignPending[i] || (slotUploadPending[i] && !isLocalUri)) {
                 receiver.recycle()
@@ -1784,23 +1816,24 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
         val cardInnerW = ((textWidth * 0.8f).toInt()).coerceAtLeast(FILE_ICON_SIZE + FILE_ICON_GAP + 1)
         val fileTextW = (cardInnerW - FILE_ROW_H_PAD * 2 - FILE_ICON_SIZE - FILE_ICON_GAP).coerceAtLeast(1)
 
-        val files = msg.allFileAttachments
+        val snapshot = displaySnapshot ?: msg.displayAttachmentSnapshot().also { displaySnapshot = it }
+        val files = snapshot.files
+        val filter = snapshot.filter
         fileUploadPending.clear()
         filePresignPending.clear()
         fileUploadFailed.clear()
         fileAttachmentUrls.clear()
-        val fileFailedFlags = if (msg.hasPartialAttachmentUploadFailure) {
-            msg.fileUploadFailedFlags()
-        } else {
-            emptyList()
-        }
-        for ((index, att) in files.withIndex()) {
+        for (att in files) {
             fileAttachmentUrls.add(att.url)
-            filePresignPending.add(msg.isPresignAttachmentPending(att.url))
+            filePresignPending.add(msg.isPresignAttachmentPending(att.url, filter))
             fileUploadPending.add(
-                !filePresignPending.last() && msg.isAttachmentUploadPending(att.url)
+                !filePresignPending.last() && msg.isAttachmentUploadPending(att.url, filter)
             )
-            fileUploadFailed.add(fileFailedFlags.getOrElse(index) { false })
+            fileUploadFailed.add(
+                msg.attachmentUploadFailed(att.url) ||
+                    (att.url == msg.attachmentUrl && msg.isLocalAttachmentUrl(att.url) &&
+                        msg.isError && msg.hasPartialAttachmentUploadFailure)
+            )
         }
         val first = files.firstOrNull()
         val name = first?.filename?.ifEmpty { "File" } ?: msg.attachmentFilename.ifEmpty { "File" }

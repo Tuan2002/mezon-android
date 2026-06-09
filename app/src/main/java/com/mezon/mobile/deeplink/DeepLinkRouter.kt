@@ -30,27 +30,35 @@ class DeepLinkRouter @Inject constructor(
     @Volatile
     private var pendingRoute: DeepLinkRoute? = null
 
+    @Volatile
+    private var pendingSourceUrl: String? = null
+
     fun hasPending(): Boolean = pendingRoute != null
 
     fun clearPending() {
         pendingRoute = null
+        pendingSourceUrl = null
     }
 
     fun ingest(uri: Uri): DeepLinkRoute? {
         val route = DeepLinkParser.parse(uri) ?: return null
         pendingRoute = route
+        pendingSourceUrl = uri.toString()
         return route
     }
 
     fun dispatchPending(activity: MainActivity) {
         val route = pendingRoute ?: return
+        val sourceUrl = pendingSourceUrl
         pendingRoute = null
-        dispatchRoute(activity, route)
+        pendingSourceUrl = null
+        dispatchRoute(activity, route, sourceUrl)
     }
 
-    fun dispatchRoute(activity: MainActivity, route: DeepLinkRoute) {
+    fun dispatchRoute(activity: MainActivity, route: DeepLinkRoute, sourceUrl: String? = null) {
         if (!StartupCache.hasSession || StartupCache.needsUsernameSetup) {
             pendingRoute = route
+            pendingSourceUrl = sourceUrl
             return
         }
         AndroidUtilities.runOnUIThread {
@@ -58,7 +66,14 @@ class DeepLinkRouter @Inject constructor(
                 is DeepLinkRoute.ChannelApp -> dispatchChannelApp(activity, route)
                 is DeepLinkRoute.Invite -> presentFragment(activity, InviteClanFragment.newInstance(route.inviteId))
                 is DeepLinkRoute.Profile -> dispatchProfile(activity, route)
-                is DeepLinkRoute.BotInstall -> presentFragment(activity, InstallClanFragment.newInstance(route.appId))
+                is DeepLinkRoute.BotInstall -> presentFragment(
+                    activity,
+                    InstallClanFragment.newInstance(route.appId, InstallKind.BOT, sourceUrl)
+                )
+                is DeepLinkRoute.AppInstall -> presentFragment(
+                    activity,
+                    InstallClanFragment.newInstance(route.appId, InstallKind.APP, sourceUrl)
+                )
             }
         }
     }

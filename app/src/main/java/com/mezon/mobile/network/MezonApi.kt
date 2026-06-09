@@ -407,6 +407,13 @@ class MezonApi @Inject constructor(
             val v = response.headers[k]
             if (!v.isNullOrBlank()) meta.append(k).append('=').append(v).append("; ")
         }
+        if (errorBody.isEmpty() && meta.isEmpty()) {
+            response.headers.forEach { name, values ->
+                if (values.isNotEmpty()) {
+                    meta.append(name).append('=').append(values.joinToString(",")).append("; ")
+                }
+            }
+        }
         val errPreview = if (errorBody.isEmpty()) "(empty)" else errorBody.take(1500)
         Log.w(
             "MezonApi",

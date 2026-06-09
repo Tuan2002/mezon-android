@@ -18,7 +18,6 @@ import java.util.LinkedHashSet
 class ImageReceiver(private val parentView: View) {
 
     companion object {
-        private const val IMAGE_LOAD_TAG = "ImageReceiver"
     }
 
     private var imageBitmap: Bitmap? = null
@@ -268,10 +267,6 @@ class ImageReceiver(private val parentView: View) {
 
     private fun onLoadError(failedUrl: String, rw: Int, rh: Int, loader: MezonImageLoader) {
         val chain = buildMainImageFallbackUrls(failedUrl)
-        android.util.Log.w(
-            IMAGE_LOAD_TAG,
-            "load failed url=$failedUrl fallbacks=${chain.joinToString()}",
-        )
         if (chain.isEmpty()) {
             loadExhausted = true
             mainCancellable = null
