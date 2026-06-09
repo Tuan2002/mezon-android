@@ -462,10 +462,12 @@ class MezonApi @Inject constructor(
             val logo = obj.optString("clan_logo", "")
                 .ifEmpty { obj.optString("clanLogo", "") }
                 .trim()
+            val memberCount = obj.optInt("member_count", obj.optInt("memberCount", 0))
             val preview = LinkInvitePreview(
                 clanName = clanName,
                 channelLabel = channelLabel,
-                logoUrl = logo
+                logoUrl = logo,
+                memberCount = memberCount,
             )
             synchronized(linkInvitePreviewCache) {
                 linkInvitePreviewCache.put(inviteId, preview)
