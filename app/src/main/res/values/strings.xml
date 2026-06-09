@@ -556,8 +556,11 @@
     <string name="clan_menu_audit_log_option">Audit Log</string>
     <string name="clan_menu_leave_clan">Leave Clan</string>
     <string name="clan_menu_delete_clan">Delete Clan</string>
-    <string name="clan_leave_confirm_message">Are you sure you want to leave \"%1$s\"?</string>
-    <string name="clan_leave_failed">Could not leave clan.</string>
+    <string name="clan_leave_confirm_title">Leave clan</string>
+    <string name="clan_leave_confirm_message">Please confirm if you would like to leave %1$s? You won\'t be able to re-join this clan unless you are re-invited.</string>
+    <string name="clan_delete_confirm_title">Delete Clan</string>
+    <string name="clan_delete_confirm_message">Please confirm if you would like to delete %1$s? This action cannot be undone.</string>
+    <string name="clan_leave_delete_failed">An error occurred while trying to delete/leave the clan</string>
     <string name="clan_menu_show_empty_categories">Show Empty Categories</string>
     <string name="clan_menu_header_content_description">Open clan menu</string>
     <string name="menu_clan_overview_settings">Overview Settings</string>

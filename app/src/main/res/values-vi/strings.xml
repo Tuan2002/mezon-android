@@ -470,8 +470,11 @@
     <string name="clan_menu_audit_log_option">Nhật ký kiểm tra</string>
     <string name="clan_menu_leave_clan">Rời clan</string>
     <string name="clan_menu_delete_clan">Xóa clan</string>
-    <string name="clan_leave_confirm_message">Bạn có chắc muốn rời \"%1$s\"?</string>
-    <string name="clan_leave_failed">Không thể rời clan.</string>
+    <string name="clan_leave_confirm_title">Rời clan</string>
+    <string name="clan_leave_confirm_message">Bạn có chắc chắn muốn rời khỏi %1$s không? Bạn sẽ không thể tham gia lại clan này trừ khi bạn được mời lại.</string>
+    <string name="clan_delete_confirm_title">Xóa clan</string>
+    <string name="clan_delete_confirm_message">Bạn có chắc chắn muốn xóa %1$s không? Hành động này không thể hoàn tác.</string>
+    <string name="clan_leave_delete_failed">Đã xảy ra lỗi khi cố gắng xóa/rời khỏi clan</string>
     <string name="clan_menu_show_empty_categories">Hiển thị danh mục trống</string>
     <string name="clan_menu_header_content_description">Mở menu clan</string>
     <string name="menu_clan_overview_settings">Cài đặt tổng quan</string>
