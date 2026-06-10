@@ -204,10 +204,6 @@ class InvitePeopleBottomSheet(
         })
 
         listContainer = FrameLayout(context).apply {
-            background = GradientDrawable().apply {
-                cornerRadius = LayoutHelper.dpf(10f)
-                setColor(theme.surfaceVariant)
-            }
             clipToOutline = true
         }
 
@@ -588,6 +584,7 @@ class InvitePeopleBottomSheet(
             when {
                 sent -> {
                     holder.actionLabel.text = context.getString(R.string.invite_btn_invited)
+                    holder.actionLabel.setTextColor(theme.textDisabled)
                     holder.actionLabel.visibility = View.VISIBLE
                     holder.actionSpinner.visibility = View.GONE
                     holder.actionBtn.isEnabled = false
@@ -599,6 +596,7 @@ class InvitePeopleBottomSheet(
                 }
                 else -> {
                     holder.actionLabel.text = context.getString(R.string.invite_btn_invite)
+                    holder.actionLabel.setTextColor(theme.colorText)
                     holder.actionLabel.visibility = View.VISIBLE
                     holder.actionSpinner.visibility = View.GONE
                     holder.actionBtn.isEnabled = true
