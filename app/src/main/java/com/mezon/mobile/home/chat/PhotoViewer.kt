@@ -17,10 +17,11 @@ import android.os.Build
 import android.os.Environment
 import android.util.TypedValue
 import android.view.Gravity
+import android.view.GestureDetector
 import android.view.MotionEvent
 import android.view.View
+import android.view.ViewConfiguration
 import android.view.ViewGroup
-import android.view.ViewParent
 import android.view.ViewOutlineProvider
 import android.view.Window
 import android.view.WindowManager
@@ -42,11 +43,16 @@ import dagger.hilt.android.EntryPointAccessors
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.Locale
+import kotlin.math.abs
 
 private const val LOADING_SHOW_DELAY_MS = 300L
 private const val MIN_LOADING_VISIBLE_MS = 300L
 private const val LOADING_FADE_MS = 150L
-private const val VIEWPAGER_SWIPE_SCALE_EPSILON = 1.02f
+private const val SWIPE_DISABLE_SCALE = 1.05f
+private const val SWIPE_ENABLE_SCALE = 1.01f
+private const val DOUBLE_TAP_SCALE_THRESHOLD = 0.05f
+private const val FLING_DISMISS_SCALE_THRESHOLD = 0.06f
+private const val FLING_DISMISS_MIN_VELOCITY = 800f
 
 class PhotoViewer(context: Context) : Dialog(context, android.R.style.Theme_Black_NoTitleBar_Fullscreen) {
 
@@ -66,27 +72,16 @@ class PhotoViewer(context: Context) : Dialog(context, android.R.style.Theme_Blac
     var onReachedOldestEdge: (() -> Unit)? = null
     var onCurrentUrlChanged: ((String) -> Unit)? = null
 
+    private var activeTouchCount = 0
+    private var viewPagerSwipeAllowed = true
+
     init {
         requestWindowFeature(Window.FEATURE_NO_TITLE)
         window?.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
         window?.addFlags(WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS)
         window?.setBackgroundDrawable(backgroundDrawable)
 
-        val root = object : FrameLayout(context) {
-            override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
-                when (ev.actionMasked) {
-                    MotionEvent.ACTION_POINTER_DOWN -> {
-                        viewPager.isUserInputEnabled = false
-                        setAncestorsDisallowIntercept(viewPager, true)
-                    }
-                    MotionEvent.ACTION_UP -> {
-                        if (ev.pointerCount <= 1) syncViewPagerSwipeWithCurrentPhoto()
-                    }
-                    MotionEvent.ACTION_CANCEL -> syncViewPagerSwipeWithCurrentPhoto()
-                }
-                return super.dispatchTouchEvent(ev)
-            }
-        }
+        val root = FrameLayout(context)
 
         viewPager = ViewPager2(context).apply {
             offscreenPageLimit = 1
@@ -192,13 +187,46 @@ class PhotoViewer(context: Context) : Dialog(context, android.R.style.Theme_Blac
         })
     }
 
-    private fun syncViewPagerSwipeWithCurrentPhoto() {
-        viewPager.isUserInputEnabled = urls.size > 1 &&
-            (photoViewAt(currentIndex)?.scale ?: 1f) <= VIEWPAGER_SWIPE_SCALE_EPSILON
+    private fun isZoomedScale(scale: Float) = scale >= SWIPE_ENABLE_SCALE
+
+    private fun refreshPhotoSwipeState(photoView: PhotoView) {
+        val scale = photoView.scale
+        photoView.setAllowParentInterceptOnEdge(!isZoomedScale(scale))
+        if (activeTouchCount > 0) {
+            if (activeTouchCount > 1 || scale >= SWIPE_DISABLE_SCALE) {
+                setViewPagerSwipeAllowed(false)
+            }
+            return
+        }
+        setViewPagerSwipeAllowed(urls.size > 1 && scale < SWIPE_ENABLE_SCALE)
     }
 
-    private fun updateViewPagerSwipeForScale(scale: Float) {
-        viewPager.isUserInputEnabled = urls.size > 1 && scale <= VIEWPAGER_SWIPE_SCALE_EPSILON
+    private fun syncViewPagerSwipeWithCurrentPhoto() {
+        val photoView = photoViewAt(currentIndex)
+        if (photoView != null) {
+            refreshPhotoSwipeState(photoView)
+        } else {
+            setViewPagerSwipeAllowed(urls.size > 1)
+        }
+    }
+
+    private fun setViewPagerSwipeAllowed(allowed: Boolean) {
+        if (viewPagerSwipeAllowed == allowed) return
+        viewPagerSwipeAllowed = allowed
+        viewPager.isUserInputEnabled = urls.size > 1 && allowed
+    }
+
+    private fun onPhotoTouchEvent(ev: MotionEvent, photoView: PhotoView) {
+        activeTouchCount = when (ev.actionMasked) {
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> 0
+            MotionEvent.ACTION_POINTER_UP -> (ev.pointerCount - 1).coerceAtLeast(0)
+            else -> ev.pointerCount
+        }
+        if (activeTouchCount == 0) {
+            photoView.post { refreshPhotoSwipeState(photoView) }
+        } else {
+            refreshPhotoSwipeState(photoView)
+        }
     }
 
     private fun photoViewAt(position: Int): PhotoView? {
@@ -207,19 +235,76 @@ class PhotoViewer(context: Context) : Dialog(context, android.R.style.Theme_Blac
         return holder?.photoView
     }
 
-    private fun setAncestorsDisallowIntercept(view: View, disallow: Boolean) {
-        var parent: ViewParent? = view.parent
-        while (parent != null) {
-            parent.requestDisallowInterceptTouchEvent(disallow)
-            parent = parent.parent
+    private fun wirePhotoViewGestures(photoView: PhotoView) {
+        installDoubleTapToggle(photoView)
+        photoView.setOnScaleChangeListener { _, _, _ ->
+            refreshPhotoSwipeState(photoView)
         }
     }
 
-    private fun wirePhotoViewGestures(photoView: PhotoView) {
-        photoView.setOnScaleChangeListener { _, _, _ ->
-            val scale = photoView.scale
-            updateViewPagerSwipeForScale(scale)
-            setAncestorsDisallowIntercept(viewPager, scale > VIEWPAGER_SWIPE_SCALE_EPSILON)
+    private fun installDoubleTapToggle(photoView: PhotoView) {
+        photoView.setOnDoubleTapListener(object : GestureDetector.OnDoubleTapListener {
+            override fun onDoubleTap(e: MotionEvent): Boolean {
+                val min = photoView.minimumScale
+                val target = if (photoView.scale > min + DOUBLE_TAP_SCALE_THRESHOLD) {
+                    min
+                } else {
+                    photoView.mediumScale
+                }
+                photoView.setScale(target, e.x, e.y, true)
+                return true
+            }
+
+            override fun onDoubleTapEvent(e: MotionEvent): Boolean = false
+
+            override fun onSingleTapConfirmed(e: MotionEvent): Boolean = false
+        })
+    }
+
+    private inner class PhotoZoomHost(context: Context) : FrameLayout(context) {
+        var photoView: PhotoView? = null
+        private var initialX = 0f
+        private var initialY = 0f
+        private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop
+
+        private fun isZoomed() = isZoomedScale(photoView?.scale ?: 1f)
+
+        override fun requestDisallowInterceptTouchEvent(disallowIntercept: Boolean) {
+            if (disallowIntercept && !isZoomed()) return
+            super.requestDisallowInterceptTouchEvent(disallowIntercept)
+        }
+
+        override fun onInterceptTouchEvent(ev: MotionEvent): Boolean {
+            when (ev.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    initialX = ev.x
+                    initialY = ev.y
+                    if (isZoomed() || ev.pointerCount > 1) {
+                        parent?.requestDisallowInterceptTouchEvent(true)
+                    }
+                }
+                MotionEvent.ACTION_POINTER_DOWN ->
+                    parent?.requestDisallowInterceptTouchEvent(true)
+                MotionEvent.ACTION_MOVE -> {
+                    if (isZoomed() || ev.pointerCount > 1) {
+                        parent?.requestDisallowInterceptTouchEvent(true)
+                        return false
+                    }
+                    val dx = ev.x - initialX
+                    val dy = ev.y - initialY
+                    if (abs(dx) > touchSlop || abs(dy) > touchSlop) {
+                        parent?.requestDisallowInterceptTouchEvent(abs(dy) > abs(dx))
+                    }
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL, MotionEvent.ACTION_POINTER_UP ->
+                    parent?.requestDisallowInterceptTouchEvent(false)
+            }
+            return false
+        }
+
+        override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
+            photoView?.let { onPhotoTouchEvent(ev, it) }
+            return super.dispatchTouchEvent(ev)
         }
     }
 
@@ -253,7 +338,8 @@ class PhotoViewer(context: Context) : Dialog(context, android.R.style.Theme_Blac
         oldestEdgeBaselinePosition = -1
         viewPager.adapter = PhotoPagerAdapter(thumbBitmap.takeIf { singleShowsThumb })
         viewPager.setCurrentItem(currentIndex, false)
-        viewPager.isUserInputEnabled = urls.size > 1
+        activeTouchCount = 0
+        setViewPagerSwipeAllowed(urls.size > 1)
 
         updateCounter()
         backgroundDrawable.alpha = 0
@@ -327,7 +413,7 @@ class PhotoViewer(context: Context) : Dialog(context, android.R.style.Theme_Blac
         }
 
         inner class ViewHolder(
-            val container: FrameLayout,
+            val container: PhotoZoomHost,
             val photoView: PhotoView,
             val progressBar: ProgressBar
         ) : RecyclerView.ViewHolder(container) {
@@ -339,32 +425,27 @@ class PhotoViewer(context: Context) : Dialog(context, android.R.style.Theme_Blac
             var hideProgressRunnable: Runnable? = null
         }
 
-        private fun stopAndClearPhotoView(photoView: PhotoView) {
+        private fun resetPhotoView(photoView: PhotoView) {
             (photoView.drawable as? AnimatedImageDrawable)?.stop()
             photoView.setImageDrawable(null)
             photoView.getAttacher().update()
             photoView.setScale(1f, false)
-            updateViewPagerSwipeForScale(1f)
         }
 
-        private fun applyLoadedDrawable(holder: ViewHolder, drawable: Drawable) {
-            val pv = holder.photoView
-            (pv.drawable as? AnimatedImageDrawable)?.stop()
-            pv.setImageDrawable(drawable)
-            pv.getAttacher().update()
-            pv.setScale(1f, false)
-            if (drawable is AnimatedImageDrawable) {
-                drawable.repeatCount = AnimatedImageDrawable.REPEAT_INFINITE
-                drawable.start()
+        private fun applyLoadedImage(photoView: PhotoView, image: Any) {
+            (photoView.drawable as? AnimatedImageDrawable)?.stop()
+            when (image) {
+                is Drawable -> {
+                    photoView.setImageDrawable(image)
+                    if (image is AnimatedImageDrawable) {
+                        image.repeatCount = AnimatedImageDrawable.REPEAT_INFINITE
+                        image.start()
+                    }
+                }
+                is Bitmap -> photoView.setImageDrawable(BitmapDrawable(photoView.context.resources, image))
             }
-        }
-
-        private fun applyLoadedBitmap(holder: ViewHolder, bmp: Bitmap) {
-            val pv = holder.photoView
-            (pv.drawable as? AnimatedImageDrawable)?.stop()
-            pv.setImageDrawable(BitmapDrawable(pv.context.resources, bmp))
-            pv.getAttacher().update()
-            pv.setScale(1f, false)
+            photoView.getAttacher().update()
+            photoView.setScale(1f, false)
         }
 
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ViewHolder {
@@ -379,13 +460,15 @@ class PhotoViewer(context: Context) : Dialog(context, android.R.style.Theme_Blac
                 mediumScale = 2.5f
                 minimumScale = 1f
                 setOnSingleFlingListener { _, _, velocityX, velocityY ->
-                    val absX = kotlin.math.abs(velocityX)
-                    val absY = kotlin.math.abs(velocityY)
-                    val nearDefault = kotlin.math.abs(scale - 1f) < 0.06f
-                    if (absY > absX && absY > 800f && velocityY > 0 && nearDefault) {
+                    val absX = abs(velocityX)
+                    val absY = abs(velocityY)
+                    val nearDefault = abs(scale - 1f) < FLING_DISMISS_SCALE_THRESHOLD
+                    if (absY > absX && absY > FLING_DISMISS_MIN_VELOCITY && velocityY > 0 && nearDefault) {
                         dismissWithAnimation()
                         true
-                    } else false
+                    } else {
+                        false
+                    }
                 }
                 setOnPhotoTapListener { _, _, _ -> toggleToolbar() }
                 setOnOutsidePhotoTapListener { toggleToolbar() }
@@ -399,12 +482,13 @@ class PhotoViewer(context: Context) : Dialog(context, android.R.style.Theme_Blac
                 layoutParams = FrameLayout.LayoutParams(size, size, Gravity.CENTER)
                 visibility = View.GONE
             }
-            val container = FrameLayout(ctx).apply {
+            val container = PhotoZoomHost(ctx).apply {
                 layoutParams = ViewGroup.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.MATCH_PARENT
                 )
                 setBackgroundColor(Color.BLACK)
+                this.photoView = photoView
                 addView(photoView)
                 addView(progress)
             }
@@ -475,7 +559,7 @@ class PhotoViewer(context: Context) : Dialog(context, android.R.style.Theme_Blac
             cancelProgressAnim(holder)
             holder.progressShown = false
             holder.progressBar.visibility = View.GONE
-            stopAndClearPhotoView(holder.photoView)
+            resetPhotoView(holder.photoView)
         }
 
         override fun onBindViewHolder(holder: ViewHolder, position: Int) {
@@ -487,10 +571,9 @@ class PhotoViewer(context: Context) : Dialog(context, android.R.style.Theme_Blac
             holder.bindGeneration++
             val bindGen = holder.bindGeneration
             cancelProgressAnim(holder)
-            stopAndClearPhotoView(photoView)
+            resetPhotoView(photoView)
 
-            val hasThumb = position == currentIndex && initialThumb != null
-            if (hasThumb) {
+            if (position == currentIndex && initialThumb != null) {
                 photoView.setImageBitmap(initialThumb)
                 photoView.getAttacher().update()
                 photoView.setScale(1f, false)
@@ -520,7 +603,7 @@ class PhotoViewer(context: Context) : Dialog(context, android.R.style.Theme_Blac
                         onSuccess = { drawable ->
                             if (holder.bindGeneration != bindGen) return@loadDrawable
                             hideProgressBar(holder, bindGen)
-                            applyLoadedDrawable(holder, drawable)
+                            applyLoadedImage(holder.photoView, drawable)
                         },
                         onError = { onErr() }
                     )
@@ -529,7 +612,7 @@ class PhotoViewer(context: Context) : Dialog(context, android.R.style.Theme_Blac
                         onSuccess = { bmp ->
                             if (holder.bindGeneration != bindGen) return@load
                             hideProgressBar(holder, bindGen)
-                            applyLoadedBitmap(holder, bmp)
+                            applyLoadedImage(holder.photoView, bmp)
                         },
                         onError = { onErr() }
                     )
@@ -543,7 +626,7 @@ class PhotoViewer(context: Context) : Dialog(context, android.R.style.Theme_Blac
                     onSuccess = { bmp ->
                         if (holder.bindGeneration != bindGen) return@load
                         hideProgressBar(holder, bindGen)
-                        applyLoadedBitmap(holder, bmp)
+                        applyLoadedImage(holder.photoView, bmp)
                     },
                     onError = { onErr() },
                     noCache = true
