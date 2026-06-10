@@ -66,6 +66,7 @@ class SendTokenFragment : BaseFragment() {
         private const val MAX_NOTE_LENGTH = 512
         private val VI_LOCALE: Locale = Locale("vi", "VN")
         private val CHAIN_UNITS_PER_TOKEN: BigInteger = BigInteger.valueOf(1_000_000L)
+        private const val PROFILE_TRANSFER_DEFAULT_AMOUNT = 10000
 
         fun newInstance(
             formValue: String? = null
@@ -77,6 +78,20 @@ class SendTokenFragment : BaseFragment() {
                     }
                 }
             }
+        }
+
+        fun buildProfileTransferFormJson(
+            context: android.content.Context,
+            receiverId: Long,
+            receiverName: String
+        ): String {
+            return org.json.JSONObject().apply {
+                put("receiver_id", receiverId)
+                put("receiver_name", receiverName)
+                put("amount", PROFILE_TRANSFER_DEFAULT_AMOUNT)
+                put("note", context.getString(R.string.advanced_transfer_funds))
+                put("can_edit", true)
+            }.toString()
         }
     }
 
@@ -278,7 +293,7 @@ class SendTokenFragment : BaseFragment() {
                 setText(jsonAmountDefault)
             }
             isEnabled = isAmountFieldEditable()
-            if (qr) applyQrTransferPlainEditText(this, singleLine = true)
+            applyQrTransferPlainEditText(this, singleLine = true)
         }
         amountField = amount
         bindAmountTextWatcher(amount)
@@ -950,7 +965,12 @@ class SendTokenFragment : BaseFragment() {
             )
             return
         }
-        val sheet = BottomSheet(act, needFocusable = true)
+        val sheetHeightPx = (AndroidUtilities.displaySize.y * 0.88f).toInt()
+            .coerceAtLeast(LayoutHelper.dp(320f))
+        val sheet = BottomSheet(act, needFocusable = true).apply {
+            setSnapPoints(0.88f)
+            setContainerHeightPx(sheetHeightPx)
+        }
         val content = LinearLayout(act).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(LayoutHelper.dp(16f), LayoutHelper.dp(10f), LayoutHelper.dp(16f), LayoutHelper.dp(16f))
@@ -992,10 +1012,6 @@ class SendTokenFragment : BaseFragment() {
         }
         recycler.adapter = adapter
         adapter.submit(allOptions)
-        recycler.layoutParams = LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            LayoutHelper.dp(320f)
-        )
         fun applyFilter(q: String) {
             val query = q.trim().lowercase(Locale.getDefault())
             val filtered = if (query.isBlank()) {
@@ -1029,12 +1045,14 @@ class SendTokenFragment : BaseFragment() {
             recycler,
             LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
-                LayoutHelper.dp(320f)
+                0,
+                1f
             ).apply {
                 topMargin = LayoutHelper.dp(8f)
             }
         )
         sheet.setCustomView(content)
+        sheet.fixNavigationBar()
         sheet.delegate = object : BottomSheet.BottomSheetDelegateInterface {
             override fun onOpenAnimationEnd() {
                 searchField.post {

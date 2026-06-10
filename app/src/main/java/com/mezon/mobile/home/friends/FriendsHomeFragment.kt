@@ -39,6 +39,7 @@ import com.mezon.mobile.home.call.CallFragment
 import com.mezon.mobile.home.call.CallManager
 import com.mezon.mobile.home.call.CallPermissionUi
 import com.mezon.mobile.home.chat.UserProfileBottomSheet
+import com.mezon.mobile.home.wallet.SendTokenFragment
 import com.mezon.mobile.network.CHANNEL_TYPE_DM
 import com.mezon.mobile.ui.cells.MezonIcon
 import com.mezon.mobile.ui.MezonToast
@@ -332,6 +333,17 @@ class FriendsHomeFragment : BaseFragment() {
                     listener = object : UserProfileBottomSheet.UserProfileListener {
                         override fun onAddFriend(userId: Long) {
                             friendController.sendFriendRequest(userId, friend.user.username) {}
+                        }
+                        override fun onTransferFunds(userId: Long) {
+                            val receiverName = friend.user.displayName
+                                .ifBlank { friend.user.username }
+                                .ifBlank { userId.toString() }
+                            val form = SendTokenFragment.buildProfileTransferFormJson(
+                                requireContext(),
+                                userId,
+                                receiverName
+                            )
+                            presentFragment(SendTokenFragment.newInstance(form))
                         }
                     }
                 )

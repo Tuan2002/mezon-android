@@ -34,6 +34,7 @@ import com.mezon.mobile.home.MemberResolver
 import com.mezon.mobile.home.UserClanController
 import com.mezon.mobile.home.chat.EmojiController
 import com.mezon.mobile.home.chat.UserProfileBottomSheet
+import com.mezon.mobile.home.wallet.SendTokenFragment
 import com.mezon.mobile.home.clans.CHANNEL_TYPE_VOICE
 import com.mezon.mobile.home.clans.ChannelController
 import com.mezon.mobile.home.clans.ClansController
@@ -1457,7 +1458,9 @@ class VoiceRoomFragment : BaseFragment() {
                         showAddFriendBottomSheet()
                     },
                     onTransferClick = {
-                        Toast.makeText(activity, R.string.feature_coming_soon, Toast.LENGTH_SHORT).show()
+                        val receiverName = displayName.ifBlank { participantSubline }.ifBlank { userId.toString() }
+                        val form = SendTokenFragment.buildProfileTransferFormJson(context, userId, receiverName)
+                        presentFragment(SendTokenFragment.newInstance(form))
                     },
                     canManageVoiceUser = canManageVoiceUser,
                     showMuteAction = showMuteAction,

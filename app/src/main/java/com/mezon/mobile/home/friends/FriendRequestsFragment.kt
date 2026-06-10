@@ -17,6 +17,7 @@ import com.mezon.mobile.core.NotificationCenter
 import com.mezon.mobile.core.RecyclerListView
 import com.mezon.mobile.di.FragmentEntryPoint
 import com.mezon.mobile.home.chat.UserProfileBottomSheet
+import com.mezon.mobile.home.wallet.SendTokenFragment
 
 class FriendRequestsFragment : BaseFragment() {
 
@@ -210,6 +211,17 @@ class FriendRequestsFragment : BaseFragment() {
             listener = object : UserProfileBottomSheet.UserProfileListener {
                 override fun onAddFriend(userId: Long) {
                     friendController.sendFriendRequest(userId, friend.user.username) {}
+                }
+                override fun onTransferFunds(userId: Long) {
+                    val receiverName = friend.user.displayName
+                        .ifBlank { friend.user.username }
+                        .ifBlank { userId.toString() }
+                    val form = SendTokenFragment.buildProfileTransferFormJson(
+                        requireContext(),
+                        userId,
+                        receiverName
+                    )
+                    presentFragment(SendTokenFragment.newInstance(form))
                 }
             }
         )
