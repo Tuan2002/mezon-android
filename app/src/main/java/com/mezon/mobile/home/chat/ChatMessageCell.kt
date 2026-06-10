@@ -631,6 +631,7 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
             if (drawPhotoImage && PresignFinishContent.hasPresignFinishField(msg.content)) {
                 val snapshot = msg.displayAttachmentSnapshot()
                 applyDisplaySnapshot(msg, snapshot)
+                if (drawPhotoImage) computePhotoSize(msg)
                 loadPhotoImage(msg)
                 needInvalidate = true
                 schedulePresignExpireTick(msg)
@@ -652,6 +653,10 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
             if (drawError && !prevError) {
                 rebuildLayout = true
             } else {
+                if (drawPhotoImage) {
+                    computePhotoSize(msg)
+                    loadPhotoImage(msg)
+                }
                 needInvalidate = true
             }
         }
@@ -912,21 +917,13 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
 
         if (mediaGridCount == 0) return
 
-        if (mediaGridCount > 1 && mediaGroupSlots.size != mediaGridCount) {
-            val parentW = currentWidth()
-            val maxW = albumMaxWidthPx(parentW)
-            val layout = buildMediaGroupLayout(msg, allMedia, maxW)
-            mediaGroupSlots = layout.slots
-            photoWidth = layout.totalWidthPx
-            photoHeight = layout.totalHeightPx
-        }
-
         for (i in 0 until mediaGridCount) {
             val att = allMedia[i]
             val pair = bubbleDecodeProxySizePx(i)
             val pw = pair.first
             val ph = pair.second
             val receiver = mediaReceiver(i)
+            receiver.setCenterCrop(true)
             val isStickerAttachment = att.filetype.equals("sticker", ignoreCase = true) ||
                 att.url.contains("/stickers/", ignoreCase = true)
             val isAnimated = att.filetype.contains("gif", true) ||
@@ -959,10 +956,14 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
                     receiver.recycle()
                 }
             } else {
-                val mainUrl = createImgproxyUrl(att.url, pw, ph, "fit")
+                val resizeType = if (mediaGridCount > 1) "fill" else "fit"
+                val mainUrl = createImgproxyUrl(att.url, pw, ph, resizeType)
                 val thumbUrl = att.thumb.ifEmpty { null }?.let { createImgproxyUrl(it, pw / 4, ph / 4, "fit") }
                 receiver.setImage(mainUrl, thumbUrl, context)
             }
+        }
+        if (mediaGridCount == 1) {
+            photoImage.setCenterCrop(false)
         }
         for (i in mediaGridCount until slotIsVideo.size) {
             mediaReceiver(i).recycle()
@@ -3428,6 +3429,7 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
     private fun drawMediaGrid(canvas: Canvas, msg: MessageEntity, startX: Float, startY: Float): Float {
         val isDark = theme.resolvedMode != com.mezon.mobile.ui.theme.ThemeMode.LIGHT
         var needsShimmerRedraw = false
+        var maxBottom = startY
         for (i in 0 until mediaGridCount) {
             val slot = mediaGroupSlots.getOrNull(i) ?: continue
             val x = startX + slot.x
@@ -3438,9 +3440,10 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
             if (drawGridCell(canvas, i, x, y, slot.width, slot.height, isDark)) {
                 needsShimmerRedraw = true
             }
+            maxBottom = maxOf(maxBottom, y + slot.height)
         }
         if (needsShimmerRedraw) postInvalidateDelayed(16)
-        return startY + photoHeight
+        return maxOf(maxBottom, startY + photoHeight.toFloat())
     }
 
     private fun drawMediaOverlays(canvas: Canvas, msg: MessageEntity, imgX: Float, imgY: Float) {

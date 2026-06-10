@@ -398,6 +398,7 @@ open class ChatFragment : BaseFragment() {
     private var suggestionsAdapter: InputSuggestionsAdapter? = null
     private val mentionTrackers = mutableListOf<MentionData>()
     private val hashtagTrackers = mutableListOf<HashtagData>()
+    private var suppressInputTrackerMutation = false
     private var systemMessageMemberIds: Set<String> = emptySet()
     private var currentTrigger: InputSuggestionsController.TriggerState = InputSuggestionsController.TriggerState.NONE
 
@@ -1893,11 +1894,13 @@ open class ChatFragment : BaseFragment() {
 
         inputField.addTextChangedListener(object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {
+                if (suppressInputTrackerMutation) return
                 adjustMentionTrackersForChange(start, count, after)
                 adjustHashtagTrackersForChange(start, count, after)
             }
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
             override fun afterTextChanged(s: Editable?) {
+                if (suppressInputTrackerMutation) return
                 pruneMentionTrackersAgainstText()
                 pruneHashtagTrackersAgainstText()
                 updateSendButtonState()
@@ -4357,7 +4360,8 @@ open class ChatFragment : BaseFragment() {
             chatController.editMessage(
                 channelId, clanId, channelType, isPrivate, editMsg.id,
                 cleanedText, mentions, emojiMarkers, filteredMdMarkers, hashtags,
-                existingMessage = editMsg
+                existingMessage = editMsg,
+                topicId = topicId,
             )
             clearEditState()
             return
@@ -6497,11 +6501,16 @@ open class ChatFragment : BaseFragment() {
         editNameView?.text = getString(R.string.message_chatbox_editing)
         editBar?.visibility = View.VISIBLE
         val restored = restoreInputFromContent(msg.content)
-        inputField.setText(restored.rawText)
-        mentionTrackers.addAll(restored.mentions)
-        hashtagTrackers.addAll(restored.hashtags)
-        emojiObjPicked.putAll(restored.emojis)
-        applyEditHighlightSpans(restored)
+        suppressInputTrackerMutation = true
+        try {
+            inputField.setText(restored.rawText)
+            mentionTrackers.addAll(restored.mentions)
+            hashtagTrackers.addAll(restored.hashtags)
+            emojiObjPicked.putAll(restored.emojis)
+            applyEditHighlightSpans(restored)
+        } finally {
+            suppressInputTrackerMutation = false
+        }
         inputField.setSelection(inputField.text?.length ?: 0)
         inputField.requestFocus()
         AndroidUtilities.showKeyboard(inputField)

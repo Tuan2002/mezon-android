@@ -46,6 +46,8 @@ import com.mezon.mobile.util.firstReferenceMessageId
 import com.mezon.mobile.util.SentryReporter
 import com.mezon.mobile.util.MentionData
 import com.mezon.mobile.util.buildTextContent
+import com.mezon.mobile.util.parseMentionsFromContent
+import com.mezon.mobile.util.remapMentionsForEdit
 import com.mezon.mobile.util.messageHasExplicitTextBody
 import com.mezon.mobile.util.EmojiMarker
 import com.mezon.mobile.util.MarkdownMarker
@@ -800,25 +802,24 @@ class ChatController @Inject constructor(
         token: String,
         request: ChannelMessageSend
     ): com.mezon.mezon.rtapi.ChannelMessageAck {
-        if (mezonSocket.connectionState.value == ConnectionState.CONNECTED) {
-            try {
-                return withContext(ioDispatcher) {
-                    val env = mezonSocket.send { channelMessageSend = request }
-                    if (env.messageCase != Envelope.MessageCase.CHANNEL_MESSAGE_ACK) {
-                        throw IllegalStateException("unexpected envelope ${env.messageCase}")
-                    }
-                    env.channelMessageAck
-                }
-            } catch (e: Exception) {
-                Log.w(TAG, "Channel message send via socket failed, using REST", e)
-                sentryReporter.logSocketWarning(
-                    "channelMessageSend",
-                    "fallback REST channelId=${request.channelId} clanId=${request.clanId} err=${e.message}"
-                )
+        try {
+            return withContext(ioDispatcher) {
+                api.sendChannelMessage(apiUrl, token, request)
             }
+        } catch (e: Exception) {
+            Log.w(TAG, "Channel message send via REST failed, using socket", e)
+            sentryReporter.logSocketWarning(
+                "channelMessageSend",
+                "fallback socket channelId=${request.channelId} clanId=${request.clanId} err=${e.message}"
+            )
+            if (mezonSocket.connectionState.value != ConnectionState.CONNECTED) throw e
         }
         return withContext(ioDispatcher) {
-            api.sendChannelMessage(apiUrl, token, request)
+            val env = mezonSocket.send { channelMessageSend = request }
+            if (env.messageCase != Envelope.MessageCase.CHANNEL_MESSAGE_ACK) {
+                throw IllegalStateException("unexpected envelope ${env.messageCase}")
+            }
+            env.channelMessageAck
         }
     }
 
@@ -832,41 +833,44 @@ class ChatController @Inject constructor(
         messageId: Long,
         content: String,
         mentions: List<MessageMention>?,
-        attachments: List<MessageAttachment>,
+        attachments: List<MessageAttachment> = emptyList(),
         hideEditted: Boolean = true,
         topicId: Long = 0L,
+        createTimeSeconds: Int = 0,
     ) {
-        if (mezonSocket.connectionState.value == ConnectionState.CONNECTED) {
-            try {
-                withContext(ioDispatcher) {
-                    mezonSocket.updateChatMessage(
-                        clanId, channelId, mode, isPublic, messageId, content,
-                        mentions, attachments, hideEditted, topicId,
-                    )
-                }
-                return
-            } catch (e: Exception) {
-                Log.w(TAG, "Channel message update via socket failed, using REST", e)
-                sentryReporter.logSocketWarning(
-                    "channelMessageUpdate",
-                    "fallback REST channelId=$channelId messageId=$messageId err=${e.message}"
-                )
+        val attachmentPayload = attachments.takeIf { it.isNotEmpty() }
+        val request = channelMessageUpdate {
+            this.clanId = clanId
+            this.channelId = channelId
+            this.messageId = messageId
+            this.content = content
+            mentions?.takeIf { it.isNotEmpty() }?.let { this.mentions.addAll(it) }
+            attachmentPayload?.let { this.attachments.addAll(it) }
+            this.mode = mode
+            this.isPublic = isPublic
+            this.hideEditted = hideEditted
+            if (topicId != 0L) this.topicId = topicId
+            if (createTimeSeconds > 0) this.createTimeSeconds = createTimeSeconds
+        }
+        try {
+            withContext(ioDispatcher) {
+                api.updateChannelMessage(apiUrl, token, request)
             }
+            return
+        } catch (e: Exception) {
+            Log.w(TAG, "Channel message update via REST failed, using socket", e)
+            sentryReporter.logSocketWarning(
+                "channelMessageUpdate",
+                "fallback socket channelId=$channelId messageId=$messageId err=${e.message}"
+            )
+            if (mezonSocket.connectionState.value != ConnectionState.CONNECTED) throw e
         }
         withContext(ioDispatcher) {
-            val request = channelMessageUpdate {
-                this.clanId = clanId
-                this.channelId = channelId
-                this.messageId = messageId
-                this.content = content
-                mentions?.let { this.mentions.addAll(it) }
-                this.attachments.addAll(attachments)
-                this.mode = mode
-                this.isPublic = isPublic
-                this.hideEditted = hideEditted
-                if (topicId != 0L) this.topicId = topicId
-            }
-            api.updateChannelMessage(apiUrl, token, request)
+            mezonSocket.updateChatMessage(
+                clanId, channelId, mode, isPublic, messageId, content,
+                mentions?.takeIf { it.isNotEmpty() }, attachmentPayload, hideEditted, topicId,
+                createTimeSeconds = createTimeSeconds,
+            )
         }
     }
 
@@ -945,8 +949,8 @@ class ChatController @Inject constructor(
                         this.mode = mode
                         this.isPublic = isPublic
                         this.content = content
-                        protoMentions?.let { this.mentions.addAll(it) }
-                        references?.let { this.references.addAll(it) }
+                        protoMentions?.takeIf { it.isNotEmpty() }?.let { this.mentions.addAll(it) }
+                        references?.takeIf { it.isNotEmpty() }?.let { this.references.addAll(it) }
                         this.mentionEveryone = mentionEveryone
                         if (anon) this.anonymousMessage = true
                         if (topicId != 0L) this.topicId = topicId
@@ -1086,7 +1090,7 @@ class ChatController @Inject constructor(
                         this.isPublic = isPublic
                         this.content = baseContent
                         this.attachments.add(attachment)
-                        references?.let { this.references.addAll(it) }
+                        references?.takeIf { it.isNotEmpty() }?.let { this.references.addAll(it) }
                         if (anon) this.anonymousMessage = true
                         if (topicId != 0L) this.topicId = topicId
                     }
@@ -1404,7 +1408,7 @@ class ChatController @Inject constructor(
         val cacheKey = messageCacheKey(channelId, topicId)
         val hasContentExtras = !hashtags.isNullOrEmpty() || !emojiMarkers.isNullOrEmpty() || ogpMarker != null
         val wireBase = when {
-            text.isBlank() -> "{\"t\":\"\"}"
+            text.isBlank() -> PresignFinishContent.emptyOutgoingContent()
             hasContentExtras -> buildTextContentWithEmojis(text, null, emojiMarkers, null, hashtags, ogpMarker)
             else -> buildTextContent(text)
         }
@@ -1531,7 +1535,7 @@ class ChatController @Inject constructor(
         val mode = channelTypeToStreamMode(channelType)
         val isPublic = !isChannelPrivate
         val baseContent = when {
-            text.isBlank() -> "{\"t\":\"\"}"
+            text.isBlank() -> PresignFinishContent.emptyOutgoingContent()
             !markdownMarkers.isNullOrEmpty() -> buildTextContentWithEmojis(text, null, null, markdownMarkers)
             else -> buildTextContent(text)
         }
@@ -1699,11 +1703,8 @@ class ChatController @Inject constructor(
             }
 
             val attachmentsToSend = preparedSlots.map { it.attachment }
-            val contentWithPresign = PresignFinishContent.injectEmptyPresignFinish(params.wireContent)
-            preparedSlots.forEach { slot ->
-                Log.d(TAG, "presign ready index=${slot.index} filename=${slot.attachment.filename} cdnUrl=${slot.attachment.url} thumb=${slot.attachment.thumbnail}")
-            }
-            Log.d(TAG, "send message with ${attachmentsToSend.size} attachment(s): ${attachmentsToSend.joinToString { it.url }}")
+            val outgoingBase = PresignFinishContent.presignSyncOriginContent(params.wireContent)
+            val contentWithPresign = PresignFinishContent.injectEmptyPresignFinish(outgoingBase)
             val request = channelMessageSend {
                 this.clanId = params.clanId
                 this.channelId = params.channelId
@@ -1711,15 +1712,14 @@ class ChatController @Inject constructor(
                 this.isPublic = params.isPublic
                 this.content = contentWithPresign
                 this.attachments.addAll(attachmentsToSend)
-                params.protoMentions?.let { this.mentions.addAll(it) }
-                params.references?.let { this.references.addAll(it) }
+                params.protoMentions?.takeIf { it.isNotEmpty() }?.let { this.mentions.addAll(it) }
+                params.references?.takeIf { it.isNotEmpty() }?.let { this.references.addAll(it) }
                 this.mentionEveryone = params.mentionEveryone
                 if (params.anon) this.anonymousMessage = true
                 if (params.topicId != 0L) this.topicId = params.topicId
             }
             val ack = channelSend(apiUrl, token, request)
             realMessageId = ack.messageId
-            Log.d(TAG, "message sent messageId=$realMessageId cdnUrls=${attachmentsToSend.joinToString { it.url }}")
             job.realMessageId = realMessageId
             synchronized(this) {
                 attachmentJobsByRealId.put(realMessageId, job)
@@ -1747,7 +1747,7 @@ class ChatController @Inject constructor(
             suspend fun applyLocalPresignFinishSnapshot() {
                 val snapshot = presignMutex.withLock { presignFinishedKeys.toList() }
                 if (snapshot.isEmpty()) return
-                val content = PresignFinishContent.injectPresignFinish(params.wireContent, snapshot)
+                val content = PresignFinishContent.injectPresignFinish(outgoingBase, snapshot)
                 applyLocalPresignContentUpdate(params.cacheKey, realMessageId, content)
             }
 
@@ -1763,7 +1763,7 @@ class ChatController @Inject constructor(
                     snapshot = presignFinishedKeys.toList()
                 }
                 try {
-                    val content = PresignFinishContent.injectPresignFinish(params.wireContent, snapshot)
+                    val content = PresignFinishContent.injectPresignFinish(outgoingBase, snapshot)
                     val maxAttempts = if (forceFlush) 2 else 1
                     var synced = false
                     for (attempt in 1..maxAttempts) {
@@ -1771,7 +1771,7 @@ class ChatController @Inject constructor(
                             channelUpdate(
                                 apiUrl, token,
                                 params.clanId, params.channelId, params.mode, params.isPublic,
-                                realMessageId, content, params.protoMentions, attachmentsToSend,
+                                realMessageId, content, mentions = params.protoMentions,
                                 hideEditted = true, topicId = params.topicId,
                             )
                             synced = true
@@ -2215,9 +2215,11 @@ class ChatController @Inject constructor(
         content: String,
     ) {
         val existing = withContext(ioDispatcher) { messageDao.getById(cacheKey, messageId) } ?: return
-        val presignOnly = PresignFinishContent.isPresignFinishOnlyChange(content, existing.content)
+        val keys = PresignFinishContent.parseKeys(content) ?: emptyList()
+        val mergedContent = PresignFinishContent.injectPresignFinish(existing.content, keys)
+        val presignOnly = PresignFinishContent.isPresignFinishOnlyChange(mergedContent, existing.content)
         val updated = existing.copy(
-            content = content,
+            content = mergedContent,
             hideEditted = true,
             updateTimeSeconds = if (presignOnly) 0L else existing.updateTimeSeconds,
         )
@@ -2259,7 +2261,13 @@ class ChatController @Inject constructor(
             isMe = true,
         )).copy(
             id = realMessageId,
-            content = contentWithPresign.ifBlank { existing?.content.orEmpty() },
+            content = when {
+                contentWithPresign.isBlank() -> existing?.content.orEmpty()
+                contentWithPresign.contains("\"mentions\"") -> contentWithPresign
+                existing?.content?.contains("\"mentions\"") == true ->
+                    resolveEchoContent(existing.content, contentWithPresign)
+                else -> contentWithPresign
+            },
             attachmentUrl = fields.attachmentUrl,
             attachmentThumb = fields.attachmentThumb,
             attachmentWidth = fields.attachmentWidth,
@@ -2431,6 +2439,7 @@ class ChatController @Inject constructor(
         val existingCount = existing?.allAttachmentsInfo?.size ?: 0
         val expectedTotal = job?.totalCount ?: existingCount
         val preserveLocalAttachments = existing != null && (
+            (incoming.allAttachmentsInfo.isEmpty() && existing.allAttachmentsInfo.isNotEmpty()) ||
             (job != null && incomingCount < job.totalCount) ||
             existingCount > incomingCount ||
             (expectedTotal > incomingCount && hasAnyLocalAttachmentUrl(existing))
@@ -2517,15 +2526,24 @@ class ChatController @Inject constructor(
         emojiMarkers: List<EmojiMarker>? = null,
         markdownMarkers: List<MarkdownMarker>? = null,
         hashtags: List<com.mezon.mobile.util.HashtagData>? = null,
-        existingMessage: MessageEntity? = null
+        existingMessage: MessageEntity? = null,
+        topicId: Long = 0L,
     ) {
         if (existingMessage != null && !existingMessage.canEditMessage(getCurrentUserId())) return
+        val cacheKey = messageCacheKey(channelId, topicId)
         val mode = channelTypeToStreamMode(channelType)
         val isPublic = !isChannelPrivate
-        val hasExtras = !mentions.isNullOrEmpty() || !emojiMarkers.isNullOrEmpty() ||
+        val existingContent = existingMessage?.content.orEmpty()
+        val resolvedMentions = mentions?.takeIf { it.isNotEmpty() }
+            ?: remapMentionsForEdit(
+                existingContent,
+                newText,
+                parseMentionsFromContent(existingContent),
+            ).ifEmpty { null }
+        val hasExtras = !resolvedMentions.isNullOrEmpty() || !emojiMarkers.isNullOrEmpty() ||
             !markdownMarkers.isNullOrEmpty() || !hashtags.isNullOrEmpty()
         val baseContent = if (hasExtras) {
-            buildTextContentWithEmojis(newText, mentions, emojiMarkers, markdownMarkers, hashtags)
+            buildTextContentWithEmojis(newText, resolvedMentions, emojiMarkers, markdownMarkers, hashtags)
         } else {
             buildTextContent(newText)
         }
@@ -2534,7 +2552,7 @@ class ChatController @Inject constructor(
         } else {
             baseContent
         }
-        val protoMentions = mentions?.map { m ->
+        val protoMentions = resolvedMentions?.map { m ->
             messageMention {
                 if (m.userId.isNotBlank()) userId = m.userId.toLongOrNull() ?: 0L
                 if (m.roleId.isNotBlank()) roleId = m.roleId.toLongOrNull() ?: 0L
@@ -2543,33 +2561,19 @@ class ChatController @Inject constructor(
                 e = m.endOffset
             }
         }
-        val protoAttachments = existingMessage?.allAttachmentsInfo?.map { att ->
-            messageAttachment {
-                filename = att.filename
-                size = att.size
-                url = att.url
-                filetype = att.filetype
-                width = att.width
-                height = att.height
-                thumbnail = att.thumb
-            }
-        }
-        val request = channelMessageUpdate {
-            this.clanId = clanId
-            this.channelId = channelId
-            this.messageId = messageId
-            this.content = content
-            protoMentions?.let { this.mentions.addAll(it) }
-            protoAttachments?.let { this.attachments.addAll(it) }
-            this.mode = mode
-            this.isPublic = isPublic
-        }
+        val mentionPayload = protoMentions?.takeIf { it.isNotEmpty() }
         appScope.launch {
             try {
                 sessionManager.withAutoRefresh { session ->
-                    api.updateChannelMessage(session.apiUrl, session.token, request)
+                    channelUpdate(
+                        session.apiUrl, session.token,
+                        clanId, channelId, mode, isPublic, messageId, content,
+                        mentionPayload,
+                        hideEditted = false,
+                        topicId = topicId,
+                    )
                 }
-                applyLocalEdit(channelId, messageId, content)
+                applyLocalEdit(cacheKey, messageId, content)
                 Log.d(TAG, "Message edited: channelId=$channelId messageId=$messageId")
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to edit message", e)
@@ -2577,9 +2581,9 @@ class ChatController @Inject constructor(
         }
     }
 
-    private suspend fun applyLocalEdit(channelId: Long, messageId: Long, content: String) {
+    private suspend fun applyLocalEdit(cacheKey: Long, messageId: Long, content: String) {
         val updateTime = System.currentTimeMillis() / 1000L
-        val existing = withContext(ioDispatcher) { messageDao.getById(channelId, messageId) }
+        val existing = withContext(ioDispatcher) { messageDao.getById(cacheKey, messageId) }
         val updated = existing?.copy(
             content = content,
             updateTimeSeconds = updateTime,
@@ -2587,16 +2591,16 @@ class ChatController @Inject constructor(
             code = CODE_CHAT_UPDATE
         ) ?: return
         appScope.launch {
-            messageDao.updateContent(channelId, messageId, content, updateTime, false, CODE_CHAT_UPDATE)
+            messageDao.updateContent(cacheKey, messageId, content, updateTime, false, CODE_CHAT_UPDATE)
         }
         synchronized(this) {
-            val last = dialogMessage.get(channelId)
+            val last = dialogMessage.get(cacheKey)
             if (last != null && last.id == messageId) {
-                dialogMessage.put(channelId, updated)
+                dialogMessage.put(cacheKey, updated)
             }
         }
         notificationCenter.postNotificationOnMainThread(
-            NotificationCenter.messageDidUpdate, channelId, updated,
+            NotificationCenter.messageDidUpdate, cacheKey, updated,
             NotificationCenter.UPDATE_MASK_MESSAGE_TEXT
         )
     }
@@ -2688,19 +2692,19 @@ class ChatController @Inject constructor(
         socketEventDispatcher.channelMessages.collect { raw ->
             val msg = assignMissingMessageId(resolveEphemeralSender(raw, currentUserId))
             val entity = msg.toMessageEntity(currentUserId)
-            if (BuildConfig.DEBUG) {
-                Log.d(
-                    TAG,
-                    "incoming CHANNEL_MESSAGE id=${entity.id} channel=${entity.channelId} topic=${msg.topicId} " +
-                        "code=${entity.code} mode=${msg.mode} ts=${entity.timestampSeconds} updateTs=${entity.updateTimeSeconds} " +
-                        "renderable=${entity.isRenderable} sender=${entity.senderId} isMe=${entity.isMe} " +
-                        "content=${debugMessagePreview(entity.content)}"
-                )
-            }
 
             when (msg.code) {
                 CODE_CHAT_UPDATE -> {
                     if (synchronized(this) { attachmentJobsByRealId.get(entity.id) } != null) {
+                        appScope.launch(ioDispatcher) {
+                            val existing = messageDao.getById(entity.channelId, entity.id)
+                            val merged = mergeIncomingAttachmentEntity(existing, entity)
+                            messageDao.upsert(merged)
+                            notificationCenter.postNotificationOnMainThread(
+                                NotificationCenter.messageDidUpdate, merged.channelId, merged,
+                                NotificationCenter.UPDATE_MASK_MESSAGE_TEXT,
+                            )
+                        }
                         return@collect
                     }
                     if (msg.topicId != 0L) {
@@ -2719,9 +2723,6 @@ class ChatController @Inject constructor(
                             )
                         }
                         return@collect
-                    }
-                    if (BuildConfig.DEBUG) {
-                        Log.d(TAG, "incoming CHANNEL_MESSAGE as update id=${entity.id} channel=${entity.channelId}")
                     }
                     appScope.launch(ioDispatcher) {
                         val existing = messageDao.getById(entity.channelId, entity.id)
@@ -2832,43 +2833,43 @@ class ChatController @Inject constructor(
                         }
                         return@collect
                     }
-                    appScope.launch { messageDao.upsert(entity) }
-                    if (entity.canAdvanceServerTimeline()) {
-                        synchronized(this) {
-                            dialogMessage.put(entity.channelId, entity)
-                            if (entity.id > lastMessageByChannel.get(entity.channelId, 0L))
-                                lastMessageByChannel.put(entity.channelId, entity.id)
+                    appScope.launch(ioDispatcher) {
+                        val existing = messageDao.getById(entity.channelId, entity.id)
+                        val merged = mergeIncomingAttachmentEntity(existing, entity)
+                        messageDao.upsert(merged)
+                        if (merged.canAdvanceServerTimeline()) {
+                            synchronized(this@ChatController) {
+                                dialogMessage.put(merged.channelId, merged)
+                                if (merged.id > lastMessageByChannel.get(merged.channelId, 0L)) {
+                                    lastMessageByChannel.put(merged.channelId, merged.id)
+                                }
+                            }
                         }
-                    }
-                    if (BuildConfig.DEBUG) {
-                        Log.d(
-                            TAG,
-                            "post didReceiveNewMessages id=${entity.id} channel=${entity.channelId} " +
-                                "code=${entity.code} isMe=${entity.isMe}"
-                        )
-                    }
-                    notificationCenter.postNotificationOnMainThread(
-                        NotificationCenter.didReceiveNewMessages, entity.channelId, entity
-                    )
-                    notificationCenter.postNotificationOnMainThread(
-                        NotificationCenter.updateInterfaces, NotificationCenter.UPDATE_MASK_NEW_MESSAGE
-                    )
-                    if (entity.code == MessageEntity.CODE_MESSAGE_BUZZ && !entity.isMe) {
+                        if (BuildConfig.DEBUG) {
+                            Log.d(
+                                TAG,
+                                "post didReceiveNewMessages id=${merged.id} channel=${merged.channelId} " +
+                                    "code=${merged.code} isMe=${merged.isMe}"
+                            )
+                        }
                         notificationCenter.postNotificationOnMainThread(
-                            NotificationCenter.buzzMessageReceived, entity.channelId
+                            NotificationCenter.didReceiveNewMessages, merged.channelId, merged
                         )
-                        dialogsController.setBuzzState(entity.channelId)
+                        notificationCenter.postNotificationOnMainThread(
+                            NotificationCenter.updateInterfaces, NotificationCenter.UPDATE_MASK_NEW_MESSAGE
+                        )
+                        if (merged.code == MessageEntity.CODE_MESSAGE_BUZZ && !merged.isMe) {
+                            notificationCenter.postNotificationOnMainThread(
+                                NotificationCenter.buzzMessageReceived, merged.channelId
+                            )
+                            dialogsController.setBuzzState(merged.channelId)
+                        }
                     }
                 }
             }
 
             dialogsController.updateOnNewMessage(msg, currentUserId)
         }
-    }
-
-    private fun debugMessagePreview(content: String): String {
-        val compact = content.replace('\n', ' ').replace('\r', ' ')
-        return if (compact.length > 160) compact.take(160) + "..." else compact
     }
 
     private suspend fun observeIncomingMessageUpdates() {
@@ -2904,8 +2905,8 @@ class ChatController @Inject constructor(
                         extraAttachmentsJson = fields.extraAttachmentsJson,
                         messageType = fields.messageType,
                     )
-                    updated = mergeIncomingAttachmentEntity(existing, updated)
                 }
+                updated = mergeIncomingAttachmentEntity(existing, updated)
                 messageDao.upsert(updated)
                 synchronized(this@ChatController) {
                     val last = dialogMessage.get(updated.channelId)

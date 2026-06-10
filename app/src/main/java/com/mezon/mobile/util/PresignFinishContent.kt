@@ -121,6 +121,27 @@ object PresignFinishContent {
         }
     }
 
+    fun emptyOutgoingContent(): String = "{}"
+
+    fun isEmptyOutgoingContent(content: String): Boolean {
+        if (content.isBlank()) return true
+        return try {
+            val json = JSONObject(content)
+            when {
+                json.length() == 0 -> true
+                json.length() == 1 && json.optString("t", "").trim().isEmpty() -> true
+                else -> false
+            }
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    fun presignSyncOriginContent(wireContent: String): String {
+        val base = contentBaseWithoutPresign(wireContent)
+        return if (isEmptyOutgoingContent(base)) emptyOutgoingContent() else base
+    }
+
     fun injectEmptyPresignFinish(content: String): String = injectPresignFinish(content, emptyList())
 
     fun hasPresignFinishField(content: String): Boolean {
