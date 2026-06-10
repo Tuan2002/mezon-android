@@ -909,6 +909,11 @@ class ClansFragment : BaseFragment() {
                         openInvitePeopleSheet(clanId, clan.clanName, clan.logo)
                     })
                 },
+                Runnable {
+                    dismissClanMenuThen(Runnable {
+                        presentFragment(CreateCategoryFragment())
+                    })
+                },
                 Runnable { confirmLeaveOrDeleteClan(clanId, clan.clanName, isLeave = true) },
                 Runnable { confirmLeaveOrDeleteClan(clanId, clan.clanName, isLeave = false) },
             )

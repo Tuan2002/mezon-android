@@ -33,6 +33,7 @@ class ClanMenuBottomSheet(
     private val onOpenClanSettings: Runnable,
     private val onOpenAuditLog: Runnable,
     private val onOpenInvite: Runnable,
+    private val onCreateCategory: Runnable,
     private val onLeaveClan: Runnable,
     private val onDeleteClan: Runnable,
 ) : BottomSheet(context) {
@@ -194,7 +195,7 @@ class ClanMenuBottomSheet(
                         theme,
                         context.getString(R.string.clan_menu_create_category),
                         null,
-                        Runnable { showComingSoon() }
+                        Runnable { onCreateCategory.run() }
                     ).apply { visibility = if (permissionState.isCanEditRole) View.VISIBLE else View.GONE },
                     ClanSettingsUiHelpers.buildMezonChevronRowWithoutIcon(
                         context,
