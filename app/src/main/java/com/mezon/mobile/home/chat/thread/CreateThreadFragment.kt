@@ -203,6 +203,15 @@ class CreateThreadFragment : BaseFragment() {
 
     private data class PendingStickerSend(val url: String, val filetype: String, val filename: String?)
 
+    private data class TopicComposerPayload(
+        val rawInput: String,
+        val attachments: ArrayList<AttachmentPickerItem>,
+        val sticker: PendingStickerSend?,
+        val mentions: List<MentionData>,
+        val hashtags: List<HashtagData>,
+        val emojiEntries: LinkedHashMap<String, String>
+    )
+
     private val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
     private var voiceRecorder: VoiceRecorder? = null
     private var voiceOverlay: VoiceRecordingOverlay? = null
@@ -1780,10 +1789,10 @@ class CreateThreadFragment : BaseFragment() {
         return m.copy(startOffset = s - leading, endOffset = e - leading)
     }
 
-    private fun buildEmojiMarkers(text: String): List<com.mezon.mobile.util.EmojiMarker>? {
-        if (emojiObjPicked.isEmpty()) return null
+    private fun buildEmojiMarkers(text: String, emojiSource: Map<String, String> = emojiObjPicked): List<com.mezon.mobile.util.EmojiMarker>? {
+        if (emojiSource.isEmpty()) return null
         val markers = ArrayList<com.mezon.mobile.util.EmojiMarker>()
-        for ((shortname, emojiId) in emojiObjPicked) {
+        for ((shortname, emojiId) in emojiSource) {
             var searchFrom = 0
             while (true) {
                 val idx = text.indexOf(shortname, searchFrom)
@@ -1868,14 +1877,15 @@ class CreateThreadFragment : BaseFragment() {
         }
     }
 
-    private fun sendComposerToTopic(topicId: Long) {
-        val rawInput = composerField.text?.toString() ?: ""
+    private fun sendComposerToTopic(topicId: Long, payload: TopicComposerPayload? = null) {
+        val captured = payload ?: captureTopicComposerPayload() ?: return
+        val rawInput = captured.rawInput
         val text = rawInput.trim()
         val ctx = getContext() ?: return
         val parentType = parentChannelType()
         val parentPrivate = channelController.findChannelById(parentChannelId, clanId)?.isPrivate == true
-        if (text.isBlank() && pendingAttachments.isEmpty()) {
-            pendingStickerSend?.let { st ->
+        if (text.isBlank() && captured.attachments.isEmpty()) {
+            captured.sticker?.let { st ->
                 chatController.sendDirectAttachment(
                     parentChannelId,
                     clanId,
@@ -1887,15 +1897,16 @@ class CreateThreadFragment : BaseFragment() {
                     null,
                     topicId = topicId
                 )
+            }
+            if (payload == null) {
                 pendingStickerSend = null
-                return
             }
             return
         }
         val mdResult = parseMarkdownAndStrip(text)
         val cleanedText = mdResult.cleanedText
         val mdMarkers = mdResult.markers.ifEmpty { null }
-        val fromTrackers = mentionTrackers.mapNotNull { m ->
+        val fromTrackers = captured.mentions.mapNotNull { m ->
             val inTrimmed = mentionOffsetsForTrimmed(rawInput, text, m) ?: return@mapNotNull null
             val s = mdResult.adjustOffset(inTrimmed.startOffset)
             val e = mdResult.adjustOffset(inTrimmed.endOffset)
@@ -1905,7 +1916,7 @@ class CreateThreadFragment : BaseFragment() {
         }
         val mergedMentions = mergeAtHereMentionsFromText(cleanedText, fromTrackers)
         val mentions = mergedMentions.ifEmpty { null }
-        val hashtagsFromTrackers = hashtagTrackers.mapNotNull { h ->
+        val hashtagsFromTrackers = captured.hashtags.mapNotNull { h ->
             val inTrimmed = hashtagOffsetsForTrimmed(rawInput, h) ?: return@mapNotNull null
             val s = mdResult.adjustOffset(inTrimmed.startOffset)
             val e = mdResult.adjustOffset(inTrimmed.endOffset)
@@ -1914,15 +1925,15 @@ class CreateThreadFragment : BaseFragment() {
             HashtagData(inTrimmed.channelId, s, e, inTrimmed.clanId)
         }
         val hashtags = hashtagsFromTrackers.ifEmpty { null }
-        val emojiMarkers = buildEmojiMarkers(cleanedText)
-        if (pendingAttachments.isNotEmpty()) {
+        val emojiMarkers = buildEmojiMarkers(cleanedText, captured.emojiEntries)
+        if (captured.attachments.isNotEmpty()) {
             chatController.sendMessageWithAttachments(
                 parentChannelId,
                 clanId,
                 parentType,
                 parentPrivate,
                 cleanedText,
-                ArrayList(pendingAttachments),
+                captured.attachments,
                 ctx.contentResolver,
                 null,
                 mentions,
@@ -1930,8 +1941,6 @@ class CreateThreadFragment : BaseFragment() {
                 emojiMarkers,
                 topicId = topicId
             )
-            pendingAttachments.clear()
-            updateAttachmentPreview()
         } else {
             chatController.sendMessage(
                 parentChannelId,
@@ -1948,12 +1957,17 @@ class CreateThreadFragment : BaseFragment() {
                 topicId = topicId
             )
         }
-        composerField.text?.clear()
-        emojiObjPicked.clear()
-        mentionTrackers.clear()
-        hashtagTrackers.clear()
-        updateSendButtonState()
-        pendingStickerSend?.let { st ->
+        if (payload == null) {
+            composerField.text?.clear()
+            emojiObjPicked.clear()
+            mentionTrackers.clear()
+            hashtagTrackers.clear()
+            pendingAttachments.clear()
+            updateAttachmentPreview()
+            updateSendButtonState()
+            pendingStickerSend = null
+        }
+        captured.sticker?.let { st ->
             chatController.sendDirectAttachment(
                 parentChannelId,
                 clanId,
@@ -1965,8 +1979,23 @@ class CreateThreadFragment : BaseFragment() {
                 null,
                 topicId = topicId
             )
-            pendingStickerSend = null
         }
+    }
+
+    private fun captureTopicComposerPayload(): TopicComposerPayload? {
+        val rawInput = composerField.text?.toString() ?: ""
+        val text = rawInput.trim()
+        val hasAttachments = pendingAttachments.isNotEmpty()
+        val hasSticker = pendingStickerSend != null
+        if (text.isBlank() && !hasAttachments && !hasSticker) return null
+        return TopicComposerPayload(
+            rawInput = rawInput,
+            attachments = ArrayList(pendingAttachments),
+            sticker = pendingStickerSend,
+            mentions = ArrayList(mentionTrackers),
+            hashtags = ArrayList(hashtagTrackers),
+            emojiEntries = LinkedHashMap(emojiObjPicked)
+        )
     }
 
     private fun refreshNameError() {
@@ -2047,11 +2076,23 @@ class CreateThreadFragment : BaseFragment() {
                         )
                     } ?: throw IllegalStateException("create topic failed")
                     val topicRootMessageId = createdTopic.messageId.takeIf { it != 0L } ?: seedMessageId
+                    val composerPayload = captureTopicComposerPayload()
                     withContext(mainDispatcher) {
                         submitProgress?.visibility = View.GONE
                         isSubmitting = false
                         sendButton?.isEnabled = true
                         attachButton?.isEnabled = true
+                        if (composerPayload != null) {
+                            sendComposerToTopic(createdTopic.id, composerPayload)
+                            composerField.text?.clear()
+                            emojiObjPicked.clear()
+                            mentionTrackers.clear()
+                            hashtagTrackers.clear()
+                            pendingAttachments.clear()
+                            pendingStickerSend = null
+                            updateAttachmentPreview()
+                            updateSendButtonState()
+                        }
                         presentFragment(
                             TopicFragment.newInstance(
                                 topicId = createdTopic.id,
@@ -2063,7 +2104,6 @@ class CreateThreadFragment : BaseFragment() {
                             ),
                             removeLast = true
                         )
-                        sendComposerToTopic(createdTopic.id)
                     }
                     return@launch
                 }

@@ -211,10 +211,21 @@ class ChatController @Inject constructor(
 
     fun getActivePendingAttachmentMessages(cacheKey: Long): List<MessageEntity> = synchronized(this) {
         val result = ArrayList<MessageEntity>()
+        val seenTempIds = HashSet<Long>()
         for (i in 0 until attachmentJobsByTempId.size()) {
             if (attachmentJobsByTempId.valueAt(i).cacheKey != cacheKey) continue
-            val entity = pendingAttachmentEntityByTempId.get(attachmentJobsByTempId.keyAt(i)) ?: continue
+            val tempId = attachmentJobsByTempId.keyAt(i)
+            val entity = pendingAttachmentEntityByTempId.get(tempId) ?: continue
             result.add(entity)
+            seenTempIds.add(tempId)
+        }
+        for (i in 0 until pendingAttachmentEntityByTempId.size()) {
+            val tempId = pendingAttachmentEntityByTempId.keyAt(i)
+            if (seenTempIds.contains(tempId)) continue
+            val entity = pendingAttachmentEntityByTempId.valueAt(i)
+            if (entity.channelId == cacheKey && entity.isSending) {
+                result.add(entity)
+            }
         }
         result
     }
@@ -1472,12 +1483,22 @@ class ChatController @Inject constructor(
             sendState = MessageEntity.SEND_STATE_SENDING,
             topicId = topicId
         )
+        synchronized(this) {
+            pendingAttachmentEntityByTempId.put(tempId, optimistic)
+            if (attachmentJobsByTempId.get(tempId) == null) {
+                attachmentJobsByTempId.put(
+                    tempId,
+                    IncrementalAttachmentJob(
+                        tempId = tempId,
+                        cacheKey = cacheKey,
+                        totalCount = attachments.size,
+                    )
+                )
+            }
+        }
         notificationCenter.postNotificationOnMainThread(
             NotificationCenter.didReceiveNewMessages, cacheKey, optimistic
         )
-        synchronized(this) {
-            pendingAttachmentEntityByTempId.put(tempId, optimistic)
-        }
 
         appScope.launch(ioDispatcher) {
             try {
@@ -1646,13 +1667,13 @@ class ChatController @Inject constructor(
             return
         }
 
-        val job = IncrementalAttachmentJob(
-            tempId = params.tempId,
-            cacheKey = params.cacheKey,
-            totalCount = params.allItems.size,
-        )
-        synchronized(this) {
-            attachmentJobsByTempId.put(params.tempId, job)
+        val job = synchronized(this) {
+            attachmentJobsByTempId.get(params.tempId)
+                ?: IncrementalAttachmentJob(
+                    tempId = params.tempId,
+                    cacheKey = params.cacheKey,
+                    totalCount = params.allItems.size,
+                ).also { attachmentJobsByTempId.put(params.tempId, it) }
         }
 
         val cdnBaseUrl = BuildConfig.MEZON_BASE_IMG_URL
