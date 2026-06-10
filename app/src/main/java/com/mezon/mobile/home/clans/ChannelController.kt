@@ -1,5 +1,6 @@
 package com.mezon.mobile.home.clans
 
+import android.util.Log
 import com.mezon.mobile.core.NotificationCenter
 import com.mezon.mobile.core.StartupCache
 import com.mezon.mobile.data.db.ClanChannelDao
@@ -44,6 +45,7 @@ import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
 
+private const val TAG = "ChannelController"
 private const val NOTIFICATION_CODE_USER_MENTIONED = -9
 private const val NOTIFICATION_CODE_USER_REPLIED = -11
 private const val MAX_BADGE_CACHE = 500
@@ -1214,6 +1216,33 @@ class ChannelController @Inject constructor(
                 appScope.launch(ioDispatcher) { clanChannelDao.upsert(newRow) }
                 notificationCenter.postNotificationOnMainThread(NotificationCenter.channelsDidLoad, clanId)
                 return
+            }
+        }
+    }
+
+    fun requestMarkAsRead(clanId: Long, categoryId: Long = 0L, channelId: Long = 0L) {
+        if (clanId == 0L) return
+        appScope.launch {
+            runCatching {
+                sessionManager.withAutoRefresh { session ->
+                    api.markAsRead(
+                        session.apiUrl,
+                        session.token,
+                        clanId = clanId,
+                        categoryId = categoryId,
+                        channelId = channelId
+                    )
+                }
+            }.onSuccess {
+                val targetIds = markAsReadTargetIds(clanId, categoryId, channelId)
+                markTargetsAsRead(clanId, targetIds)
+                clansController.get().reconcileClanBadgeFromChannels(clanId)
+                notificationCenter.postNotificationOnMainThread(NotificationCenter.channelsDidLoad, clanId)
+                notificationCenter.postNotificationOnMainThread(
+                    NotificationCenter.updateInterfaces, NotificationCenter.UPDATE_MASK_BADGE
+                )
+            }.onFailure {
+                Log.e(TAG, "requestMarkAsRead(clan=$clanId cat=$categoryId ch=$channelId) failed", it)
             }
         }
     }
