@@ -391,9 +391,9 @@ class MezonSocket @Inject constructor(
             this.mode = mode
             this.isPublic = isPublic
             this.content = content
-            mentions?.let { this.mentions.addAll(it) }
-            attachments?.let { this.attachments.addAll(it) }
-            references?.let { this.references.addAll(it) }
+            mentions?.takeIf { it.isNotEmpty() }?.let { this.mentions.addAll(it) }
+            attachments?.takeIf { it.isNotEmpty() }?.let { this.attachments.addAll(it) }
+            references?.takeIf { it.isNotEmpty() }?.let { this.references.addAll(it) }
             this.anonymousMessage = anonymousMessage
             this.mentionEveryone = mentionEveryone
             this.avatar = avatar
@@ -413,20 +413,22 @@ class MezonSocket @Inject constructor(
         attachments: List<MessageAttachment>? = null,
         hideEditted: Boolean = false,
         topicId: Long = 0L,
-        isUpdateMsgTopic: Boolean = false
+        isUpdateMsgTopic: Boolean = false,
+        createTimeSeconds: Int = 0
     ): Envelope = send {
         this.channelMessageUpdate = channelMessageUpdate {
             this.clanId = clanId
             this.channelId = channelId
             this.messageId = messageId
             this.content = content
-            mentions?.let { this.mentions.addAll(it) }
-            attachments?.let { this.attachments.addAll(it) }
+            mentions?.takeIf { it.isNotEmpty() }?.let { this.mentions.addAll(it) }
+            attachments?.takeIf { it.isNotEmpty() }?.let { this.attachments.addAll(it) }
             this.mode = mode
             this.isPublic = isPublic
             this.hideEditted = hideEditted
-            this.topicId = topicId
-            this.isUpdateMsgTopic = isUpdateMsgTopic
+            if (topicId != 0L) this.topicId = topicId
+            if (isUpdateMsgTopic) this.isUpdateMsgTopic = isUpdateMsgTopic
+            if (createTimeSeconds > 0) this.createTimeSeconds = createTimeSeconds
         }
     }
 
@@ -824,8 +826,11 @@ class MezonSocket @Inject constructor(
                     apiDeferred.completeExceptionally(
                         SocketRpcServerException("Server error: ${error.message}", error.code)
                     )
-                } else {
-                    apiDeferred.complete(ByteArray(0))
+                } else when (envelope.messageCase) {
+                    Envelope.MessageCase.CHANNEL_MESSAGE_ACK -> {
+                        apiDeferred.complete(envelope.channelMessageAck.toByteArray())
+                    }
+                    else -> apiDeferred.complete(ByteArray(0))
                 }
                 return
             }

@@ -47,6 +47,7 @@ class ImageReceiver(private val parentView: View) {
     private val crossfadeDuration = 200f
     private var allowStartAnimation = true
     private var skipUpdateFrame = false
+    private var centerCrop = false
     private var orientation = 0
     private var invert = 0
 
@@ -97,6 +98,10 @@ class ImageReceiver(private val parentView: View) {
 
     fun setSkipUpdateFrame(skip: Boolean) {
         skipUpdateFrame = skip
+    }
+
+    fun setCenterCrop(crop: Boolean) {
+        centerCrop = crop
     }
 
     fun onAttachedToWindow() {
@@ -439,7 +444,11 @@ class ImageReceiver(private val parentView: View) {
 
             val scaleW = bmpW / imageW
             val scaleH = bmpH / imageH
-            val scale = 1f / minOf(scaleW, scaleH)
+            val scale = if (centerCrop) {
+                1f / maxOf(scaleW, scaleH)
+            } else {
+                1f / minOf(scaleW, scaleH)
+            }
 
             val scaledW = bmpW * scale
             val scaledH = bmpH * scale

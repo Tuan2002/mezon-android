@@ -397,6 +397,49 @@ fun restoreInputFromContent(content: String): RestoredInputContent {
     return RestoredInputContent(sb.toString(), mentions, hashtags, emojis)
 }
 
+fun parseMentionsFromContent(content: String): List<MentionData> {
+    if (content.isBlank()) return emptyList()
+    val cleanText = parseContentText(content)
+    if (cleanText.isBlank()) return emptyList()
+    val obj = parseContentObject(content.trim()) ?: return emptyList()
+    val mentions = mutableListOf<MentionData>()
+    obj.optJSONArray("mentions")?.let { arr ->
+        for (i in 0 until arr.length()) {
+            val j = arr.optJSONObject(i) ?: continue
+            val s = j.optInt("s", -1)
+            val e = j.optInt("e", -1)
+            if (s < 0 || e <= s || e > cleanText.length) continue
+            val userId = j.optString("user_id", "")
+            val roleId = j.optString("role_id", "")
+            val display = cleanText.substring(s, e)
+            mentions.add(
+                MentionData(
+                    userId = userId,
+                    roleId = roleId,
+                    display = display,
+                    startOffset = s,
+                    endOffset = e,
+                )
+            )
+        }
+    }
+    return mentions
+}
+
+fun remapMentionsForEdit(oldContent: String, newText: String, existing: List<MentionData>): List<MentionData> {
+    if (existing.isEmpty()) return emptyList()
+    val oldText = parseContentText(oldContent)
+    if (newText == oldText) return existing
+    return existing.mapNotNull { m ->
+        val needle = m.display
+        if (needle.isEmpty()) return@mapNotNull null
+        val searchFrom = (m.startOffset - needle.length).coerceAtLeast(0)
+        val idx = newText.indexOf(needle, searchFrom)
+        if (idx < 0) return@mapNotNull null
+        m.copy(startOffset = idx, endOffset = idx + needle.length)
+    }
+}
+
 class MarkdownParseResult(
     val cleanedText: String,
     val markers: List<MarkdownMarker>,
