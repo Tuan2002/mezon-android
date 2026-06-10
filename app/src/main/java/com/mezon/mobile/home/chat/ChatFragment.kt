@@ -5979,17 +5979,6 @@ open class ChatFragment : BaseFragment() {
         }
     }
 
-    private fun openProfileTransferFunds(
-        userId: Long,
-        displayName: String,
-        username: String
-    ) {
-        val ctx = getContext() ?: return
-        val receiverName = displayName.ifBlank { username }.ifBlank { userId.toString() }
-        val form = SendTokenFragment.buildProfileTransferFormJson(ctx, userId, receiverName)
-        presentFragment(SendTokenFragment.newInstance(form))
-    }
-
     private fun showShareContactProfile(data: ShareContactData) {
         val ctx = getContext() ?: return
         val activity = getParentActivity() ?: return
@@ -6016,7 +6005,7 @@ open class ChatFragment : BaseFragment() {
                     sendProfileFriendRequest(data.userId, data.username)
                 }
                 override fun onTransferFunds(userId: Long) {
-                    openProfileTransferFunds(data.userId, data.displayName, data.username)
+                    openProfileTransferFunds(data.userId, data.username)
                 }
             }
         )
@@ -6110,7 +6099,7 @@ open class ChatFragment : BaseFragment() {
                     sendProfileFriendRequest(msg.senderId, usernameLine)
                 }
                 override fun onTransferFunds(userId: Long) {
-                    openProfileTransferFunds(msg.senderId, displayName, usernameLine)
+                    openProfileTransferFunds(msg.senderId, usernameLine)
                 }
             }
         )
@@ -6163,7 +6152,6 @@ open class ChatFragment : BaseFragment() {
             memberSince = null,
             isOwnProfile = userId == currentUserId,
             isDM = clanId == 0L,
-            isWebhook = clanId != 0L && member == null,
             roles = profileRolesFor(member),
             listener = object : UserProfileBottomSheet.UserProfileListener {
                 override fun onSendMessage(userId: Long) {
@@ -6176,7 +6164,7 @@ open class ChatFragment : BaseFragment() {
                     sendProfileFriendRequest(userId, usernameLine)
                 }
                 override fun onTransferFunds(userId: Long) {
-                    openProfileTransferFunds(userId, displayName, usernameLine)
+                    openProfileTransferFunds(userId, usernameLine)
                 }
             }
         )

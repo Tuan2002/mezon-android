@@ -34,7 +34,6 @@ import com.mezon.mobile.home.MemberResolver
 import com.mezon.mobile.home.UserClanController
 import com.mezon.mobile.home.chat.EmojiController
 import com.mezon.mobile.home.chat.UserProfileBottomSheet
-import com.mezon.mobile.home.wallet.SendTokenFragment
 import com.mezon.mobile.home.clans.CHANNEL_TYPE_VOICE
 import com.mezon.mobile.home.clans.ChannelController
 import com.mezon.mobile.home.clans.ClansController
@@ -1451,16 +1450,19 @@ class VoiceRoomFragment : BaseFragment() {
                 memberSince = null,
                 isOwnProfile = false,
                 isDM = false,
-                listener = null,
+                listener = object : UserProfileBottomSheet.UserProfileListener {
+                    override fun onTransferFunds(userId: Long) {
+                        val transferUsername = when {
+                            member != null -> member.username.ifBlank { participant.username }
+                            else -> participant.username
+                        }.ifBlank { participantSubline }.ifBlank { displayName }
+                        openProfileTransferFunds(userId, transferUsername)
+                    }
+                },
                 voiceParticipantExtras = UserProfileBottomSheet.VoiceParticipantExtras(
                     showHeaderActions = showHeaderActions,
                     onFriendClick = {
                         showAddFriendBottomSheet()
-                    },
-                    onTransferClick = {
-                        val receiverName = displayName.ifBlank { participantSubline }.ifBlank { userId.toString() }
-                        val form = SendTokenFragment.buildProfileTransferFormJson(context, userId, receiverName)
-                        presentFragment(SendTokenFragment.newInstance(form))
                     },
                     canManageVoiceUser = canManageVoiceUser,
                     showMuteAction = showMuteAction,

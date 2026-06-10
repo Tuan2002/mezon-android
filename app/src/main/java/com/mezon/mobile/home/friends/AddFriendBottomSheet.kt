@@ -197,12 +197,12 @@ class AddFriendBottomSheet(
                     friendController.sendFriendRequest(userId, friend.user.username) {}
                 }
                 override fun onTransferFunds(userId: Long) {
-                    val receiverName = friend.user.displayName
-                        .ifBlank { friend.user.username }
-                        .ifBlank { userId.toString() }
-                    val form = SendTokenFragment.buildProfileTransferFormJson(context, userId, receiverName)
-                    val activity = AndroidUtilities.findActivity(context) as? MainActivity ?: return
-                    activity.actionBarLayout.presentFragment(SendTokenFragment.newInstance(form))
+                    SendTokenFragment.presentForProfile(
+                        context,
+                        (AndroidUtilities.findActivity(context) as? MainActivity)?.actionBarLayout,
+                        userId,
+                        friend.user.username
+                    )
                 }
             }
         )

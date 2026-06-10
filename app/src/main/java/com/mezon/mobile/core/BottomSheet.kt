@@ -1250,7 +1250,11 @@ open class BottomSheet(
         override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
             layoutCount--
             val layoutBottom = if (lastInsets != null && !drawNavigationBar) {
-                bottom - (lastInsets!!.systemWindowInsetBottom - this@BottomSheet.bottomInset)
+                if (this@BottomSheet.needFocusable && this@BottomSheet.keyboardVisible) {
+                    bottom - (lastInsets!!.systemWindowInsetBottom - this@BottomSheet.bottomInset)
+                } else {
+                    bottom - this@BottomSheet.bottomInset
+                }
             } else {
                 bottom
             }

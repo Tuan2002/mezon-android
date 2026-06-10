@@ -54,7 +54,7 @@ class UserProfileBottomSheet(
     data class VoiceParticipantExtras(
         val showHeaderActions: Boolean,
         val onFriendClick: () -> Unit,
-        val onTransferClick: () -> Unit,
+        val onTransferClick: () -> Unit = {},
         val canManageVoiceUser: Boolean,
         val showMuteAction: Boolean,
         val onMuteAction: () -> Unit,
@@ -238,20 +238,17 @@ class UserProfileBottomSheet(
             addHeaderFriendButton(container, textColor, ex.onFriendClick)
         }
 
-        if (!isOwnProfile && !isWebhook) {
+        if (!isOwnProfile && !isWebhook && userId != 0L) {
             addHeaderTransferButton(
                 container = container,
-                iconTint = textColor,
                 marginEndDp = if (voiceParticipantExtras?.showHeaderActions == true) 50 else 10,
                 onClick = {
                     dismiss()
-                    val voiceEx = voiceParticipantExtras
-                    if (voiceEx != null && voiceEx.showHeaderActions) {
-                        voiceEx.onTransferClick()
+                    val l = listener
+                    if (l != null) {
+                        l.onTransferFunds(userId)
                     } else {
-                        val l = listener
-                        if (l != null) l.onTransferFunds(userId)
-                        else Toast.makeText(context, R.string.feature_coming_soon, Toast.LENGTH_SHORT).show()
+                        Toast.makeText(context, R.string.feature_coming_soon, Toast.LENGTH_SHORT).show()
                     }
                 }
             )
@@ -318,18 +315,15 @@ class UserProfileBottomSheet(
 
     private fun addHeaderTransferButton(
         container: FrameLayout,
-        iconTint: Int,
         marginEndDp: Int,
         onClick: () -> Unit
     ) {
         val transferBtn = ImageView(context).apply {
             scaleType = ImageView.ScaleType.CENTER_INSIDE
-            setImageDrawable(MezonIcon.transactionIcon.getDrawable(context).apply {
-                colorFilter = PorterDuffColorFilter(iconTint, PorterDuff.Mode.SRC_IN)
-            })
+            setImageResource(MezonIcon.transferIcon.resId)
             background = GradientDrawable().apply {
                 shape = GradientDrawable.OVAL
-                setColor(theme.serverRailBg)
+                setColor(theme.surfaceVariant)
             }
             setPadding(LayoutHelper.dp(6), LayoutHelper.dp(6), LayoutHelper.dp(6), LayoutHelper.dp(6))
             isClickable = true

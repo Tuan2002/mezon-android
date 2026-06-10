@@ -23,11 +23,13 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+import com.mezon.mobile.MainActivity
 import com.mezon.mobile.R
 import com.mezon.mobile.core.AlertDialog
 import com.mezon.mobile.core.AndroidUtilities
 import com.mezon.mobile.core.BaseFragment
 import com.mezon.mobile.core.BottomSheet
+import com.mezon.mobile.core.INavigationLayout
 import com.mezon.mobile.core.LayoutHelper
 import com.mezon.mobile.core.NotificationCenter
 import com.mezon.mobile.di.FragmentEntryPoint
@@ -83,8 +85,9 @@ class SendTokenFragment : BaseFragment() {
         fun buildProfileTransferFormJson(
             context: android.content.Context,
             receiverId: Long,
-            receiverName: String
+            receiverUsername: String
         ): String {
+            val receiverName = receiverUsername.ifBlank { receiverId.toString() }
             return org.json.JSONObject().apply {
                 put("receiver_id", receiverId)
                 put("receiver_name", receiverName)
@@ -92,6 +95,26 @@ class SendTokenFragment : BaseFragment() {
                 put("note", context.getString(R.string.advanced_transfer_funds))
                 put("can_edit", true)
             }.toString()
+        }
+
+        fun presentForProfile(
+            context: android.content.Context,
+            navigationLayout: INavigationLayout?,
+            receiverId: Long,
+            receiverUsername: String
+        ) {
+            if (receiverId == 0L) return
+            val activity = AndroidUtilities.findActivity(context) as? MainActivity
+            val nav = navigationLayout ?: activity?.actionBarLayout ?: return
+            val present = Runnable {
+                nav.presentFragment(newInstance(buildProfileTransferFormJson(context, receiverId, receiverUsername)))
+            }
+            if (activity?.isVoiceOverlayExpanded() == true) {
+                activity.minimizeVoiceRoom()
+                activity.window?.decorView?.postDelayed(present, 320L)
+            } else {
+                present.run()
+            }
         }
     }
 
@@ -122,10 +145,6 @@ class SendTokenFragment : BaseFragment() {
     private var recipientValueText: TextView? = null
     private var amountFormatSuppress: Boolean = false
 
-    /** Set by TransferSuccessFragment callbacks to control navigation when this fragment resumes. */
-    private var shouldFinishOnResume = false
-    private var pendingNewTransfer = false
-
     /** True when opened with QR / deep-link form payload (only [QrScanFragment] passes this today). */
     private val isQrTransferFlow: Boolean
         get() = !formValue.isNullOrBlank()
@@ -152,26 +171,6 @@ class SendTokenFragment : BaseFragment() {
             refreshWalletBalance()
         }
         return true
-    }
-
-    override fun onResume() {
-        super.onResume()
-        if (shouldFinishOnResume) {
-            shouldFinishOnResume = false
-            val doNewTransfer = pendingNewTransfer.also { pendingNewTransfer = false }
-            val view = fragmentView
-            if (view != null) {
-                view.post {
-                    if (doNewTransfer) presentFragment(SendTokenFragment.newInstance())
-                    finishFragment()
-                }
-            } else {
-                android.os.Handler(android.os.Looper.getMainLooper()).post {
-                    if (doNewTransfer) presentFragment(SendTokenFragment.newInstance())
-                    finishFragment()
-                }
-            }
-        }
     }
 
     private fun parseForm(
@@ -1509,8 +1508,11 @@ class SendTokenFragment : BaseFragment() {
                                 time = timeStr
                             )
                   
-                            successFrag.onDone = { shouldFinishOnResume = true }
-                            successFrag.onNewTransfer = { shouldFinishOnResume = true; pendingNewTransfer = true }
+                            successFrag.onDone = { removeSelfFromStack() }
+                            successFrag.onNewTransfer = { removeSelfFromStack() }
+                            successFrag.onNewTransferAfterClose = {
+                                parentLayout?.presentFragment(newInstance())
+                            }
                             presentFragment(successFrag)
                             if (!toUserId.isNullOrBlank()) {
                                 fragmentScope.launch(Dispatchers.IO) {
