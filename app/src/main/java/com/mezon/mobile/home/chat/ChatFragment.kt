@@ -6004,6 +6004,9 @@ open class ChatFragment : BaseFragment() {
                 override fun onAddFriend(userId: Long) {
                     sendProfileFriendRequest(data.userId, data.username)
                 }
+                override fun onTransferFunds(userId: Long) {
+                    openProfileTransferFunds(data.userId, data.username)
+                }
             }
         )
         sheet.setDrawNavigationBar(true)
@@ -6083,6 +6086,7 @@ open class ChatFragment : BaseFragment() {
             memberSince = null,
             isOwnProfile = isOwnProfile,
             isDM = clanId == 0L,
+            isWebhook = clanId != 0L && member == null,
             roles = profileRolesFor(member),
             listener = object : UserProfileBottomSheet.UserProfileListener {
                 override fun onSendMessage(userId: Long) {
@@ -6093,6 +6097,9 @@ open class ChatFragment : BaseFragment() {
                 }
                 override fun onAddFriend(userId: Long) {
                     sendProfileFriendRequest(msg.senderId, usernameLine)
+                }
+                override fun onTransferFunds(userId: Long) {
+                    openProfileTransferFunds(msg.senderId, usernameLine)
                 }
             }
         )
@@ -6155,6 +6162,9 @@ open class ChatFragment : BaseFragment() {
                 }
                 override fun onAddFriend(userId: Long) {
                     sendProfileFriendRequest(userId, usernameLine)
+                }
+                override fun onTransferFunds(userId: Long) {
+                    openProfileTransferFunds(userId, usernameLine)
                 }
             }
         )
