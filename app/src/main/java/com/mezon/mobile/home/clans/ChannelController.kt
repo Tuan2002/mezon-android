@@ -18,6 +18,7 @@ import com.mezon.mobile.network.STREAM_MODE_DM
 import com.mezon.mobile.network.SocketEventDispatcher
 import com.mezon.mobile.network.apiCacheKey
 import com.mezon.mobile.session.SessionManager
+import com.mezon.mezon.api.CategoryDesc
 import com.mezon.mezon.api.CategoryDescList
 import com.mezon.mezon.api.ChannelDescription
 import com.mezon.mezon.rtapi.CategoryEvent
@@ -379,6 +380,35 @@ class ChannelController @Inject constructor(
                 channelId,
                 clanId
             )
+            desc
+        }
+    }
+
+    suspend fun createCategory(clanId: Long, categoryName: String): CategoryDesc {
+        if (clanId == 0L) throw IllegalArgumentException("Invalid clan")
+        return sessionManager.withAutoRefresh { session ->
+            val desc = withContext(ioDispatcher) {
+                api.createCategoryDesc(
+                    session.apiUrl,
+                    session.token,
+                    clanId,
+                    categoryName.trim(),
+                )
+            }
+            val item = normalizeCategoryItem(desc.toClanCategoryItem(), clanId)
+            if (item != null) {
+                val list = getCachedCategories(clanId).toMutableList()
+                val idx = list.indexOfFirst { it.categoryId == item.categoryId }
+                if (idx >= 0) {
+                    list[idx] = item
+                } else {
+                    list.add(item)
+                }
+                categoriesByClan[clanId] = list.sortedWith(
+                    compareBy<ClanCategoryItem> { it.categoryOrder }.thenBy { it.categoryName.lowercase() },
+                )
+            }
+            notificationCenter.postNotificationOnMainThread(NotificationCenter.channelsDidLoad, clanId)
             desc
         }
     }

@@ -507,6 +507,12 @@
     <string name="audit_log_empty_description">Khi mod bắt đầu thao tác, bạn có thể xem lại tại đây.</string>
     <string name="clan_audit_log_load_failed">Không tải được nhật ký kiểm tra.</string>
     <string name="audit_log_action_update_clan">Cập nhật clan</string>
+    <string name="category_creator_screen_title">Tạo danh mục</string>
+    <string name="category_creator_action_create">Tạo</string>
+    <string name="category_creator_name_title">Danh mục mới</string>
+    <string name="category_creator_name_placeholder">Tên danh mục</string>
+    <string name="category_creator_name_error">Vui lòng nhập tên danh mục hợp lệ (tối đa 64 ký tự, chỉ từ, số, _ hoặc -).</string>
+
     <string name="channel_creator_screen_title">Tạo kênh</string>
     <string name="audit_log_action_create_channel">Tạo kênh</string>
     <string name="audit_log_action_update_channel">Cập nhật kênh</string>
