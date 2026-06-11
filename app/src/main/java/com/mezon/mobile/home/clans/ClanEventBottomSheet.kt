@@ -1,0 +1,661 @@
+package com.mezon.mobile.home.clans
+
+import android.content.Context
+import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
+import android.os.Bundle
+import android.text.format.DateFormat
+import android.view.Gravity
+import android.view.MotionEvent
+import android.view.View
+import android.view.ViewGroup
+import android.widget.FrameLayout
+import android.widget.ImageView
+import android.widget.LinearLayout
+import android.widget.ProgressBar
+import android.widget.TextView
+import androidx.core.widget.NestedScrollView
+import com.mezon.mobile.R
+import com.mezon.mobile.network.CHANNEL_TYPE_THREAD
+import com.mezon.mobile.core.AndroidUtilities
+import com.mezon.mobile.core.BottomSheet
+import com.mezon.mobile.core.LayoutHelper
+import com.mezon.mobile.core.ThemeColors
+import com.mezon.mobile.home.ClanMember
+import com.mezon.mobile.home.UserClanController
+import com.mezon.mobile.home.chat.MezonImageLoader
+import com.mezon.mobile.home.profile.AccountController
+import com.mezon.mobile.ui.cells.AvatarView
+import com.mezon.mobile.ui.cells.MezonIcon
+import com.mezon.mobile.util.DateTimeUtil
+import com.mezon.mobile.util.avatarImgproxyUrl
+import com.mezon.mobile.util.createImgproxyUrl
+import java.util.Locale
+import kotlin.math.max
+import kotlin.math.roundToInt
+
+class ClanEventBottomSheet(
+    context: Context,
+    private val theme: ThemeColors,
+    private val clanEventController: ClanEventController,
+    private val userClanController: UserClanController,
+    private val accountController: AccountController,
+    private val clanId: Long,
+    private val onCreateEvent: Runnable,
+    private val onOpenEventDetail: (ClanEventEntity) -> Unit,
+) : BottomSheet(context) {
+
+    private val root = LinearLayout(context).apply {
+        orientation = LinearLayout.VERTICAL
+        setBackgroundColor(theme.surface)
+    }
+    private val scrollContent = LinearLayout(context).apply {
+        orientation = LinearLayout.VERTICAL
+        setPadding(LayoutHelper.dp(16), 0, LayoutHelper.dp(16), LayoutHelper.dp(16))
+    }
+    private val listContainer = LinearLayout(context).apply {
+        orientation = LinearLayout.VERTICAL
+    }
+    private val loadingView = ProgressBar(context)
+    private val emptyView = LinearLayout(context).apply {
+        orientation = LinearLayout.VERTICAL
+        gravity = Gravity.CENTER_HORIZONTAL
+        visibility = View.GONE
+    }
+    private lateinit var titleView: TextView
+    private lateinit var headerLayout: FrameLayout
+    private var eventScrollView: NestedScrollView
+    private var swipeDismissFromHeader = false
+
+    init {
+        containerHeight = (AndroidUtilities.displaySize.y * 0.8f).toInt()
+        buildHeader()
+        buildEmptyState()
+        scrollContent.addView(
+            loadingView,
+            LayoutHelper.createLinear(LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT, 0f, Gravity.CENTER_HORIZONTAL, 0f, 12f, 0f, 12f),
+        )
+        scrollContent.addView(emptyView)
+        scrollContent.addView(listContainer)
+        eventScrollView = NestedScrollView(context).apply {
+            isFillViewport = true
+            overScrollMode = View.OVER_SCROLL_NEVER
+            addView(
+                scrollContent,
+                ViewGroup.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                ),
+            )
+        }
+        root.addView(
+            eventScrollView,
+            LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f),
+        )
+        setCustomView(root)
+        loadClanEvent()
+    }
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        fixNavigationBar(theme.surface)
+        userClanController.loadClanMembers(clanId)
+        clanEventController.loadEvents(clanId, force = true)
+    }
+
+    fun loadClanEvent() {
+        val userId = accountController.accountInfo.value.userId
+        val events = clanEventController.visibleEvents(clanId, userId)
+        val loading = clanEventController.isLoading(clanId)
+        loadingView.visibility = if (loading && events.isEmpty()) View.VISIBLE else View.GONE
+        listContainer.removeAllViews()
+        emptyView.visibility = if (!loading && events.isEmpty()) View.VISIBLE else View.GONE
+        updateHeaderCount(events.size)
+        val dividerColor = theme.outlineVariant
+        events.forEachIndexed { index, event ->
+            val creator = userClanController.getClanMembers(clanId).firstOrNull { it.userId == event.creatorId }
+            val voiceChannel = clanEventController.getChannel(clanId, event.channelVoiceId)
+            listContainer.addView(
+                buildEventRow(
+                    context,
+                    theme,
+                    event,
+                    creator,
+                    userId,
+                    voiceChannel,
+                    onOpen = {
+                        dismiss()
+                        onOpenEventDetail(event)
+                    },
+                    onToggleInterest = {
+                        val interested = !event.isInterested(userId)
+                        clanEventController.setInterested(clanId, event.id, interested) { _, _ -> }
+                    },
+                ),
+                LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT),
+            )
+            if (index < events.lastIndex) {
+                listContainer.addView(
+                    View(context).apply { setBackgroundColor(dividerColor) },
+                    LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, 1, 0f, Gravity.NO_GRAVITY, 0f, 4f, 0f, 4f),
+                )
+            }
+        }
+    }
+
+    override fun canDismissWithSwipe(): Boolean = swipeDismissFromHeader
+
+    override fun onContainerTouchEvent(ev: MotionEvent): Boolean {
+        when (ev.actionMasked) {
+            MotionEvent.ACTION_DOWN -> swipeDismissFromHeader = isInHeaderZone(ev)
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> swipeDismissFromHeader = false
+        }
+        return false
+    }
+
+    private fun isInHeaderZone(ev: MotionEvent): Boolean {
+        if (!::headerLayout.isInitialized || !headerLayout.isShown) return false
+        val loc = IntArray(2)
+        headerLayout.getLocationOnScreen(loc)
+        return ev.rawY <= loc[1] + headerLayout.height
+    }
+
+    private fun buildHeader() {
+        val padH = LayoutHelper.dp(16)
+        headerLayout = FrameLayout(context).apply {
+            setPadding(padH, LayoutHelper.dp(4), padH, LayoutHelper.dp(12))
+            setBackgroundColor(theme.surface)
+        }
+        titleView = TextView(context).apply {
+            textSize = 15f
+            setTextColor(theme.textStrong)
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+        }
+        headerLayout.addView(
+            titleView,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                Gravity.CENTER,
+            ),
+        )
+        val createPadH = LayoutHelper.dp(14)
+        val createPadV = LayoutHelper.dp(7)
+        headerLayout.addView(
+            TextView(context).apply {
+                text = context.getString(R.string.clan_event_create)
+                textSize = 13f
+                setTextColor(theme.onPrimary)
+                typeface = Typeface.DEFAULT_BOLD
+                gravity = Gravity.CENTER
+                setPadding(createPadH, createPadV, createPadH, createPadV)
+                background = GradientDrawable().apply {
+                    cornerRadius = LayoutHelper.dp(8f).toFloat()
+                    setColor(theme.blurple)
+                }
+                isClickable = true
+                isFocusable = true
+                setOnClickListener {
+                    dismiss()
+                    onCreateEvent.run()
+                }
+            },
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                Gravity.END or Gravity.CENTER_VERTICAL,
+            ),
+        )
+        root.addView(headerLayout, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+        updateHeaderCount(0)
+    }
+
+    private fun updateHeaderCount(count: Int) {
+        titleView.text = if (count == 1) {
+            context.getString(R.string.clan_event_header_one)
+        } else {
+            context.getString(R.string.clan_event_header_many, count)
+        }
+    }
+
+    private fun buildEmptyState() {
+        emptyView.removeAllViews()
+        emptyView.addView(
+            FrameLayout(context).apply {
+                background = GradientDrawable().apply {
+                    shape = GradientDrawable.OVAL
+                    setColor(theme.tertiary)
+                }
+                addView(
+                    ImageView(context).apply {
+                        setImageDrawable(MezonIcon.eventTimeIcon.getDrawable(context, theme.onSurfaceVariant))
+                        scaleType = ImageView.ScaleType.FIT_CENTER
+                    },
+                    FrameLayout.LayoutParams(LayoutHelper.dp(24), LayoutHelper.dp(24), Gravity.CENTER),
+                )
+            },
+            LayoutHelper.createLinear(LayoutHelper.dp(16), LayoutHelper.dp(16), 0f, Gravity.CENTER_HORIZONTAL, 0f, 8f, 0f, 4f),
+        )
+        emptyView.addView(
+            TextView(context).apply {
+                text = context.getString(R.string.clan_event_empty_title)
+                textSize = 16f
+                setTextColor(theme.colorText)
+                typeface = Typeface.DEFAULT_BOLD
+                gravity = Gravity.CENTER
+            },
+        )
+        emptyView.addView(
+            TextView(context).apply {
+                text = context.getString(R.string.clan_event_empty_desc)
+                textSize = 13f
+                setTextColor(theme.onSurfaceVariant)
+                gravity = Gravity.CENTER
+                setPadding(LayoutHelper.dp(12), LayoutHelper.dp(6), LayoutHelper.dp(12), 0)
+            },
+        )
+    }
+
+    private fun formatEventStartTime(context: Context, startTimeSeconds: Int): String {
+        val pattern = if (DateFormat.is24HourFormat(context)) "EEE, MMM d · HH:mm" else "EEE, MMM d · h:mm a"
+        return DateTimeUtil.formatEpochSeconds(startTimeSeconds, pattern, Locale.getDefault())
+    }
+
+    private fun channelTypeLabel(context: Context, channel: ClanChannelEntity): String = when (channel.type) {
+        CHANNEL_TYPE_THREAD -> context.getString(R.string.clan_event_thread)
+        else -> context.getString(R.string.clan_event_channel)
+    }
+
+    private val EVENT_INFO_LEADING_DP = 24
+
+    private val EVENT_INFO_ICON_DP = 20
+
+    private fun buildInfoLeadingSlot(context: Context, content: View, contentSizeDp: Int = EVENT_INFO_ICON_DP): FrameLayout {
+        return FrameLayout(context).apply {
+            addView(
+                content,
+                FrameLayout.LayoutParams(
+                    LayoutHelper.dp(contentSizeDp),
+                    LayoutHelper.dp(contentSizeDp),
+                    Gravity.CENTER,
+                ),
+            )
+        }
+    }
+
+    private fun buildInfoIconLeading(
+        context: Context,
+        icon: MezonIcon,
+        iconColor: Int,
+    ): View {
+        val iconView = ImageView(context).apply {
+            setImageDrawable(icon.getDrawable(context, iconColor))
+            scaleType = ImageView.ScaleType.FIT_CENTER
+        }
+        return buildInfoLeadingSlot(context, iconView)
+    }
+
+    private fun buildInfoAvatarLeading(
+        context: Context,
+        userId: Long,
+        name: String,
+        avatarUrl: String,
+    ): View {
+        val avatar = AvatarView(context).apply {
+            setSizeDp(EVENT_INFO_LEADING_DP)
+            setRoundRadius(EVENT_INFO_LEADING_DP / 2f)
+            setInfo(userId, name)
+            if (avatarUrl.isNotEmpty()) {
+                setImageUrl(avatarImgproxyUrl(avatarUrl, LayoutHelper.dp(EVENT_INFO_LEADING_DP)))
+            }
+        }
+        return buildInfoLeadingSlot(context, avatar, EVENT_INFO_LEADING_DP)
+    }
+
+    private fun buildInlineInfoRow(
+        context: Context,
+        theme: ThemeColors,
+        icon: MezonIcon,
+        text: String,
+        iconColor: Int = theme.colorText,
+        topMarginDp: Float = 0f,
+    ): LinearLayout {
+        return buildDetailInfoRow(context, theme, buildInfoIconLeading(context, icon, iconColor), text, theme.onSurfaceVariant, topMarginDp)
+    }
+
+    private fun buildDetailInfoRow(
+        context: Context,
+        theme: ThemeColors,
+        leading: View,
+        text: String,
+        textColor: Int = theme.onSurfaceVariant,
+        topMarginDp: Float = 0f,
+    ): LinearLayout {
+        return LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            addView(
+                leading,
+                LinearLayout.LayoutParams(LayoutHelper.dp(EVENT_INFO_LEADING_DP), LayoutHelper.dp(EVENT_INFO_LEADING_DP)),
+            )
+            addView(
+                TextView(context).apply {
+                    this.text = text
+                    textSize = 14f
+                    setTextColor(textColor)
+                    setPadding(LayoutHelper.dp(10), 0, 0, 0)
+                },
+                LinearLayout.LayoutParams(0, LayoutHelper.WRAP_CONTENT, 1f),
+            )
+        }.also {
+            if (topMarginDp > 0f) {
+                it.layoutParams = LayoutHelper.createLinear(
+                    LayoutHelper.MATCH_PARENT,
+                    LayoutHelper.WRAP_CONTENT,
+                    0f,
+                    Gravity.START,
+                    0f,
+                    topMarginDp,
+                    0f,
+                    0f,
+                )
+            }
+        }
+    }
+
+    private fun buildEventLocationRow(
+        context: Context,
+        theme: ThemeColors,
+        event: ClanEventEntity,
+        voiceChannel: ClanChannelEntity?,
+        topMarginDp: Float = 4f,
+    ): View {
+        return if (event.isOfflineEvent()) {
+            buildInlineInfoRow(
+                context,
+                theme,
+                MezonIcon.locationIcon,
+                event.address,
+                theme.textStrong,
+                topMarginDp,
+            )
+        } else {
+            val label = voiceChannel?.channelLabel?.takeIf { it.isNotBlank() }
+                ?: context.getString(R.string.clan_event_private_room)
+            buildInlineInfoRow(
+                context,
+                theme,
+                MezonIcon.channelVoice,
+                label,
+                theme.textStrong,
+                topMarginDp,
+            )
+        }
+    }
+
+    private fun eventBadgeLabel(context: Context, event: ClanEventEntity): String? = when {
+        event.isPrivate -> context.getString(R.string.clan_event_badge_private)
+        event.channelId != 0L -> context.getString(R.string.clan_event_badge_channel)
+        else -> context.getString(R.string.clan_event_badge_clan)
+    }
+
+    private fun eventBadgeColor(theme: ThemeColors, event: ClanEventEntity): Int = when {
+        event.isPrivate -> theme.onSurfaceVariant
+        event.channelId != 0L -> 0xFFF97316.toInt()
+        else -> theme.blurple
+    }
+
+    private fun buildEventBadge(context: Context, theme: ThemeColors, event: ClanEventEntity): TextView {
+        return TextView(context).apply {
+            text = eventBadgeLabel(context, event).orEmpty()
+            textSize = 11f
+            setTextColor(0xFFFFFFFF.toInt())
+            typeface = Typeface.DEFAULT_BOLD
+            val padH = LayoutHelper.dp(8)
+            val padV = LayoutHelper.dp(3)
+            setPadding(padH, padV, padH, padV)
+            background = GradientDrawable().apply {
+                cornerRadius = LayoutHelper.dp(6f).toFloat()
+                setColor(eventBadgeColor(theme, event))
+            }
+        }
+    }
+
+    private fun buildEventActionChip(
+        context: Context,
+        theme: ThemeColors,
+        icon: MezonIcon,
+        label: String?,
+        onClick: () -> Unit,
+    ): View {
+        return LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            layoutParams = LinearLayout.LayoutParams(
+                LayoutHelper.MATCH_PARENT,
+                LayoutHelper.WRAP_CONTENT,
+            )
+            val padV = LayoutHelper.dp(10)
+            val padH = LayoutHelper.dp(12)
+            setPadding(padH, padV, padH, padV)
+            background = GradientDrawable().apply {
+                cornerRadius = LayoutHelper.dp(10f).toFloat()
+                setColor(theme.border)
+            }
+            isClickable = true
+            isFocusable = true
+            setOnClickListener { onClick() }
+            addView(
+                ImageView(context).apply {
+                    setImageDrawable(icon.getDrawable(context, theme.colorText))
+                },
+                LinearLayout.LayoutParams(LayoutHelper.dp(18), LayoutHelper.dp(18)),
+            )
+            if (!label.isNullOrBlank()) {
+                addView(
+                    TextView(context).apply {
+                        text = label
+                        textSize = 13f
+                        setTextColor(theme.colorText)
+                        typeface = Typeface.DEFAULT_BOLD
+                        setPadding(LayoutHelper.dp(8), 0, 0, 0)
+                    },
+                )
+            }
+        }
+    }
+
+    private fun buildEventRow(
+        context: Context,
+        theme: ThemeColors,
+        event: ClanEventEntity,
+        creator: ClanMember?,
+        currentUserId: Long,
+        voiceChannel: ClanChannelEntity?,
+        onOpen: () -> Unit,
+        onToggleInterest: () -> Unit,
+    ): View {
+        val pad = LayoutHelper.dp(16)
+        val root = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(theme.surface)
+        }
+        val content = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(pad, pad, pad, 0)
+        }
+        val openClick = View.OnClickListener { onOpen() }
+    
+        val topRow = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            isClickable = true
+            isFocusable = true
+            setOnClickListener(openClick)
+        }
+        val status = event.displayStatus()
+        val statusColor = when (status) {
+            ClanEventStatus.UPCOMING -> theme.blurple
+            ClanEventStatus.ONGOING -> 0xFF16A34A.toInt()
+            else -> theme.textStrong
+        }
+        val statusText = when (status) {
+            ClanEventStatus.UPCOMING -> context.getString(R.string.clan_event_status_upcoming, event.minutesUntilStart())
+            ClanEventStatus.ONGOING -> context.getString(R.string.clan_event_status_ongoing)
+            else -> formatEventStartTime(context, event.startTimeSeconds)
+        }
+        if (event.isStartToday()) {
+            topRow.addView(
+                TextView(context).apply {
+                    text = context.getString(R.string.clan_event_badge_new)
+                    textSize = 10f
+                    setTextColor(0xFFFFFFFF.toInt())
+                    typeface = Typeface.DEFAULT_BOLD
+                    val badgePadH = LayoutHelper.dp(6)
+                    val badgePadV = LayoutHelper.dp(2)
+                    setPadding(badgePadH, badgePadV, badgePadH, badgePadV)
+                    background = GradientDrawable().apply {
+                        cornerRadius = LayoutHelper.dp(4f).toFloat()
+                        setColor(0xFF16A34A.toInt())
+                    }
+                },
+                LinearLayout.LayoutParams(LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT).apply {
+                    rightMargin = LayoutHelper.dp(6)
+                },
+            )
+        }
+        topRow.addView(
+            ImageView(context).apply {
+                setImageDrawable(MezonIcon.eventTimeIcon.getDrawable(context, statusColor))
+                scaleType = ImageView.ScaleType.FIT_CENTER
+            },
+            LinearLayout.LayoutParams(LayoutHelper.dp(18), LayoutHelper.dp(18)),
+        )
+        topRow.addView(
+            TextView(context).apply {
+                text = statusText
+                textSize = 12f
+                setTextColor(statusColor)
+                typeface = Typeface.DEFAULT_BOLD
+                setPadding(LayoutHelper.dp(6), 0, 0, 0)
+            },
+            LinearLayout.LayoutParams(0, LayoutHelper.WRAP_CONTENT, 1f),
+        )
+    
+        val rightMeta = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        rightMeta.addView(
+            AvatarView(context).apply {
+                setSizeDp(24)
+                setRoundRadius(12f)
+                val name = creator?.displayName.orEmpty().ifBlank { creator?.username.orEmpty() }
+                setInfo(creator?.userId ?: 0L, name)
+                val avatar = creator?.clanAvatar?.ifBlank { creator.avatarUrl }.orEmpty()
+                if (avatar.isNotEmpty()) setImageUrl(avatar)
+            },
+        )
+        rightMeta.addView(
+            ImageView(context).apply {
+                setImageDrawable(MezonIcon.groupIcon.getDrawable(context, theme.colorText))
+                scaleType = ImageView.ScaleType.CENTER_INSIDE
+                setPadding(LayoutHelper.dp(6), 0, LayoutHelper.dp(2), 0)
+            },
+            LinearLayout.LayoutParams(LayoutHelper.dp(14), LayoutHelper.dp(14)),
+        )
+        rightMeta.addView(
+            TextView(context).apply {
+                text = event.interestedCount.toString()
+                textSize = 12f
+                setTextColor(theme.colorText)
+            },
+        )
+        topRow.addView(rightMeta)
+        content.addView(
+            topRow,
+            LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, 0f, Gravity.NO_GRAVITY, 0f, 0f, 0f, 10f),
+        )
+    
+        val mainRow = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            isClickable = true
+            isFocusable = true
+            setOnClickListener(openClick)
+        }
+        val textCol = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(0, LayoutHelper.WRAP_CONTENT, 1f)
+        }
+        if (eventBadgeLabel(context, event) != null) {
+            textCol.addView(
+                buildEventBadge(context, theme, event),
+                LayoutHelper.createLinear(LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT, 0f, Gravity.START, 0f, 0f, 0f, 6f),
+            )
+        }
+        textCol.addView(
+            TextView(context).apply {
+                text = event.title
+                textSize = 15f
+                setTextColor(theme.textStrong)
+                typeface = Typeface.DEFAULT_BOLD
+            },
+        )
+        if (event.description.isNotBlank()) {
+            textCol.addView(
+                TextView(context).apply {
+                    text = event.description
+                    textSize = 13f
+                    setTextColor(theme.onSurfaceVariant)
+                    maxLines = 2
+                },
+                LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, 0f, Gravity.START, 0f, 4f, 0f, 0f),
+            )
+        }
+        textCol.addView(buildEventLocationRow(context, theme, event, voiceChannel, 4f))
+        mainRow.addView(textCol)
+        if (event.logo.isNotBlank()) {
+            val logoWrap = FrameLayout(context).apply {
+                background = GradientDrawable().apply {
+                    cornerRadius = LayoutHelper.dp(8f).toFloat()
+                    setColor(theme.tertiary)
+                }
+            }
+            val logoView = ImageView(context).apply {
+                scaleType = ImageView.ScaleType.CENTER_CROP
+            }
+            logoWrap.addView(logoView, FrameLayout.LayoutParams(LayoutHelper.dp(56), LayoutHelper.dp(56)))
+            MezonImageLoader.getInstance(context).load(event.logo, 112, LayoutHelper.dp(56), onSuccess = { bitmap ->
+                logoView.setImageBitmap(bitmap)
+            })
+            mainRow.addView(
+                logoWrap,
+                LinearLayout.LayoutParams(LayoutHelper.dp(56), LayoutHelper.dp(56)).apply {
+                    leftMargin = LayoutHelper.dp(10)
+                },
+            )
+        }
+        content.addView(
+            mainRow,
+            LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, 0f, Gravity.NO_GRAVITY, 0f, 0f, 0f, 10f),
+        )
+
+        val interested = event.isInterested(currentUserId)
+        content.addView(
+            buildEventActionChip(
+                context,
+                theme,
+                if (interested) MezonIcon.bellSlashIcon else MezonIcon.bellIcon,
+                if (interested) context.getString(R.string.clan_event_uninterested) else context.getString(R.string.clan_event_interested),
+                onToggleInterest,
+            ),
+            LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, 0f, Gravity.NO_GRAVITY, 0f, 12f, 0f, 8f),
+        )
+        root.addView(
+            content,
+            LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT),
+        )
+        return root
+    }
+}

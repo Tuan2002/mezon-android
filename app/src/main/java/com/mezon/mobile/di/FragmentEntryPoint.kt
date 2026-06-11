@@ -34,6 +34,7 @@ import com.mezon.mobile.home.clans.PermissionPolicy
 import com.mezon.mobile.home.clans.settings.CommunitySettingsController
 import com.mezon.mobile.home.clans.channelapp.ChannelAppController
 import com.mezon.mobile.home.friends.FriendController
+import com.mezon.mobile.home.clans.ClanEventController
 import com.mezon.mobile.home.clans.RoleController
 import com.mezon.mobile.home.clans.settings.InvitePeopleController
 import com.mezon.mobile.home.notifications.NotificationStore
@@ -98,6 +99,7 @@ interface FragmentEntryPoint {
     fun roleController(): RoleController
     fun communitySettingsController(): CommunitySettingsController
     fun invitePeopleController(): InvitePeopleController
+    fun clanEventController(): ClanEventController
     fun pinMessageController(): PinMessageController
     fun channelFilesController(): ChannelFilesController
     fun channelGalleryController(): ChannelGalleryController

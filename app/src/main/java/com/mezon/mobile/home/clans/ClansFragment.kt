@@ -86,7 +86,9 @@ class ClansFragment : BaseFragment() {
     private lateinit var roleController: RoleController
     private lateinit var permissionPolicy: PermissionPolicy
     private lateinit var invitePeopleController: InvitePeopleController
+    private lateinit var clanEventController: ClanEventController
     private var clanMenuSheet: ClanMenuBottomSheet? = null
+    private var clanEventSheet: ClanEventBottomSheet? = null
 
     var onOpenChat: ((channelId: Long, channelName: String, clanId: Long, channelType: Int) -> Unit)? = null
     var onSwitchToMessages: (() -> Unit)? = null
@@ -138,6 +140,7 @@ class ClansFragment : BaseFragment() {
         roleController = entryPoint.roleController()
         permissionPolicy = entryPoint.permissionPolicy()
         invitePeopleController = entryPoint.invitePeopleController()
+        clanEventController = entryPoint.clanEventController()
     }
 
     override fun onFragmentCreate(): Boolean {
@@ -171,6 +174,14 @@ class ClansFragment : BaseFragment() {
             if (clanId == clansController.selectedClanId.value) {
                 updateMemberCount()
                 syncVoiceMembersUi()
+                clanEventSheet?.loadClanEvent()
+            }
+        }
+        observe(NotificationCenter.clanEventsDidLoad) { _, _, args ->
+            if (fragmentView == null) return@observe
+            val clanId = args.firstOrNull() as? Long ?: return@observe
+            if (clanId == clansController.selectedClanId.value) {
+                clanEventSheet?.loadClanEvent()
             }
         }
         observe(NotificationCenter.dialogsNeedReload) { _, _, _ ->
@@ -234,6 +245,8 @@ class ClansFragment : BaseFragment() {
     override fun onFragmentDestroy() {
         clanMenuSheet?.dismiss()
         clanMenuSheet = null
+        clanEventSheet?.dismiss()
+        clanEventSheet = null
         super.onFragmentDestroy()
     }
 
@@ -574,9 +587,7 @@ class ClansFragment : BaseFragment() {
             setPadding(pad, pad, pad, pad)
             isClickable = true
             isFocusable = true
-            setOnClickListener {
-                Toast.makeText(context, getString(R.string.feature_coming_soon), Toast.LENGTH_SHORT).show()
-            }
+            setOnClickListener { openClanEventsSheet() }
         }
         navBar.addView(eventButton, LinearLayout.LayoutParams(
             LayoutHelper.dp(32), LayoutHelper.dp(32)
@@ -879,6 +890,56 @@ class ClansFragment : BaseFragment() {
         presentFragment(fragment)
     }
 
+    private fun openClanEventsSheet() {
+        val ctx = fragmentView?.context ?: return
+        val clanId = clansController.selectedClanId.value
+        if (clanId == 0L) return
+        dismissClanEventSheet()
+        val sheet = ClanEventBottomSheet(
+            ctx,
+            themeColors,
+            clanEventController,
+            userClanController,
+            accountController,
+            clanId,
+            onCreateEvent = Runnable { showCreateEventComingSoon() },
+            onOpenEventDetail = { event -> openClanEventDetail(event) },
+        ).apply {
+            setDrawNavigationBar(true)
+        }
+        clanEventSheet = sheet
+        sheet.show()
+    }
+
+    private fun openClanEventDetail(event: ClanEventEntity) {
+        val clanId = clansController.selectedClanId.value
+        if (clanId == 0L) return
+        val clan = clansController.clans.value.firstOrNull { it.clanId == clanId }
+        clanEventSheet?.dismiss()
+        clanEventSheet = null
+        presentFragment(
+            ClanEventDetailFragment.newInstance(
+                clanId,
+                event.id,
+                clan?.clanName.orEmpty(),
+                clan?.logo.orEmpty(),
+            ),
+        )
+    }
+
+    private fun showCreateEventComingSoon() {
+        Toast.makeText(
+            fragmentView?.context,
+            getString(R.string.feature_coming_soon),
+            Toast.LENGTH_SHORT,
+        ).show()
+    }
+
+    private fun dismissClanEventSheet() {
+        clanEventSheet?.dismiss()
+        clanEventSheet = null
+    }
+
     private fun openInvitePeopleSheet(clanId: Long, clanName: String, clanLogo: String) {
         val ctx = fragmentView?.context ?: return
         InvitePeopleBottomSheet(
@@ -953,6 +1014,9 @@ class ClansFragment : BaseFragment() {
                     dismissClanMenuThen(Runnable {
                         presentFragment(CreateCategoryFragment())
                     })
+                },
+                Runnable {
+                    dismissClanMenuThen(Runnable { showCreateEventComingSoon() })
                 },
                 Runnable { confirmLeaveOrDeleteClan(clanId, clan.clanName, isLeave = true) },
                 Runnable { confirmLeaveOrDeleteClan(clanId, clan.clanName, isLeave = false) },
