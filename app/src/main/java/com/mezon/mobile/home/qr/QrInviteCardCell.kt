@@ -16,6 +16,15 @@ class QrInviteCardCell(
     private val theme: ThemeColors
 ) : BaseCell(context) {
 
+    companion object {
+        private val CARD_RADIUS = LayoutHelper.dp(16f).toFloat()
+        private val LOGO_CIRCLE_RADIUS = LayoutHelper.dp(13f).toFloat()
+        private val LOGO_TEXT_GAP = LayoutHelper.dp(8)
+        private val AVATAR_BG_PAD = LayoutHelper.dp(3f).toFloat()
+        private val AVATAR_BG_RADIUS = LayoutHelper.dp(8f).toFloat()
+        private val DIVIDER_MARGIN = LayoutHelper.dp(24f).toFloat()
+    }
+
     data class Model(
         val title: String,
         val subtitle: String,
@@ -135,22 +144,20 @@ class QrInviteCardCell(
         val m = model ?: return
         val w = width.toFloat()
 
-        val cardRadius = LayoutHelper.dp(16f).toFloat()
         cardRect.set(
             cardPad.toFloat(),
             cardTop.toFloat(),
             w - cardPad,
             totalH.toFloat()
         )
-        canvas.drawRoundRect(cardRect, cardRadius, cardRadius, cardPaint)
+        canvas.drawRoundRect(cardRect, CARD_RADIUS, CARD_RADIUS, cardPaint)
 
-        val cirRadius = LayoutHelper.dp(13f).toFloat()
-        val logoStartX = w / 2f - (cirRadius * 2 + LayoutHelper.dp(8) + logoTextPaint.measureText("Mezon")) / 2f
-        val cirCx = logoStartX + cirRadius
+        val logoStartX = w / 2f - (LOGO_CIRCLE_RADIUS * 2 + LOGO_TEXT_GAP + logoTextPaint.measureText("Mezon")) / 2f
+        val cirCx = logoStartX + LOGO_CIRCLE_RADIUS
         val cirCy = logoRowY.toFloat()
-        canvas.drawCircle(cirCx, cirCy, cirRadius, logoCirPaint)
+        canvas.drawCircle(cirCx, cirCy, LOGO_CIRCLE_RADIUS, logoCirPaint)
 
-        val textX = cirCx + cirRadius + LayoutHelper.dp(8)
+        val textX = cirCx + LOGO_CIRCLE_RADIUS + LOGO_TEXT_GAP
         val textY = cirCy - (logoTextPaint.descent() + logoTextPaint.ascent()) / 2f
         canvas.drawText("Mezon", textX, textY, logoTextPaint)
 
@@ -160,22 +167,20 @@ class QrInviteCardCell(
         )
         canvas.drawBitmap(m.qrBitmap, null, qrBitmapRect, null)
 
-        val avPad = LayoutHelper.dp(3f).toFloat()
         avatarBgRect.set(
-            avatarLeft - avPad,
-            avatarTop - avPad,
-            avatarLeft + avatarSizePx + avPad,
-            avatarTop + avatarSizePx + avPad
+            avatarLeft - AVATAR_BG_PAD,
+            avatarTop - AVATAR_BG_PAD,
+            avatarLeft + avatarSizePx + AVATAR_BG_PAD,
+            avatarTop + avatarSizePx + AVATAR_BG_PAD
         )
         canvas.drawRoundRect(
             avatarBgRect,
-            LayoutHelper.dp(8f).toFloat(),
-            LayoutHelper.dp(8f).toFloat(),
+            AVATAR_BG_RADIUS,
+            AVATAR_BG_RADIUS,
             avatarBgPaint
         )
 
-        val divMargin = LayoutHelper.dp(24f).toFloat()
-        canvas.drawLine(divMargin, dividerY, w - divMargin, dividerY, dividerPaint)
+        canvas.drawLine(DIVIDER_MARGIN, dividerY, w - DIVIDER_MARGIN, dividerY, dividerPaint)
 
         canvas.drawText("Powered by Mezon", w / 2f, footerY, footerPaint)
     }

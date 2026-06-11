@@ -15,6 +15,15 @@ import com.mezon.mobile.core.ThemeColors
 
 class RadioCell(context: Context, private val theme: ThemeColors) : BaseCell(context) {
 
+    companion object {
+        private val RING_STROKE_WIDTH = LayoutHelper.dpf(2f)
+        private val CHECK_START_DX = LayoutHelper.dpf(3f)
+        private val CHECK_MID_DX = LayoutHelper.dpf(0.5f)
+        private val CHECK_MID_DY = LayoutHelper.dpf(2.5f)
+        private val CHECK_END_DX = LayoutHelper.dpf(3.5f)
+        private val CHECK_END_DY = LayoutHelper.dpf(2.5f)
+    }
+
     var drawSelectionAsCheckmark: Boolean = true
 
     private var checked = false
@@ -76,7 +85,7 @@ class RadioCell(context: Context, private val theme: ThemeColors) : BaseCell(con
     }
 
     private fun drawRingOrFilledPrimaryWithCenterDot(canvas: Canvas, cx: Float, cy: Float) {
-        val ringStrokeWidth = LayoutHelper.dpf(2f)
+        val ringStrokeWidth = RING_STROKE_WIDTH
         val prevStyle = theme.radioPaint.style
         val prevStroke = theme.radioPaint.strokeWidth
         val maxR = baseRadiusPx()
@@ -112,9 +121,9 @@ class RadioCell(context: Context, private val theme: ThemeColors) : BaseCell(con
 
             theme.checkPaint.alpha = (255 * progress).toInt()
             checkPath.reset()
-            checkPath.moveTo(cx - LayoutHelper.dpf(3f), cy)
-            checkPath.lineTo(cx - LayoutHelper.dpf(0.5f), cy + LayoutHelper.dpf(2.5f))
-            checkPath.lineTo(cx + LayoutHelper.dpf(3.5f), cy - LayoutHelper.dpf(2.5f))
+            checkPath.moveTo(cx - CHECK_START_DX, cy)
+            checkPath.lineTo(cx - CHECK_MID_DX, cy + CHECK_MID_DY)
+            checkPath.lineTo(cx + CHECK_END_DX, cy - CHECK_END_DY)
             canvas.drawPath(checkPath, theme.checkPaint)
             theme.checkPaint.alpha = 255
         }

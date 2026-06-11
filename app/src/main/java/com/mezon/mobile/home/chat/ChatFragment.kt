@@ -333,6 +333,7 @@ open class ChatFragment : BaseFragment() {
     private var isViewingOlder = false
     private var scrollingManually = false
     private var pendingPartialUpdateMask = 0
+    private var pendingFullVisibleUpdate = false
     private var firstLoad = true
     private var newUnreadCount = 0
     private var lastSeenMessageId = 0L
@@ -1165,7 +1166,7 @@ open class ChatFragment : BaseFragment() {
         }
 
         observe(NotificationCenter.audioPlaybackStateChanged) { _, _, args ->
-            if (fragmentView == null) return@observe
+            if (fragmentView == null || isPaused) return@observe
             val messageId = args.getOrNull(0) as? Long ?: return@observe
             val isPlaying = args.getOrNull(1) as? Boolean ?: false
             val isLoading = args.getOrNull(2) as? Boolean ?: false
@@ -2225,7 +2226,11 @@ open class ChatFragment : BaseFragment() {
                         }
                         markVisibleAsRead()
                         refreshVisiblePollTalliesFromServer()
-                        if (pendingPartialUpdateMask != 0) {
+                        if (pendingFullVisibleUpdate) {
+                            pendingFullVisibleUpdate = false
+                            pendingPartialUpdateMask = 0
+                            updateVisibleRows(0)
+                        } else if (pendingPartialUpdateMask != 0) {
                             val mask = pendingPartialUpdateMask
                             pendingPartialUpdateMask = 0
                             updateVisibleRows(mask)
@@ -3674,8 +3679,12 @@ open class ChatFragment : BaseFragment() {
 
     private fun updateVisibleRows(mask: Int = 0) {
         if (isPaused) return
-        if (scrollingManually && mask != 0) {
-            pendingPartialUpdateMask = pendingPartialUpdateMask or mask
+        if (scrollingManually) {
+            if (mask != 0) {
+                pendingPartialUpdateMask = pendingPartialUpdateMask or mask
+            } else {
+                pendingFullVisibleUpdate = true
+            }
             return
         }
         val count = recyclerView.childCount
@@ -3687,6 +3696,12 @@ open class ChatFragment : BaseFragment() {
                     if (mask == 0) {
                         if (updated !== msg) child.update(0, updated)
                     } else {
+                        val entityDerivedOnly = mask and (
+                            NotificationCenter.UPDATE_MASK_MESSAGE_TEXT or
+                                NotificationCenter.UPDATE_MASK_BADGE or
+                                NotificationCenter.UPDATE_MASK_READ_DIALOG_MESSAGE
+                            ).inv() == 0
+                        if (entityDerivedOnly && updated === msg) continue
                         child.update(mask, if (updated !== msg) updated else null)
                     }
                 }

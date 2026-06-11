@@ -58,6 +58,11 @@ class ImageReceiver(private val parentView: View) {
     private val roundRect = RectF()
     private val drawRegion = RectF()
     private val radii = FloatArray(8)
+    private var roundPathX = Float.NaN
+    private var roundPathY = 0f
+    private var roundPathW = 0f
+    private var roundPathH = 0f
+    private val roundPathRadii = IntArray(4)
 
     private var cachedShader: BitmapShader? = null
     private var cachedShaderBitmap: Bitmap? = null
@@ -107,6 +112,7 @@ class ImageReceiver(private val parentView: View) {
     fun onAttachedToWindow() {
         if (attached) return
         attached = true
+        animatedDrawable?.callback = animationCallback
         val hasPending = pendingLoad != null || pendingLocalUri != null
         if (!hasPending && allowStartAnimation) {
             (animatedDrawable as? Animatable)?.start()
@@ -133,6 +139,7 @@ class ImageReceiver(private val parentView: View) {
     fun onDetachedFromWindow() {
         attached = false
         (animatedDrawable as? Animatable)?.stop()
+        animatedDrawable?.callback = null
         mainCancellable?.cancel()
         mainCancellable = null
         thumbCancellable?.cancel()
@@ -158,7 +165,14 @@ class ImageReceiver(private val parentView: View) {
         if (!urlChanged && !thumbChanged && (hasLoadedImage || hasActiveRequest)) return
 
         if (!attached) {
-            recycle()
+            if (urlChanged) {
+                recycle()
+            } else {
+                mainCancellable?.cancel()
+                mainCancellable = null
+                thumbCancellable?.cancel()
+                thumbCancellable = null
+            }
             pendingLoad = Pair(url, thumbUrl)
             return
         }
@@ -388,19 +402,7 @@ class ImageReceiver(private val parentView: View) {
         val hasRound = roundRadius.any { it > 0 }
 
         if (hasRound) {
-            roundRect.set(imageX, imageY, imageX + imageW, imageY + imageH)
-            val r0 = roundRadius[0]
-            if (r0 == roundRadius[1] && r0 == roundRadius[2] && r0 == roundRadius[3]) {
-                roundPath.reset()
-                roundPath.addRoundRect(roundRect, r0.toFloat(), r0.toFloat(), Path.Direction.CW)
-            } else {
-                for (i in roundRadius.indices) {
-                    radii[i * 2] = roundRadius[i].toFloat()
-                    radii[i * 2 + 1] = roundRadius[i].toFloat()
-                }
-                roundPath.reset()
-                roundPath.addRoundRect(roundRect, radii, Path.Direction.CW)
-            }
+            updateRoundPathIfNeeded()
             canvas.clipPath(roundPath)
         } else {
             canvas.clipRect(imageX, imageY, imageX + imageW, imageY + imageH)
@@ -489,13 +491,7 @@ class ImageReceiver(private val parentView: View) {
                         canvas.drawRoundRect(roundRect, r0.toFloat(), r0.toFloat(), roundPaint)
                     }
                 } else {
-                    for (i in roundRadius.indices) {
-                        radii[i * 2] = roundRadius[i].toFloat()
-                        radii[i * 2 + 1] = roundRadius[i].toFloat()
-                    }
-                    roundPath.reset()
-                    roundPath.addRoundRect(roundRect, radii, Path.Direction.CW)
-                    roundPath.close()
+                    updateRoundPathIfNeeded()
                     canvas.drawPath(roundPath, roundPaint)
                 }
 
@@ -517,6 +513,34 @@ class ImageReceiver(private val parentView: View) {
             onBitmapException()
             return false
         }
+    }
+
+    private fun updateRoundPathIfNeeded() {
+        if (roundPathX == imageX && roundPathY == imageY &&
+            roundPathW == imageW && roundPathH == imageH &&
+            roundPathRadii[0] == roundRadius[0] && roundPathRadii[1] == roundRadius[1] &&
+            roundPathRadii[2] == roundRadius[2] && roundPathRadii[3] == roundRadius[3]
+        ) {
+            return
+        }
+        roundPathX = imageX
+        roundPathY = imageY
+        roundPathW = imageW
+        roundPathH = imageH
+        roundRadius.copyInto(roundPathRadii)
+        roundRect.set(imageX, imageY, imageX + imageW, imageY + imageH)
+        roundPath.reset()
+        val r0 = roundRadius[0]
+        if (r0 == roundRadius[1] && r0 == roundRadius[2] && r0 == roundRadius[3]) {
+            roundPath.addRoundRect(roundRect, r0.toFloat(), r0.toFloat(), Path.Direction.CW)
+        } else {
+            for (i in roundRadius.indices) {
+                radii[i * 2] = roundRadius[i].toFloat()
+                radii[i * 2 + 1] = roundRadius[i].toFloat()
+            }
+            roundPath.addRoundRect(roundRect, radii, Path.Direction.CW)
+        }
+        roundPath.close()
     }
 
     private fun getOrCreateShader(bmp: Bitmap): BitmapShader {
@@ -552,6 +576,7 @@ class ImageReceiver(private val parentView: View) {
 
     fun hasImage(): Boolean = imageBitmap != null || thumbBitmap != null || animatedDrawable != null
     fun hasMainImage(): Boolean = imageBitmap != null || animatedDrawable != null
+    fun hasAnimatedImage(): Boolean = animatedDrawable != null
 
     fun shouldAnimateLoadingPlaceholder(): Boolean {
         if (loadExhausted) return false

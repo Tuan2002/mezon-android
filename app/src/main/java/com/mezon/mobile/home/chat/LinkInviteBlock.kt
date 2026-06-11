@@ -373,7 +373,7 @@ class LinkInviteBlock(
                     canvas.translate(textLeft, iy)
                     it.draw(canvas)
                     canvas.restore()
-                    iy += it.height + LayoutHelper.dp(2)
+                    iy += it.height + INVALID_TITLE_GAP
                 }
                 invalidMsgLayout?.let {
                     canvas.save()
@@ -460,6 +460,7 @@ class LinkInviteBlock(
         private val AVATAR = LayoutHelper.dp(48)
         private val ROW_GAP = LayoutHelper.dp(10)
         private val JOIN_V = LayoutHelper.dp(6)
+        private val INVALID_TITLE_GAP = LayoutHelper.dp(2)
         private const val CARD_TITLE_SP = 11f
         private const val CHANNEL_TEXT_SP = 12f
     }

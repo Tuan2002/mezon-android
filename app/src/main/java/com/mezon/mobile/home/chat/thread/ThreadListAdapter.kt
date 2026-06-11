@@ -38,14 +38,7 @@ class ThreadListAdapter(
             }
         }
         diffJob?.cancel()
-        if (!animateChanges) {
-            items.clear()
-            items.addAll(newItems)
-            displayNames = resolveNames(threads)
-            notifyDataSetChanged()
-            return
-        }
-        if (items.size > 50 || newItems.size > 50) {
+        if (items.size >= 50 || newItems.size >= 50) {
             val old = items
             diffJob = adapterScope.launch {
                 val result = withContext(Dispatchers.Default) {
@@ -124,6 +117,7 @@ class ThreadListAdapter(
 
     override fun onDetachedFromRecyclerView(recyclerView: RecyclerView) {
         super.onDetachedFromRecyclerView(recyclerView)
+        diffJob?.cancel()
         adapterScope.cancel()
     }
 

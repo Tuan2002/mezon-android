@@ -14,6 +14,10 @@ class DiscoverRailCell(
     private val themeColors: ThemeColors
 ) : View(context) {
 
+    companion object {
+        private val CORNER_RADIUS = LayoutHelper.dp(8).toFloat()
+    }
+
     private val iconSizePx = LayoutHelper.dp(42)
     private val iconDrawableSizePx = LayoutHelper.dp(28)
     private val joinDrawable: Drawable = MezonIcon.joinClanIcon.getDrawable(context)
@@ -42,8 +46,8 @@ class DiscoverRailCell(
             cy - half,
             cx + half,
             cy + half,
-            LayoutHelper.dp(8).toFloat(),
-            LayoutHelper.dp(8).toFloat(),
+            CORNER_RADIUS,
+            CORNER_RADIUS,
             bgPaint
         )
         MezonIcon.drawIcon(canvas, joinDrawable, cx.toInt(), cy.toInt(), iconDrawableSizePx)

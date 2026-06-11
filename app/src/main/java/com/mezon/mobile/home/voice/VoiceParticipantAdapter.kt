@@ -32,14 +32,28 @@ class VoiceParticipantAdapter(
     private val isCompactMode: () -> Boolean
 ) : RecyclerView.Adapter<VoiceParticipantAdapter.ParticipantVH>() {
 
+    private var items: List<ParticipantInfo> = ArrayList(getParticipants())
+
     init {
         setHasStableIds(true)
+        registerAdapterDataObserver(object : RecyclerView.AdapterDataObserver() {
+            override fun onChanged() = refreshItems()
+            override fun onItemRangeChanged(positionStart: Int, itemCount: Int) = refreshItems()
+            override fun onItemRangeChanged(positionStart: Int, itemCount: Int, payload: Any?) = refreshItems()
+            override fun onItemRangeInserted(positionStart: Int, itemCount: Int) = refreshItems()
+            override fun onItemRangeRemoved(positionStart: Int, itemCount: Int) = refreshItems()
+            override fun onItemRangeMoved(fromPosition: Int, toPosition: Int, itemCount: Int) = refreshItems()
+        })
     }
 
-    override fun getItemCount(): Int = getParticipants().size
+    private fun refreshItems() {
+        items = ArrayList(getParticipants())
+    }
+
+    override fun getItemCount(): Int = items.size
 
     override fun getItemId(position: Int): Long {
-        val item = getParticipants()[position]
+        val item = items.getOrNull(position) ?: return RecyclerView.NO_ID
         return itemKeyProvider(item).hashCode().toLong()
     }
 
@@ -66,7 +80,7 @@ class VoiceParticipantAdapter(
     }
 
     override fun onBindViewHolder(holder: ParticipantVH, position: Int) {
-        val participant = getParticipants()[position]
+        val participant = items[position]
         holder.participant = participant
         holder.cell.layoutParams = createLayoutParams(isCompactMode())
         holder.cell.setParticipant(

@@ -22,6 +22,13 @@ import com.mezon.mobile.core.LayoutHelper
 import com.mezon.mobile.core.ThemeColors
 import com.mezon.mobile.ui.cells.AvatarView
 import java.util.Locale
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class FriendPickerAdapter(
     private val context: Context,
@@ -35,7 +42,8 @@ class FriendPickerAdapter(
     private val rows = ArrayList<Row>()
     private val selectedIds = LinkedHashSet<Long>()
     private var defaultSelectedIds = emptySet<Long>()
-    private var searchListMode = false
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private var diffJob: Job? = null
 
     init {
         setHasStableIds(true)
@@ -45,7 +53,7 @@ class FriendPickerAdapter(
         defaultSelectedIds = ids
         selectedIds.clear()
         selectedIds.addAll(ids)
-        notifyDataSetChanged()
+        refreshSelectionUi()
         onSelectionChanged(ArrayList(selectedIds))
     }
 
@@ -53,17 +61,29 @@ class FriendPickerAdapter(
 
     fun submitFriends(friends: List<Friend>, searching: Boolean) {
         val nextRows = buildRows(friends, searching)
-        if (searching != searchListMode) {
-            searchListMode = searching
-            rows.clear()
-            rows.addAll(nextRows)
-            notifyDataSetChanged()
-            return
+        diffJob?.cancel()
+        if (rows.size < 50 && nextRows.size < 50) {
+            applyRows(nextRows, DiffUtil.calculateDiff(RowDiffCallback(rows, nextRows)))
+        } else {
+            val oldRows = ArrayList(rows)
+            diffJob = scope.launch {
+                val result = withContext(Dispatchers.Default) {
+                    DiffUtil.calculateDiff(RowDiffCallback(oldRows, nextRows))
+                }
+                applyRows(nextRows, result)
+            }
         }
-        val diff = DiffUtil.calculateDiff(RowDiffCallback(rows, nextRows))
+    }
+
+    private fun applyRows(nextRows: List<Row>, result: DiffUtil.DiffResult) {
         rows.clear()
         rows.addAll(nextRows)
-        diff.dispatchUpdatesTo(this)
+        result.dispatchUpdatesTo(this)
+    }
+
+    override fun onDetachedFromRecyclerView(recyclerView: RecyclerView) {
+        diffJob?.cancel()
+        scope.cancel()
     }
 
     override fun getItemId(position: Int): Long {

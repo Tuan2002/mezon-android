@@ -26,6 +26,7 @@ import javax.inject.Singleton
 
 private const val FRIEND_LOG = "FriendController"
 private const val FRIEND_RELATIONS_FOREGROUND_THROTTLE_MS = 30_000L
+private const val FRIEND_RELATIONS_NOTIFICATION_DEBOUNCE_MS = 5_000L
 
 @Singleton
 class FriendController @Inject constructor(
@@ -58,6 +59,7 @@ class FriendController @Inject constructor(
 
     private val friendRelationsForegroundThrottleLock = Any()
     private var lastFriendRelationsForegroundRefreshElapsedMs = 0L
+    private var lastFriendRelationsNotificationRefreshElapsedMs = 0L
 
     private val listFriendsCombinedCacheKey = apiCacheKey("listFriends", "all")
     private val friendsCacheKey = apiCacheKey("listFriends", 0)
@@ -78,7 +80,19 @@ class FriendController @Inject constructor(
             val content = notification.content.toStringUtf8().lowercase()
             val hasFriendSignal = notificationSuggestsFriendRelationRefresh(subject, content)
             if (hasFriendSignal) {
-                loadFriendRelations(noCache = true)
+                val now = SystemClock.elapsedRealtime()
+                val shouldRefresh = synchronized(friendRelationsForegroundThrottleLock) {
+                    val last = lastFriendRelationsNotificationRefreshElapsedMs
+                    if (last != 0L && now - last < FRIEND_RELATIONS_NOTIFICATION_DEBOUNCE_MS) {
+                        false
+                    } else {
+                        lastFriendRelationsNotificationRefreshElapsedMs = now
+                        true
+                    }
+                }
+                if (shouldRefresh) {
+                    loadFriendRelations(noCache = true)
+                }
             } else if (BuildConfig.DEBUG) {
                 val subj = notification.subject
                 if (subj.isNotBlank() || content.isNotBlank()) {

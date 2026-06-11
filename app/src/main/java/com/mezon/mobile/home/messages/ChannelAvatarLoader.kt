@@ -54,7 +54,9 @@ fun loadChannelAvatar(
     }
 
     val proxyUrl = avatarImgproxyUrl(url, request.sizePx).ifEmpty { url }
-    if (state.loadKey == proxyUrl && avatarDrawable.hasPhoto()) return
+    val keyChanged = state.loadKey != proxyUrl
+    if (!keyChanged && avatarDrawable.hasPhoto()) return
+    if (!keyChanged && state.disposable != null) return
 
     state.cancel()
     state.loadKey = proxyUrl
@@ -67,7 +69,9 @@ fun loadChannelAvatar(
         return
     }
 
-    avatarDrawable.setPhoto(null)
+    if (keyChanged) {
+        avatarDrawable.setPhoto(null)
+    }
     if (!attached) return
 
     val expectedKey = proxyUrl

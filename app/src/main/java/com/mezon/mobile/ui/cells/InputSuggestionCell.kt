@@ -39,6 +39,7 @@ class InputSuggestionCell(
     private var leadingBitmap: Bitmap? = null
     private var leadingMode = LEADING_NONE
     private var leadingEffectiveDp = 0
+    private var leadingIconSizePx = 0
     private var showLeadingSlot = true
 
     private var imageDisposable: MezonImageLoader.Cancellable? = null
@@ -78,6 +79,16 @@ class InputSuggestionCell(
     fun applyColors() {
         refreshTextColors()
         invalidate()
+    }
+
+    override fun invalidate() {
+        if (item == null) return
+        super.invalidate()
+    }
+
+    private fun setLeadingEffectiveDp(dp: Int) {
+        leadingEffectiveDp = dp
+        leadingIconSizePx = LayoutHelper.dp(dp.toFloat())
     }
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
@@ -131,7 +142,7 @@ class InputSuggestionCell(
                 avatarDrawable.draw(canvas)
             }
             LEADING_ICON -> {
-                val iconSize = LayoutHelper.dp(leadingEffectiveDp.toFloat())
+                val iconSize = leadingIconSizePx
                 val ix = slotLeft + (SLOT - iconSize) / 2
                 val iy = slotTop + (SLOT - iconSize) / 2
                 leadingDrawable?.let { d ->
@@ -141,7 +152,7 @@ class InputSuggestionCell(
             }
             LEADING_BITMAP -> {
                 val bmp = leadingBitmap ?: return
-                val iconSize = LayoutHelper.dp(leadingEffectiveDp.toFloat())
+                val iconSize = leadingIconSizePx
                 val ix = slotLeft + (SLOT - iconSize) / 2
                 val iy = slotTop + (SLOT - iconSize) / 2
                 tmpRect.set(
@@ -238,13 +249,13 @@ class InputSuggestionCell(
         subPaint.color = theme.textDisabled
         if (role.iconUrl.isBlank()) {
             leadingMode = LEADING_ICON
-            leadingEffectiveDp = 20
+            setLeadingEffectiveDp(20)
             leadingDrawable = MezonIcon.shieldUserIcon.getDrawable(context).apply {
                 colorFilter = PorterDuffColorFilter(color, PorterDuff.Mode.SRC_IN)
             }
         } else {
             leadingMode = LEADING_ICON
-            leadingEffectiveDp = 20
+            setLeadingEffectiveDp(20)
             leadingDrawable = MezonIcon.shieldUserIcon.getDrawable(context).apply {
                 colorFilter = PorterDuffColorFilter(color, PorterDuff.Mode.SRC_IN)
             }
@@ -256,7 +267,7 @@ class InputSuggestionCell(
         cancelImage()
         showLeadingSlot = true
         leadingMode = LEADING_ICON
-        leadingEffectiveDp = 16
+        setLeadingEffectiveDp(16)
         val iconEnum = resolveChannelIcon(entity)
         leadingDrawable = if (entity.isThread) {
             iconEnum.getDrawable(context, theme)
@@ -273,7 +284,7 @@ class InputSuggestionCell(
         cancelImage()
         showLeadingSlot = true
         leadingMode = LEADING_BITMAP
-        leadingEffectiveDp = 22
+        setLeadingEffectiveDp(22)
         leadingDrawable = null
         namePaint.color = theme.onSurface
         subPaint.color = theme.textDisabled

@@ -214,6 +214,10 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
     private var callLogInnerWidth = 0
     private var callLogIconEnum = MezonIcon.callLogOutgoing
     private var callLogIconTint = 0
+    private var callLogIconDrawable: Drawable? = null
+    private var callLogIconDrawableEnum: MezonIcon? = null
+    private var callLogIconDrawableTint = 0
+    private var callLogCallbackLayout: StaticLayout? = null
     private var callLogTitleIsRed = false
     private val callLogTitlePaint = TextPaint(Paint.ANTI_ALIAS_FLAG)
     private val callLogDescPaint = TextPaint(Paint.ANTI_ALIAS_FLAG)
@@ -496,6 +500,7 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
         callLogParsed = null
         callLogTitleLayout = null
         callLogDescLayout = null
+        callLogCallbackLayout = null
         callLogShowCallback = false
         callLogCardRect.setEmpty()
         callLogCallbackRect.setEmpty()
@@ -885,22 +890,8 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
         return uw to uh
     }
 
-    private fun applyMediaCornerRadius(receiver: ImageReceiver, slotIndex: Int) {
-        val big = MEDIA_RADIUS.toInt()
-        if (mediaGridCount <= 1) {
-            receiver.setRoundRadius(big)
-            return
-        }
-        val flags = mediaGroupSlots.getOrNull(slotIndex)?.flags
-            ?: (MediaGroupLayout.CORNER_TOP_LEFT or MediaGroupLayout.CORNER_BOTTOM_RIGHT)
-        val small = MEDIA_GROUP_INNER_RADIUS.toInt()
-        fun corner(mask: Int) = if ((flags and mask) == mask) big else small
-        receiver.setRoundRadius(
-            corner(MediaGroupLayout.CORNER_TOP_LEFT),
-            corner(MediaGroupLayout.CORNER_TOP_RIGHT),
-            corner(MediaGroupLayout.CORNER_BOTTOM_RIGHT),
-            corner(MediaGroupLayout.CORNER_BOTTOM_LEFT),
-        )
+    private fun applyMediaCornerRadius(receiver: ImageReceiver) {
+        receiver.setRoundRadius(0)
     }
 
     private fun loadPhotoImage(msg: MessageEntity) {
@@ -928,7 +919,7 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
                 att.url.contains("/stickers/", ignoreCase = true)
             val isAnimated = att.filetype.contains("gif", true) ||
                 att.url.contains("tenor.com", true)
-            applyMediaCornerRadius(receiver, i)
+            applyMediaCornerRadius(receiver)
             receiver.setRequestedSize(pw, ph)
             val isLocalUri = att.url.startsWith("content://") || att.url.startsWith("file://")
             val isVideo = att.filetype.startsWith("video/", true)
@@ -1010,9 +1001,10 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
                     android.media.MediaMetadataRetriever.OPTION_CLOSEST_SYNC
                 )
                 if (frame != null) {
-                    loader.cacheBitmap(key, pw, ph, frame)
+                    val thumb = scaleVideoThumbFrame(frame, pw, ph)
+                    loader.cacheBitmap(key, pw, ph, thumb)
                     withContext(Dispatchers.Main) {
-                        mediaReceiver(slotIndex).setBitmapDirectly(frame)
+                        mediaReceiver(slotIndex).setBitmapDirectly(thumb)
                         invalidate()
                     }
                 }
@@ -1022,6 +1014,16 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
                 runCatching { retriever.release() }
             }
         }
+    }
+
+    private fun scaleVideoThumbFrame(frame: Bitmap, pw: Int, ph: Int): Bitmap {
+        if (frame.width <= pw && frame.height <= ph) return frame
+        val scale = min(pw.toFloat() / frame.width, ph.toFloat() / frame.height)
+        val dw = (frame.width * scale).toInt().coerceAtLeast(1)
+        val dh = (frame.height * scale).toInt().coerceAtLeast(1)
+        val scaled = Bitmap.createScaledBitmap(frame, dw, dh, true)
+        if (scaled !== frame) frame.recycle()
+        return scaled
     }
 
     private fun updateColors(msg: MessageEntity) {
@@ -1229,6 +1231,13 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
             parsed.callLogType != CallLogMessageType.STARTCALL &&
             (!inNoCallback || !isMe)
 
+        callLogCallbackLayout = if (callLogShowCallback) {
+            val cb = context.getString(R.string.message_call_log_call_back).uppercase()
+            StaticLayout.Builder.obtain(cb, 0, cb.length, callLogCallbackPaint, (textWidth - 2 * CALL_LOG_CARD_MARGIN_H).coerceAtLeast(1))
+                .setAlignment(android.text.Layout.Alignment.ALIGN_CENTER)
+                .build()
+        } else null
+
         val titleH = callLogTitleLayout?.height ?: 0
         val descH = callLogDescLayout?.height ?: 0
         val fm = callLogCallbackPaint.fontMetrics
@@ -1242,6 +1251,20 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
         if (callLogShowCallback) innerH += cbExtra
         callLogCardHeight = CALL_LOG_TOP_MARGIN + CALL_LOG_CARD_MARGIN_V * 2 + innerH
         callLogInnerWidth = textWidth
+    }
+
+    private fun obtainCallLogIconDrawable(): Drawable {
+        val cached = callLogIconDrawable
+        if (cached != null && callLogIconDrawableEnum == callLogIconEnum && callLogIconDrawableTint == callLogIconTint) {
+            return cached
+        }
+        val d = callLogIconEnum.getDrawable(context).mutate()
+        d.colorFilter = PorterDuffColorFilter(callLogIconTint, PorterDuff.Mode.SRC_IN)
+        d.setBounds(0, 0, CALL_LOG_ICON_SIZE, CALL_LOG_ICON_SIZE)
+        callLogIconDrawable = d
+        callLogIconDrawableEnum = callLogIconEnum
+        callLogIconDrawableTint = callLogIconTint
+        return d
     }
 
     private fun drawCallLogCard(canvas: Canvas, contentLeft: Float, yOff: Float): Float {
@@ -1265,11 +1288,9 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
         }
         val iconLeft = innerLeft
         val iconTop = iy + CALL_LOG_ICON_TOP_BIAS
-        val d = callLogIconEnum.getDrawable(context).mutate()
-        d.colorFilter = PorterDuffColorFilter(callLogIconTint, PorterDuff.Mode.SRC_IN)
+        val d = obtainCallLogIconDrawable()
         canvas.save()
         canvas.translate(iconLeft, iconTop)
-        d.setBounds(0, 0, CALL_LOG_ICON_SIZE, CALL_LOG_ICON_SIZE)
         d.draw(canvas)
         canvas.restore()
 
@@ -1290,16 +1311,15 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
                 divY,
                 callLogDividerPaint
             )
-            val cb = context.getString(R.string.message_call_log_call_back).uppercase()
-            val cbLayout = StaticLayout.Builder.obtain(cb, 0, cb.length, callLogCallbackPaint, (w - 2 * CALL_LOG_CARD_MARGIN_H).toInt().coerceAtLeast(1))
-                .setAlignment(android.text.Layout.Alignment.ALIGN_CENTER)
-                .build()
-            var cby = divY + CALL_LOG_CALLBACK_TOP_PAD
-            canvas.save()
-            canvas.translate(cardLeft + (w - cbLayout.width) / 2f, cby)
-            cbLayout.draw(canvas)
-            canvas.restore()
-            callLogCallbackRect.set(cardLeft, divY, cardRight, cby + cbLayout.height + CALL_LOG_CALLBACK_BOTTOM_PAD)
+            val cbLayout = callLogCallbackLayout
+            if (cbLayout != null) {
+                val cby = divY + CALL_LOG_CALLBACK_TOP_PAD
+                canvas.save()
+                canvas.translate(cardLeft + (w - cbLayout.width) / 2f, cby)
+                cbLayout.draw(canvas)
+                canvas.restore()
+                callLogCallbackRect.set(cardLeft, divY, cardRight, cby + cbLayout.height + CALL_LOG_CALLBACK_BOTTOM_PAD)
+            }
         } else {
             callLogCallbackRect.setEmpty()
         }
@@ -1326,6 +1346,7 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
             callLogParsed = null
             callLogTitleLayout = null
             callLogDescLayout = null
+            callLogCallbackLayout = null
             callLogShowCallback = false
             callLogCardHeight = 0
             callLogInnerWidth = 0
@@ -1475,7 +1496,7 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
                 .build()
             ogpImageW = ogpTextW
             ogpImageH = min((ogpImageW * 0.6f).toInt(), OGP_IMAGE_MAX_H).coerceAtLeast(1)
-            ogpImage.setRoundRadius(OGP_RADIUS.toInt())
+            ogpImage.setRoundRadius(0)
             val proxiedImg = createImgproxyUrl(ogp.image, ogpImageW, ogpImageH, "fill")
             ogpImage.setImage(proxiedImg, null, context)
         } else {
@@ -1497,9 +1518,9 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
         } else {
             if (hasEmbedContent) {
                 embedMessage.clear()
-                hideEmbedInteractiveViews()
             }
             hasEmbedContent = false
+            hideEmbedInteractiveViews()
         }
         linkInviteBlock.build(msg, bubbleMaxW) {
             val m = messageEntity ?: return@build
@@ -2187,7 +2208,14 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
 
     private var cachedMeasuredWidth = 0
 
-    override fun allowCaching(): Boolean = !embedInteractiveViewsVisible
+    override fun allowCaching(): Boolean {
+        if (embedInteractiveViewsVisible) return false
+        if (photoImage.hasAnimatedImage() || ogpImage.hasAnimatedImage()) return false
+        for (i in extraPhotoImages.indices) {
+            if (extraPhotoImages[i].hasAnimatedImage()) return false
+        }
+        return true
+    }
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
         val w = MeasureSpec.getSize(widthMeasureSpec)
@@ -2738,7 +2766,8 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
         } catch (_: Exception) {}
     }
 
-    private var visibleOnScreen = true
+    var visibleOnScreen = true
+        private set
 
     override fun invalidate() {
         if (messageEntity == null) return
@@ -2790,7 +2819,7 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
             HIGHLIGHT_BG_PAINT.color = theme.midnightBlue and 0x00FFFFFF or (a shl 24)
             canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), HIGHLIGHT_BG_PAINT)
             highlightProgress = (highlightProgress - HIGHLIGHT_DECAY_STEP).coerceAtLeast(0f)
-            if (highlightProgress > 0f) postInvalidateDelayed(16)
+            if (highlightProgress > 0f && visibleOnScreen) postInvalidateDelayed(16)
         }
 
         val alpha = when {
@@ -2809,9 +2838,6 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
             }
         } else {
             drawMessageBubble(canvas, msg)
-        }
-        if (!hasEmbedContent) {
-            hideEmbedInteractiveViews()
         }
         if (alpha < 1f) {
             canvas.restore()
@@ -2952,7 +2978,7 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
         } else if (!photoImage.hasMainImage() && photoImage.shouldAnimateLoadingPlaceholder()) {
             shimmerEffect.draw(canvas, imgX, yOff, imgX + photoWidth, yOff + photoHeight, 0f,
                 theme.resolvedMode != com.mezon.mobile.ui.theme.ThemeMode.LIGHT)
-            postInvalidateDelayed(32)
+            if (visibleOnScreen) postInvalidateDelayed(32)
         }
     }
 
@@ -3442,7 +3468,7 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
             }
             maxBottom = maxOf(maxBottom, y + slot.height)
         }
-        if (needsShimmerRedraw) postInvalidateDelayed(16)
+        if (needsShimmerRedraw && visibleOnScreen) postInvalidateDelayed(16)
         return maxOf(maxBottom, startY + photoHeight.toFloat())
     }
 
@@ -3466,7 +3492,7 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
             } else if (photoImage.shouldAnimateLoadingPlaceholder()) {
                 shimmerEffect.draw(canvas, imgX, imgY, imgX + w, imgY + h, MEDIA_RADIUS,
                     theme.resolvedMode != com.mezon.mobile.ui.theme.ThemeMode.LIGHT)
-                postInvalidateDelayed(32)
+                if (visibleOnScreen) postInvalidateDelayed(32)
             }
         }
         if (isVideo && !isSlotUploadPending(0)) {
@@ -3480,13 +3506,17 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
 
     private fun drawVideoPlaceholder(canvas: Canvas, x: Float, y: Float, w: Float, h: Float, radius: Float) {
         tmpRect.set(x, y, x + w, y + h)
-        canvas.drawRoundRect(tmpRect, radius, radius, VIDEO_PLACEHOLDER_PAINT)
+        if (radius > 0f) {
+            canvas.drawRoundRect(tmpRect, radius, radius, VIDEO_PLACEHOLDER_PAINT)
+        } else {
+            canvas.drawRect(tmpRect, VIDEO_PLACEHOLDER_PAINT)
+        }
     }
 
     private fun drawVideoPlayButton(canvas: Canvas, x: Float, y: Float, w: Float, h: Float) {
         val cx = x + w / 2f
         val cy = y + h / 2f
-        val r = (min(w, h) * 0.2f).coerceIn(LayoutHelper.dp(14f).toFloat(), PLAY_BTN_SIZE / 2f)
+        val r = (min(w, h) * 0.2f).coerceIn(PLAY_BTN_MIN_RADIUS, PLAY_BTN_SIZE / 2f)
         canvas.drawCircle(cx, cy, r, PLAY_BG_PAINT)
 
         playTriPath.reset()
@@ -4527,15 +4557,14 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
         private val ROLE_ICON_SIZE = LayoutHelper.dp(20f)
         private val ROLE_ICON_GAP = LayoutHelper.dp(4f)
         private val LINK_INVITE_V_MARGIN = LayoutHelper.dp(12) 
-        private val MEDIA_RADIUS = LayoutHelper.dp(12).toFloat()
-        private val MEDIA_GROUP_INNER_RADIUS = LayoutHelper.dp(2).toFloat()
-        private val OGP_RADIUS = LayoutHelper.dp(8).toFloat()
+        private val MEDIA_RADIUS = 0f
         private val OGP_CARD_RADIUS = LayoutHelper.dp(4).toFloat()
         private val OGP_PADDING = LayoutHelper.dp(10)
         private val OGP_ACCENT_W = LayoutHelper.dp(4)
         private val OGP_IMAGE_MAX_H = LayoutHelper.dp(150)
         private const val OGP_MAX_CHARS = 200
         private val PLAY_BTN_SIZE = LayoutHelper.dp(48).toFloat()
+        private val PLAY_BTN_MIN_RADIUS = LayoutHelper.dp(14f).toFloat()
         private val REPLY_AVATAR_SIZE = LayoutHelper.dp(16)
         private val REPLY_H_GAP = LayoutHelper.dp(4)
         private val REPLY_ROW_HEIGHT = LayoutHelper.dp(20)

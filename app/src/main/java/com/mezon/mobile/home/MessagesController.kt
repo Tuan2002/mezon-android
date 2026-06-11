@@ -38,10 +38,21 @@ class MessagesController @Inject constructor(
 
     fun putUser(user: CachedUser) {
         users[user.id] = user
+        trimUsersIfNeeded()
     }
 
     fun putUsers(list: List<CachedUser>) {
         for (u in list) users[u.id] = u
+        trimUsersIfNeeded()
+    }
+
+    private fun trimUsersIfNeeded() {
+        if (users.size <= MAX_CACHED_USERS) return
+        val iterator = users.keys.iterator()
+        while (users.size > MAX_CACHED_USERS && iterator.hasNext()) {
+            iterator.next()
+            iterator.remove()
+        }
     }
 
     @Synchronized
@@ -74,5 +85,9 @@ class MessagesController @Inject constructor(
     fun clearCachedUsersAndChannels() {
         users.clear()
         synchronized(this) { channels.clear() }
+    }
+
+    companion object {
+        private const val MAX_CACHED_USERS = 2000
     }
 }

@@ -22,6 +22,13 @@ import com.mezon.mobile.R
 import com.mezon.mobile.core.LayoutHelper
 import com.mezon.mobile.core.ThemeColors
 import com.mezon.mobile.ui.cells.AvatarView
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 const val FRIEND_STATE_FRIEND = 0
 const val FRIEND_STATE_INVITE_SENT = 1
@@ -52,6 +59,8 @@ class FriendRelationAdapter(
 ) : RecyclerView.Adapter<FriendRelationAdapter.FriendHolder>() {
 
     private val items = ArrayList<Friend>()
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private var diffJob: Job? = null
 
     init { setHasStableIds(true) }
 
@@ -59,10 +68,24 @@ class FriendRelationAdapter(
         if (position in items.indices) items[position].user.id else RecyclerView.NO_ID
 
     fun submitItems(newItems: List<Friend>) {
-        val diff = DiffUtil.calculateDiff(FriendDiffCallback(items, newItems))
+        diffJob?.cancel()
+        if (items.size < 50 && newItems.size < 50) {
+            applyDiff(newItems, DiffUtil.calculateDiff(FriendDiffCallback(items, newItems)))
+        } else {
+            val oldList = ArrayList(items)
+            diffJob = scope.launch {
+                val result = withContext(Dispatchers.Default) {
+                    DiffUtil.calculateDiff(FriendDiffCallback(oldList, newItems))
+                }
+                applyDiff(newItems, result)
+            }
+        }
+    }
+
+    private fun applyDiff(newItems: List<Friend>, result: DiffUtil.DiffResult) {
         items.clear()
         items.addAll(newItems)
-        diff.dispatchUpdatesTo(this)
+        result.dispatchUpdatesTo(this)
     }
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): FriendHolder {
@@ -74,6 +97,11 @@ class FriendRelationAdapter(
 
     override fun onBindViewHolder(holder: FriendHolder, position: Int) {
         holder.cell.bind(items[position], position < items.lastIndex)
+    }
+
+    override fun onDetachedFromRecyclerView(recyclerView: RecyclerView) {
+        diffJob?.cancel()
+        scope.cancel()
     }
 
     class FriendHolder(val cell: FriendRowCell) : RecyclerView.ViewHolder(cell)

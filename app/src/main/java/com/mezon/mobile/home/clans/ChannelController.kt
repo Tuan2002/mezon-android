@@ -1517,18 +1517,19 @@ class ChannelController @Inject constructor(
                     return@collect
                 }
 
-                val messageId = try {
-                    val json = JSONObject(notification.content.toStringUtf8())
+                val contentJson = try {
+                    JSONObject(notification.content.toStringUtf8())
+                } catch (_: Exception) { null }
+                val messageId = contentJson?.let { json ->
                     json.optLong("message_id", 0L).takeIf { it != 0L }
                         ?: json.optString("message_id", "").toLongOrNull() ?: 0L
-                } catch (_: Exception) { 0L }
+                } ?: 0L
 
                 if (topicId != 0L) {
-                    val msgTime = try {
-                        val json = JSONObject(notification.content.toStringUtf8())
+                    val msgTime = contentJson?.let { json ->
                         json.optLong("create_time_seconds", 0L).takeIf { it != 0L }
                             ?: json.optString("create_time_seconds", "").toLongOrNull() ?: 0L
-                    } catch (_: Exception) { 0L }
+                    } ?: 0L
                     val topicChannel = findChannelById(topicId)
                     if (topicChannel != null && topicChannel.lastSeenMessageTs > 0L &&
                         msgTime > 0L && msgTime <= topicChannel.lastSeenMessageTs

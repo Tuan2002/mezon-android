@@ -7,7 +7,7 @@ import com.mezon.mobile.home.clans.channelapp.ChannelAppEntity
 
 @Dao
 interface ChannelAppDao {
-    @Query("SELECT * FROM channel_apps WHERE clanId = :clanId ORDER BY sortOrder ASC")
+    @Query("SELECT * FROM channel_apps WHERE clanId = :clanId ORDER BY sortOrder ASC LIMIT 500")
     suspend fun getByClan(clanId: Long): List<ChannelAppEntity>
 
     @Query("SELECT * FROM channel_apps WHERE channelId = :channelId LIMIT 1")

@@ -59,7 +59,7 @@ data class ClanRoleCacheEntity(
 
 @Dao
 interface ClanRoleListMetaDao {
-    @Query("SELECT * FROM clan_role_list_meta")
+    @Query("SELECT * FROM clan_role_list_meta LIMIT 5000")
     suspend fun getAll(): List<ClanRoleListMetaEntity>
 
     @Query("SELECT * FROM clan_role_list_meta WHERE clanId = :clanId LIMIT 1")
@@ -77,7 +77,7 @@ interface ClanRoleListMetaDao {
 
 @Dao
 interface ClanRoleCacheDao {
-    @Query("SELECT * FROM clan_role_cache")
+    @Query("SELECT * FROM clan_role_cache LIMIT 5000")
     suspend fun getAll(): List<ClanRoleCacheEntity>
 
     @Query("SELECT * FROM clan_role_cache WHERE clanId = :clanId")

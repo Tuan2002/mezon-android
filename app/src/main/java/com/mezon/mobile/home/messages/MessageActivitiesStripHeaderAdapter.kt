@@ -28,8 +28,13 @@ class MessageActivitiesStripHeaderAdapter(
     override fun getItemId(position: Int): Long = HEADER_STABLE_ID
 
     fun setStripItems(rows: List<MessageActivityRow>) {
+        val wasEmpty = items.isEmpty()
         items = rows
-        notifyDataSetChanged()
+        when {
+            wasEmpty && rows.isNotEmpty() -> notifyItemInserted(0)
+            !wasEmpty && rows.isEmpty() -> notifyItemRemoved(0)
+            !wasEmpty -> notifyItemChanged(0)
+        }
     }
 
     fun scrollStripToStart() {

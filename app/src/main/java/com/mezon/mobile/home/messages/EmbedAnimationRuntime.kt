@@ -7,6 +7,7 @@ import android.graphics.Rect
 import android.graphics.RectF
 import android.view.View
 import com.mezon.mobile.core.LayoutHelper
+import com.mezon.mobile.home.chat.ChatMessageCell
 import com.mezon.mobile.home.chat.MezonImageLoader
 import com.mezon.mobile.home.chat.ShimmerEffect
 import com.mezon.mobile.util.EmbedAnimationSpec
@@ -323,7 +324,11 @@ internal class EmbedAnimationRuntime(
         shimmer: ShimmerEffect,
         themeDarkEmbed: Boolean,
     ) {
-        if (!loadFailed) parent.postInvalidateDelayed(32)
+        if (!loadFailed && parent.isAttachedToWindow &&
+            (parent as? ChatMessageCell)?.visibleOnScreen != false
+        ) {
+            parent.postInvalidateDelayed(32)
+        }
 
         val n = max(1, spec.pool.size)
         val gap = CELL_GAP_X.toFloat()

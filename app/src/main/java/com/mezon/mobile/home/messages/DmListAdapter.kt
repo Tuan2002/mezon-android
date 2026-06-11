@@ -62,6 +62,10 @@ class DmListAdapter(
         if (dialogs != null) {
             dialogMap = HashMap(dialogs.size)
             for (dm in dialogs) dialogMap[dm.channelId] = dm
+            for (i in items.indices) {
+                val updated = dialogMap[items[i].channelId]
+                if (updated != null && updated != items[i]) items[i] = updated
+            }
         } else {
             dialogMap = null
         }

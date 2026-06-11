@@ -125,7 +125,7 @@ class ThreadCell(context: Context, private val theme: ThemeColors) : BaseCell(co
         nameLayout?.draw(canvas)
         canvas.restore()
 
-        val secondRowY = PADDING + (nameLayout?.height ?: 0) + LayoutHelper.dp(2)
+        val secondRowY = PADDING + (nameLayout?.height ?: 0) + SECOND_ROW_GAP
 
         senderLayout?.let {
             canvas.save()
@@ -166,5 +166,6 @@ class ThreadCell(context: Context, private val theme: ThemeColors) : BaseCell(co
         private val CHEVRON_MARGIN_LEFT = LayoutHelper.dp(30f)
         private val CHEVRON_MARGIN_RIGHT_ABS = LayoutHelper.dp(4f)
         private val BULLET_MARGIN_LEFT = LayoutHelper.dp(4f)
+        private val SECOND_ROW_GAP = LayoutHelper.dp(2f)
     }
 }

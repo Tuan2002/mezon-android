@@ -62,6 +62,11 @@ class ClanCell(
     private val badgeRect = RectF()
     private val selectedBarPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val clipPath = Path()
+    private var clipPathLeft = Float.NaN
+    private var clipPathTop = Float.NaN
+    private var clipPathRight = Float.NaN
+    private var clipPathBottom = Float.NaN
+    private var clipPathRadius = Float.NaN
 
     private val iconSizePx = LayoutHelper.dp(42)
     private val selectedBarPx = LayoutHelper.dp(4)
@@ -162,14 +167,14 @@ class ClanCell(
         logoCancellable?.cancel()
         logoCancellable = null
 
-        avatar.setPhoto(null)
-
         val loader = MezonImageLoader.getInstance(context)
         val cached = loader.getBitmapFromMemory(url, iconSizePx, iconSizePx)
         if (cached != null) {
             avatar.setPhoto(cached)
             return
         }
+
+        avatar.setPhoto(null)
 
         logoCancellable = loader.load(
             url, iconSizePx, iconSizePx,
@@ -208,8 +213,17 @@ class ClanCell(
         }
 
         shapeRectF.set(left, top, right, bottom)
-        clipPath.reset()
-        clipPath.addRoundRect(shapeRectF, cornerRadius, cornerRadius, Path.Direction.CW)
+        if (clipPathLeft != left || clipPathTop != top || clipPathRight != right ||
+            clipPathBottom != bottom || clipPathRadius != cornerRadius
+        ) {
+            clipPathLeft = left
+            clipPathTop = top
+            clipPathRight = right
+            clipPathBottom = bottom
+            clipPathRadius = cornerRadius
+            clipPath.reset()
+            clipPath.addRoundRect(shapeRectF, cornerRadius, cornerRadius, Path.Direction.CW)
+        }
 
         canvas.save()
         canvas.clipPath(clipPath)

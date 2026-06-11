@@ -19,6 +19,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import java.io.File
 import javax.inject.Inject
 
 @HiltAndroidApp
@@ -50,7 +51,8 @@ class MezonApplication : Application() {
             Unit
         }
 
-        if (StartupCache.isSeeded) {
+        val sessionDataStoreFile = File(filesDir, "datastore/mezon_session.preferences_pb")
+        if (StartupCache.isSeeded || !sessionDataStoreFile.exists()) {
             appStartScope.launch { seedStartupCacheFromDataStore() }
         } else {
             runBlocking(Dispatchers.IO) { seedStartupCacheFromDataStore() }

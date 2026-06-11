@@ -1,10 +1,18 @@
 package com.mezon.mobile.home.chat.channelinfo
 
 import android.view.ViewGroup
+import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.RecyclerView
 import com.mezon.mobile.core.LayoutHelper
 import com.mezon.mobile.core.ThemeColors
 import java.util.Calendar
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 sealed class ChannelFilesRow {
     data class Header(val year: String, val dayTitle: String, val showYearLine: Boolean) : ChannelFilesRow()
@@ -54,14 +62,36 @@ class ChannelFilesAdapter(
     }
 
     private var rows: List<ChannelFilesRow> = emptyList()
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private var diffJob: Job? = null
 
     init {
         setHasStableIds(true)
     }
 
     fun setRows(newRows: List<ChannelFilesRow>) {
+        diffJob?.cancel()
+        if (rows.size < 50 && newRows.size < 50) {
+            applyRows(newRows, DiffUtil.calculateDiff(FilesDiffCallback(rows, newRows)))
+        } else {
+            val oldRows = rows
+            diffJob = scope.launch {
+                val result = withContext(Dispatchers.Default) {
+                    DiffUtil.calculateDiff(FilesDiffCallback(oldRows, newRows))
+                }
+                applyRows(newRows, result)
+            }
+        }
+    }
+
+    private fun applyRows(newRows: List<ChannelFilesRow>, result: DiffUtil.DiffResult) {
         rows = newRows
-        notifyDataSetChanged()
+        result.dispatchUpdatesTo(this)
+    }
+
+    override fun onDetachedFromRecyclerView(recyclerView: RecyclerView) {
+        diffJob?.cancel()
+        scope.cancel()
     }
 
     fun getRows(): List<ChannelFilesRow> = rows
@@ -126,4 +156,27 @@ class ChannelFilesAdapter(
 
     class HeaderVH(val view: ChannelFileSectionHeaderView) : RecyclerView.ViewHolder(view)
     class DocVH(val view: ChannelFileDocumentRowView) : RecyclerView.ViewHolder(view)
+
+    private class FilesDiffCallback(
+        private val old: List<ChannelFilesRow>,
+        private val new: List<ChannelFilesRow>
+    ) : DiffUtil.Callback() {
+        override fun getOldListSize() = old.size
+        override fun getNewListSize() = new.size
+
+        override fun areItemsTheSame(oldPos: Int, newPos: Int): Boolean {
+            val o = old[oldPos]
+            val n = new[newPos]
+            return when {
+                o is ChannelFilesRow.Header && n is ChannelFilesRow.Header ->
+                    o.year == n.year && o.dayTitle == n.dayTitle
+                o is ChannelFilesRow.Doc && n is ChannelFilesRow.Doc ->
+                    o.item.stableId == n.item.stableId
+                else -> false
+            }
+        }
+
+        override fun areContentsTheSame(oldPos: Int, newPos: Int): Boolean =
+            old[oldPos] == new[newPos]
+    }
 }

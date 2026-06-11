@@ -2678,10 +2678,13 @@ class ChatController @Inject constructor(
             cacheTopicRoot(topicId, parentChannelId, found.id)
             return found
         }
-        val latest = messageDao.getLatestByChannel(parentChannelId, 200)
+        val latest = messageDao.getLatestByChannel(parentChannelId, PAGE_SIZE)
         return latest.firstOrNull { it.effectiveTopicId == topicId || it.topicId == topicId }
+            ?.also { found ->
+                cacheTopicRoot(topicId, parentChannelId, found.id)
+            }
             ?: latest.firstOrNull {
-                runCatching {
+                it.content.contains("\"tp\"") && runCatching {
                     JSONObject(it.content).optString("tp", "0").toLongOrNull() == topicId
                 }.getOrDefault(false)
             }?.also { found ->
@@ -2793,7 +2796,12 @@ class ChatController @Inject constructor(
                 CODE_CHAT_REMOVE,
                 MessageEntity.CODE_DELETE_EPHEMERAL -> {
                     val deleteCacheKey = if (msg.topicId != 0L) msg.topicId else msg.channelId
-                    appScope.launch { messageDao.delete(deleteCacheKey, msg.messageId) }
+                    appScope.launch(ioDispatcher) {
+                        messageDao.delete(deleteCacheKey, msg.messageId)
+                        notificationCenter.postNotificationOnMainThread(
+                            NotificationCenter.messageDidDelete, deleteCacheKey, msg.messageId
+                        )
+                    }
                     synchronized(this) {
                         if (lastMessageByChannel.get(deleteCacheKey, 0L) == msg.messageId) {
                             appScope.launch(ioDispatcher) {
@@ -2811,9 +2819,6 @@ class ChatController @Inject constructor(
                             updateTopicRootStats(msg.topicId, msg.channelId, -1, 0L)
                         }
                     }
-                    notificationCenter.postNotificationOnMainThread(
-                        NotificationCenter.messageDidDelete, deleteCacheKey, msg.messageId
-                    )
                 }
                 else -> {
                     if (msg.topicId != 0L) {

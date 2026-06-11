@@ -18,8 +18,10 @@ import android.util.LongSparseArray
 import com.mezon.mobile.home.ClanMember
 import com.mezon.mobile.home.UserClanController
 import com.mezon.mobile.home.profile.UserController
+import com.mezon.mobile.network.ApiCacheTracker
 import com.mezon.mobile.network.MezonApi
 import com.mezon.mobile.network.SocketEventDispatcher
+import com.mezon.mobile.network.apiCacheKey
 import com.mezon.mobile.session.SessionManager
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
@@ -57,6 +59,7 @@ class RoleController @Inject constructor(
     private val userClanController: UserClanController,
     private val notificationCenter: NotificationCenter,
     private val socketEventDispatcher: SocketEventDispatcher,
+    private val cacheTracker: ApiCacheTracker,
     private val permissionCatalogDao: PermissionCatalogDao,
     private val clanUserMaxPermissionDao: ClanUserMaxPermissionDao,
     private val clanRoleListMetaDao: ClanRoleListMetaDao,
@@ -76,6 +79,7 @@ class RoleController @Inject constructor(
     private val userMaxLoadingClans = HashSet<Long>()
     private val userMaxReloadAfterLoadClans = HashSet<Long>()
     private val clanLoadLocks = ConcurrentHashMap<Long, Any>()
+    private val pendingForceRoleReload = ConcurrentHashMap.newKeySet<Long>()
     private val clanRoleLoadWaiters = ConcurrentHashMap<Long, CopyOnWriteArrayList<Runnable>>()
     private var permissionCatalog: List<PermissionCatalogEntry> = emptyList()
     private var permissionCatalogLoading = false
@@ -100,7 +104,8 @@ class RoleController @Inject constructor(
                 val cid = ev.clanId.toLongOrNull() ?: 0L
                 if (cid == 0L) return@collect
                 invalidateDisplayRoleCache(cid)
-                userClanController.loadClanMembers(cid, noCache = true)
+                cacheTracker.invalidate(apiCacheKey("listClanUsers", cid.toString()))
+                userClanController.loadClanMembers(cid)
                 val selfId = userController.userId
                 if (selfId == 0L) return@collect
                 val affectsSelf = selfId in ev.userIdsAssignedList || selfId in ev.userIdsRemovedList
@@ -534,7 +539,10 @@ class RoleController @Inject constructor(
         if (clanId <= 0) return
         val lockObj = clanLoadLocks.computeIfAbsent(clanId) { Any() }
         synchronized(lockObj) {
-            if (!force && loadingClans[clanId] == true) return
+            if (loadingClans[clanId] == true) {
+                if (force) pendingForceRoleReload.add(clanId)
+                return
+            }
             if (!force && rolesByClan[clanId].isNullOrEmpty().not()) return
             loadingClans[clanId] = true
         }
@@ -981,6 +989,9 @@ class RoleController @Inject constructor(
         withContext(mainDispatcher) {
             primary?.run()
             clanRoleLoadWaiters.remove(clanId)?.forEach { it.run() }
+        }
+        if (pendingForceRoleReload.remove(clanId)) {
+            loadRolesForClan(clanId, force = true)
         }
     }
 

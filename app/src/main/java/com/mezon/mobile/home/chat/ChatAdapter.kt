@@ -71,6 +71,8 @@ class ChatAdapter(
     var showLoadingDown = false
 
     fun updateRowsInternal() {
+        combinedCache.clear()
+        mentionCache.clear()
         rowCount = 0
         topicRootHeaderRow = -1
         if (messages.isNotEmpty()) {
@@ -106,11 +108,26 @@ class ChatAdapter(
         val prevMessagesEndRow = messagesEndRow
         val prevTopicRootHeaderRow = topicRootHeaderRow
         updateRowsInternal()
-        if (prevRowCount != rowCount || prevLoadingUpRow != loadingUpRow ||
-            prevLoadingDownRow != loadingDownRow || prevMessagesStartRow != messagesStartRow ||
-            prevMessagesEndRow != messagesEndRow || prevTopicRootHeaderRow != topicRootHeaderRow
+        if (prevRowCount == rowCount && prevLoadingUpRow == loadingUpRow &&
+            prevLoadingDownRow == loadingDownRow && prevMessagesStartRow == messagesStartRow &&
+            prevMessagesEndRow == messagesEndRow && prevTopicRootHeaderRow == topicRootHeaderRow
         ) {
+            return
+        }
+        val prevMessageCount = prevMessagesEndRow - prevMessagesStartRow
+        val messageCount = messagesEndRow - messagesStartRow
+        val downToggled = (prevLoadingDownRow >= 0) != (loadingDownRow >= 0)
+        val upToggled = (prevLoadingUpRow >= 0) != (loadingUpRow >= 0)
+        val headerToggled = (prevTopicRootHeaderRow >= 0) != (topicRootHeaderRow >= 0)
+        val toggleCount = (if (downToggled) 1 else 0) + (if (upToggled) 1 else 0) + (if (headerToggled) 1 else 0)
+        if (prevMessageCount != messageCount || prevRowCount == 0 || rowCount == 0 || toggleCount != 1) {
             notifyDataSetChanged()
+            return
+        }
+        when {
+            downToggled -> if (loadingDownRow >= 0) notifyItemInserted(0) else notifyItemRemoved(0)
+            upToggled -> if (loadingUpRow >= 0) notifyItemInserted(loadingUpRow) else notifyItemRemoved(prevLoadingUpRow)
+            else -> if (topicRootHeaderRow >= 0) notifyItemInserted(topicRootHeaderRow) else notifyItemRemoved(prevTopicRootHeaderRow)
         }
     }
 
@@ -151,6 +168,12 @@ class ChatAdapter(
 
     fun notifyMessageChangedAt(modelIndex: Int) {
         if (modelIndex !in messages.indices) return
+        val id = messages[modelIndex].id
+        combinedCache.remove(id)
+        mentionCache.remove(id)
+        if (modelIndex - 1 in messages.indices) {
+            combinedCache.remove(messages[modelIndex - 1].id)
+        }
         notifyItemChanged(messagesStartRow + modelIndex)
     }
 
@@ -282,7 +305,7 @@ class ChatAdapter(
                 holder.cell.pollBridge = pollBridge
                 holder.cell.shareContactOnlineResolver = shareContactOnlineResolver
                 holder.cell.loadLinkInvitePreview = loadLinkInvitePreview
-                holder.cell.isCombined = computeCombined(idx)
+                holder.cell.isCombined = cachedIsCombined(idx)
                 holder.cell.currentUserId = currentUserId.toLongOrNull() ?: 0L
                 holder.cell.channelType = channelType
                 holder.cell.clanId = clanId
@@ -294,8 +317,7 @@ class ChatAdapter(
                 holder.cell.topicLastMessageIdResolver = topicLastMessageIdResolver
                 holder.cell.topicBadgeResolver = topicBadgeResolver
                 holder.cell.topicButtonEnabled = topicButtonEnabled
-                holder.cell.hasMentionHighlight = currentUserId.isNotEmpty() &&
-                    msg.hasMention(currentUserId)
+                holder.cell.hasMentionHighlight = cachedHasMention(msg)
                 holder.cell.update(0, msg)
             }
             is WelcomeViewHolder -> {
@@ -329,6 +351,32 @@ class ChatAdapter(
         if (holder is MessageViewHolder) {
             holder.cell.clearState()
         }
+    }
+
+    private val combinedCache = android.util.LongSparseArray<Boolean>()
+    private val mentionCache = android.util.LongSparseArray<Boolean>()
+    private var mentionCacheUserId = ""
+
+    private fun cachedIsCombined(idx: Int): Boolean {
+        val id = messages[idx].id
+        val cached = combinedCache.get(id)
+        if (cached != null) return cached
+        val value = computeCombined(idx)
+        combinedCache.put(id, value)
+        return value
+    }
+
+    private fun cachedHasMention(msg: MessageEntity): Boolean {
+        if (currentUserId.isEmpty()) return false
+        if (mentionCacheUserId != currentUserId) {
+            mentionCacheUserId = currentUserId
+            mentionCache.clear()
+        }
+        val cached = mentionCache.get(msg.id)
+        if (cached != null) return cached
+        val value = msg.hasMention(currentUserId)
+        mentionCache.put(msg.id, value)
+        return value
     }
 
     private fun computeCombined(idx: Int): Boolean {

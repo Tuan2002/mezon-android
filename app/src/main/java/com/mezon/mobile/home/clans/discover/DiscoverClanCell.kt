@@ -26,6 +26,20 @@ class DiscoverClanCell(
     private val themeColors: ThemeColors
 ) : View(context) {
 
+    companion object {
+        private val AVATAR_RADIUS = LayoutHelper.dp(12f).toFloat()
+        private val DOT_RADIUS = LayoutHelper.dp(4).toFloat()
+        private val FOOTER_ROW_CENTER = LayoutHelper.dp(9)
+        private val MEMBER_TEXT_GAP = LayoutHelper.dp(4)
+        private val VERIFY_ICON_SIZE = LayoutHelper.dp(14)
+        private val VERIFY_BADGE_PAD_H = LayoutHelper.dp(4).toFloat()
+        private val VERIFY_BADGE_HEIGHT = LayoutHelper.dp(18)
+        private val VERIFY_BADGE_RADIUS = LayoutHelper.dp(4f).toFloat()
+        private val VERIFY_ICON_CENTER_Y = LayoutHelper.dp(9)
+        private val VERIFY_TEXT_GAP = LayoutHelper.dp(4)
+        private val VERIFY_TEXT_BASELINE = LayoutHelper.dp(12)
+    }
+
     private var item: DiscoverClanItem? = null
     private var bannerCancellable: MezonImageLoader.Cancellable? = null
     private var avatarCancellable: MezonImageLoader.Cancellable? = null
@@ -38,6 +52,11 @@ class DiscoverClanCell(
     private val avatarDstRect = RectF()
     private val tmpPath = Path()
     private val clipPath = Path()
+    private var cardPathWidth = Float.NaN
+    private var cardPathTop = Float.NaN
+    private var cardPathBottom = Float.NaN
+    private var avatarPathLeft = Float.NaN
+    private var avatarPathTop = Float.NaN
 
     private val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val borderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -207,8 +226,13 @@ class DiscoverClanCell(
         val bottom = height.toFloat()
 
         cardRect.set(left, top, right, bottom)
-        tmpPath.rewind()
-        tmpPath.addRoundRect(cardRect, cardRadius, cardRadius, Path.Direction.CW)
+        if (cardPathWidth != right || cardPathTop != top || cardPathBottom != bottom) {
+            cardPathWidth = right
+            cardPathTop = top
+            cardPathBottom = bottom
+            tmpPath.rewind()
+            tmpPath.addRoundRect(cardRect, cardRadius, cardRadius, Path.Direction.CW)
+        }
 
         canvas.save()
         canvas.clipPath(tmpPath)
@@ -243,12 +267,14 @@ class DiscoverClanCell(
         val contentTop = top + bannerH + contentPad
         val ax = left + contentPad
         val av = avatarBmp
-        val avatarRx = LayoutHelper.dp(12f).toFloat()
-        val avatarRy = LayoutHelper.dp(12f).toFloat()
         if (av != null && !av.isRecycled) {
             avatarDstRect.set(ax, contentTop, ax + avatarSize, contentTop + avatarSize)
-            clipPath.reset()
-            clipPath.addRoundRect(avatarDstRect, avatarRx, avatarRy, Path.Direction.CW)
+            if (avatarPathLeft != ax || avatarPathTop != contentTop) {
+                avatarPathLeft = ax
+                avatarPathTop = contentTop
+                clipPath.reset()
+                clipPath.addRoundRect(avatarDstRect, AVATAR_RADIUS, AVATAR_RADIUS, Path.Direction.CW)
+            }
             canvas.save()
             canvas.clipPath(clipPath)
             canvas.drawBitmap(av, null, avatarDstRect, bannerDrawPaint)
@@ -274,39 +300,36 @@ class DiscoverClanCell(
         }
 
         val footerY = descY + (dl?.height ?: 0) + descGapBottom
-        val dotRadius = LayoutHelper.dp(4).toFloat()
-        val rowCenterY = footerY + LayoutHelper.dp(9)
-        val dotCx = left + contentPad + dotRadius
+        val rowCenterY = footerY + FOOTER_ROW_CENTER
+        val dotCx = left + contentPad + DOT_RADIUS
         val dotCy = rowCenterY
         memberDotPaint.color = themeColors.connectedColor
-        canvas.drawCircle(dotCx, dotCy, dotRadius, memberDotPaint)
+        canvas.drawCircle(dotCx, dotCy, DOT_RADIUS, memberDotPaint)
 
         val memberFm = memberPaint.fontMetrics
         val memberBaseline = rowCenterY - (memberFm.ascent + memberFm.descent) / 2f
 
         canvas.drawText(
             memberLabel,
-            left + contentPad + LayoutHelper.dp(4) + footerGap + LayoutHelper.dp(4),
+            left + contentPad + MEMBER_TEXT_GAP + footerGap + MEMBER_TEXT_GAP,
             memberBaseline,
             memberPaint
         )
 
         val verified = context.getString(R.string.discover_verified).uppercase()
-        val iconS = LayoutHelper.dp(14)
-        val badgePadH = LayoutHelper.dp(4).toFloat()
         val vw = verifiedPaint.measureText(verified)
-        val badgeW = badgePadH * 2 + iconS + LayoutHelper.dp(4) + vw
+        val badgeW = VERIFY_BADGE_PAD_H * 2 + VERIFY_ICON_SIZE + VERIFY_TEXT_GAP + vw
         val bx = right - contentPad - badgeW
         val by = footerY
         verifiedBgPaint.color = themeColors.connectedColor
         canvas.drawRoundRect(
-            bx, by, bx + badgeW, by + LayoutHelper.dp(18),
-            LayoutHelper.dp(4f).toFloat(),
-            LayoutHelper.dp(4f).toFloat(),
+            bx, by, bx + badgeW, by + VERIFY_BADGE_HEIGHT,
+            VERIFY_BADGE_RADIUS,
+            VERIFY_BADGE_RADIUS,
             verifiedBgPaint
         )
-        MezonIcon.drawIcon(canvas, verifyIconDrawable, (bx + badgePadH + iconS / 2).toInt(), (by + LayoutHelper.dp(9)).toInt(), iconS)
-        canvas.drawText(verified, bx + badgePadH + iconS + LayoutHelper.dp(4), by + LayoutHelper.dp(12), verifiedPaint)
+        MezonIcon.drawIcon(canvas, verifyIconDrawable, (bx + VERIFY_BADGE_PAD_H + VERIFY_ICON_SIZE / 2).toInt(), (by + VERIFY_ICON_CENTER_Y).toInt(), VERIFY_ICON_SIZE)
+        canvas.drawText(verified, bx + VERIFY_BADGE_PAD_H + VERIFY_ICON_SIZE + VERIFY_TEXT_GAP, by + VERIFY_TEXT_BASELINE, verifiedPaint)
 
         canvas.restore()
 

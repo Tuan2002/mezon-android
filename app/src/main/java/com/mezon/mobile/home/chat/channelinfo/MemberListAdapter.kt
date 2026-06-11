@@ -149,6 +149,7 @@ class MemberListAdapter(
     fun getMember(position: Int): ClanMember? = rows.getOrNull(position) as? ClanMember
 
     override fun onDetachedFromRecyclerView(recyclerView: RecyclerView) {
+        diffJob?.cancel()
         scope.cancel()
     }
 

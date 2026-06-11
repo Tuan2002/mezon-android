@@ -53,11 +53,24 @@ class ChannelListView(
     private var onChannelAppViewAllClick: (() -> Unit)? = null
 
     private var voiceMembersByChannel = HashMap<Long, List<VoiceMemberDisplay>>()
+    private var scrollingManually = false
+    private var pendingRows: List<ChannelRow>? = null
+    private var pendingVisibleMask = 0
+    private var pendingVisibleChannels: Map<Long, ClanChannelEntity>? = null
 
     fun setVoiceMembers(members: Map<Long, List<VoiceMemberDisplay>>) {
         voiceMembersByChannel.clear()
         voiceMembersByChannel.putAll(members)
-        adapter.submitRows(buildRows(currentSections))
+        submitRowsGated(buildRows(currentSections))
+    }
+
+    private fun submitRowsGated(newRows: List<ChannelRow>) {
+        if (scrollingManually) {
+            pendingRows = newRows
+        } else {
+            pendingRows = null
+            adapter.submitRows(newRows)
+        }
     }
 
     init {
@@ -75,6 +88,25 @@ class ChannelListView(
             setSelectorRadius(LayoutHelper.dp(6))
         }
         recyclerView.adapter = adapter
+        recyclerView.addOnScrollListener(object : RecyclerView.OnScrollListener() {
+            override fun onScrollStateChanged(rv: RecyclerView, newState: Int) {
+                scrollingManually = newState != RecyclerView.SCROLL_STATE_IDLE
+                if (!scrollingManually) {
+                    val pending = pendingRows
+                    pendingRows = null
+                    if (pending != null && !adapter.rowsEqual(pending)) {
+                        adapter.submitRows(pending)
+                    }
+                    if (pendingVisibleMask != 0 || pendingVisibleChannels != null) {
+                        val mask = pendingVisibleMask
+                        val channels = pendingVisibleChannels
+                        pendingVisibleMask = 0
+                        pendingVisibleChannels = null
+                        updateVisibleRows(mask, channels)
+                    }
+                }
+            }
+        })
         recyclerView.setOnItemClickListener(RecyclerListView.OnItemClickListener { view, _ ->
             when (view) {
                 is ChannelSectionCell -> {
@@ -123,7 +155,7 @@ class ChannelListView(
         currentChannelApps = apps.toList()
         val newRows = buildRows(currentSections)
         if (adapter.rowsEqual(newRows)) return
-        adapter.submitRows(newRows)
+        submitRowsGated(newRows)
     }
 
     fun bind(clanId: Long, sections: List<ChannelSection>) {
@@ -137,10 +169,13 @@ class ChannelListView(
         currentSections = sections
         val newRows = buildRows(sections)
         if (isClanSwitch) {
+            pendingRows = null
+            pendingVisibleMask = 0
+            pendingVisibleChannels = null
             adapter.swapRows(newRows)
         } else {
             if (adapter.rowsEqual(newRows)) return
-            adapter.submitRows(newRows)
+            submitRowsGated(newRows)
         }
     }
 
@@ -150,6 +185,9 @@ class ChannelListView(
         boundClanId = 0L
         allExpanded = true
         expandedCategories.clear()
+        pendingRows = null
+        pendingVisibleMask = 0
+        pendingVisibleChannels = null
         adapter.swapRows(emptyList())
     }
 
@@ -191,6 +229,11 @@ class ChannelListView(
     }
 
     fun updateVisibleRows(mask: Int, freshChannels: Map<Long, ClanChannelEntity>? = null) {
+        if (scrollingManually) {
+            pendingVisibleMask = pendingVisibleMask or mask
+            if (freshChannels != null) pendingVisibleChannels = freshChannels
+            return
+        }
         if (freshChannels != null) {
             adapter.updateRowData(freshChannels)
         }
@@ -226,7 +269,7 @@ class ChannelListView(
                 }
                 val newRows = buildRows(currentSections)
                 if (!adapter.rowsEqual(newRows)) {
-                    adapter.submitRows(newRows)
+                    submitRowsGated(newRows)
                 }
             }
         }
