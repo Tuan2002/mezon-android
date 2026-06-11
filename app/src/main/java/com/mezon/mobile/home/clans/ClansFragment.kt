@@ -310,6 +310,24 @@ class ClansFragment : BaseFragment() {
 
         channelListView = ChannelListView(context, themeColors, channelCategoryExpandStore).apply {
             onChannelClick = { channel -> onChannelSelected(channel) }
+            onChannelLongClick = channelLongClick@ { channel, _ ->
+                val selClan = clansController.selectedClanId.value
+                if (selClan == 0L) return@channelLongClick
+                val clan = clansController.clans.value.firstOrNull { it.clanId == selClan } ?: return@channelLongClick
+                ChannelMenuBottomSheet(
+                    context,
+                    channel,
+                    clan.clanName,
+                    clan.logo,
+                    onMarkAsRead = {
+                        channelController.requestMarkAsRead(
+                            channel.clanId,
+                            categoryId = channel.categoryId,
+                            channelId = channel.channelId
+                        )
+                    }
+                ).show()
+            }
             onSectionLongClick = sectionLongClick@ { catId, _, _ ->
                 val selClan = clansController.selectedClanId.value
                 if (selClan == 0L || catId == 0L) return@sectionLongClick
@@ -322,6 +340,9 @@ class ClansFragment : BaseFragment() {
                         clan.logo,
                         catId,
                         canManageChannel = permissionPolicy.canManageChannelForClan(clan.clanId),
+                        onMarkAsRead = {
+                            channelController.requestMarkAsRead(clan.clanId, categoryId = catId)
+                        },
                         onCreateChannel = {
                             presentFragment(CreateChannelFragment.newInstance(catId))
                         }
@@ -909,6 +930,7 @@ class ClansFragment : BaseFragment() {
                         openInvitePeopleSheet(clanId, clan.clanName, clan.logo)
                     })
                 },
+                Runnable { channelController.requestMarkAsRead(clanId) },
                 Runnable {
                     dismissClanMenuThen(Runnable {
                         presentFragment(CreateCategoryFragment())

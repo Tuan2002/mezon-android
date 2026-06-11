@@ -346,13 +346,7 @@ class ClansController @Inject constructor(
     }
 
     fun requestMarkAllClanChannelsRead(clanId: Long) {
-        if (clanId == 0L) return
-        appScope.launch {
-            runCatching {
-                if (!mezonSocket.awaitConnected()) return@launch
-                mezonSocket.markAsRead(channelId = 0L, categoryId = 0L, clanId = clanId)
-            }.onFailure { Log.e(TAG, "requestMarkAllClanChannelsRead($clanId) failed", it) }
-        }
+        channelController.requestMarkAsRead(clanId)
     }
 
     fun mergeClanFromDesc(desc: ClanDesc, trustedBanner: String? = null, knownClanId: Long = 0L) {

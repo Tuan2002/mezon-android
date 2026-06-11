@@ -1227,6 +1227,8 @@
     <string name="channel_creator_type_stream_desc">Sharing hobbies activity</string>
     <string name="channel_creator_private_title">Private Channel</string>
     <string name="channel_creator_private_description">By making a private channel, only selected members and roles will be able to view this channel</string>
+    <string name="category_menu_mark_as_read">Mark as Read</string>
+    <string name="channel_menu_mark_as_read">Mark as Read</string>
     <string name="category_menu_create_channel">Create channel</string>
     <string name="category_menu_create_channel_unavailable">Create channel isn’t available for this category right now.</string>
     <string name="channel_open_no_view_permission">You don’t have permission to view this channel.</string>

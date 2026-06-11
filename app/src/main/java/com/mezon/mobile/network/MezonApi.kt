@@ -89,6 +89,7 @@ import com.mezon.mezon.api.appClan
 import com.mezon.mezon.api.ListChannelBadgeCountResponse
 import com.mezon.mezon.api.ListClanBadgeCountResponse
 import com.mezon.mezon.api.listChannelBadgeCountRequest
+import com.mezon.mezon.api.markAsReadRequest
 import com.mezon.mezon.api.listChannelDescsRequest
 import com.mezon.mezon.api.SdTopic
 import com.mezon.mezon.api.SdTopicList
@@ -1090,6 +1091,21 @@ class MezonApi @Inject constructor(
     ): ListClanBadgeCountResponse {
         val bytes = rpc(apiUrl, token, "ListClanBadgeCount", ByteArray(0))
         return ListClanBadgeCountResponse.parseFrom(bytes)
+    }
+
+    suspend fun markAsRead(
+        apiUrl: String,
+        token: String,
+        clanId: Long = 0L,
+        categoryId: Long = 0L,
+        channelId: Long = 0L
+    ) {
+        val request = markAsReadRequest {
+            if (clanId != 0L) this.clanId = clanId
+            if (categoryId != 0L) this.categoryId = categoryId
+            if (channelId != 0L) this.channelId = channelId
+        }
+        rpc(apiUrl, token, "MarkAsRead", request.toByteArray())
     }
 
     suspend fun listLogedDevice(

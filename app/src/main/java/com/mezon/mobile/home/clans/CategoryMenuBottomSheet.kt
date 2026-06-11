@@ -24,6 +24,7 @@ class CategoryMenuBottomSheet(
     private val clanLogoUrl: String,
     private val categoryId: Long,
     private val canManageChannel: Boolean,
+    private val onMarkAsRead: () -> Unit,
     private val onCreateChannel: () -> Unit
 ) : BottomSheet(context) {
 
@@ -72,6 +73,48 @@ class CategoryMenuBottomSheet(
         val interactiveCreate = canManageChannel && categoryId != 0L
         val rowLabelColor =
             if (interactiveCreate) themeColors.textStrong else themeColors.onSurfaceVariant
+
+        fun buildActionRow(label: String, icon: MezonIcon, onClick: () -> Unit): LinearLayout {
+            return LinearLayout(context).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(LayoutHelper.dp(14), LayoutHelper.dp(14), LayoutHelper.dp(14), LayoutHelper.dp(14))
+                background = android.graphics.drawable.RippleDrawable(
+                    android.content.res.ColorStateList.valueOf(themeColors.onSurface and 0x1AFFFFFF),
+                    android.graphics.drawable.ColorDrawable(themeColors.surfaceVariant),
+                    android.graphics.drawable.ColorDrawable(0xFFFFFFFF.toInt())
+                )
+                isClickable = true
+                isFocusable = true
+                setOnClickListener {
+                    dismiss()
+                    onClick()
+                }
+                addView(
+                    ImageView(context).apply {
+                        setImageDrawable(icon.getDrawable(context, themeColors.textStrong))
+                        scaleType = ImageView.ScaleType.FIT_CENTER
+                    },
+                    LayoutHelper.createLinear(20, 20).apply { rightMargin = LayoutHelper.dp(12) }
+                )
+                addView(
+                    TextView(context).apply {
+                        text = label
+                        setTextColor(themeColors.textStrong)
+                        setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
+                        typeface = Typeface.DEFAULT_BOLD
+                    },
+                    LayoutHelper.createLinear(0, LayoutHelper.WRAP_CONTENT, 1f)
+                )
+                contentDescription = label
+            }
+        }
+
+        val markAsReadRow = buildActionRow(
+            context.getString(R.string.category_menu_mark_as_read),
+            MezonIcon.markUnreadIcon,
+            onMarkAsRead
+        )
 
         val createRow = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -122,6 +165,9 @@ class CategoryMenuBottomSheet(
             setBackgroundColor(themeColors.background)
             setPadding(LayoutHelper.dp(20), LayoutHelper.dp(4), LayoutHelper.dp(20), LayoutHelper.dp(20))
             addView(header, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT))
+            addView(markAsReadRow, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT).apply {
+                topMargin = LayoutHelper.dp(8)
+            })
             addView(createRow, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT).apply {
                 topMargin = LayoutHelper.dp(8)
             })

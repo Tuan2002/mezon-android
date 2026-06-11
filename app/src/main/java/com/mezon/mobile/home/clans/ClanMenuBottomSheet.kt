@@ -33,6 +33,7 @@ class ClanMenuBottomSheet(
     private val onOpenClanSettings: Runnable,
     private val onOpenAuditLog: Runnable,
     private val onOpenInvite: Runnable,
+    private val onMarkAsRead: Runnable,
     private val onCreateCategory: Runnable,
     private val onLeaveClan: Runnable,
     private val onDeleteClan: Runnable,
@@ -188,7 +189,8 @@ class ClanMenuBottomSheet(
                 null,
                 listOfNotNull(
                     ClanSettingsUiHelpers.buildMezonChevronRowWithoutIcon(context, theme, context.getString(R.string.clan_menu_mark_as_read), null, Runnable {
-                        showComingSoon()
+                        dismiss()
+                        onMarkAsRead.run()
                     }),
                     ClanSettingsUiHelpers.buildMezonChevronRowWithoutIcon(
                         context,

@@ -1079,6 +1079,8 @@
     <string name="channel_creator_type_stream_desc">Chia sẻ sở thích và hoạt động</string>
     <string name="channel_creator_private_title">Kênh riêng</string>
     <string name="channel_creator_private_description">Khi bật kênh riêng, chỉ thành viên và vai trò được chọn mới xem được kênh này</string>
+    <string name="category_menu_mark_as_read">Đánh dấu là đã đọc</string>
+    <string name="channel_menu_mark_as_read">Đánh dấu là đã đọc</string>
     <string name="category_menu_create_channel">Tạo kênh</string>
     <string name="category_menu_create_channel_unavailable">Chưa thể tạo kênh cho danh mục này lúc này.</string>
     <string name="channel_open_no_view_permission">Bạn không có quyền xem kênh này.</string>
