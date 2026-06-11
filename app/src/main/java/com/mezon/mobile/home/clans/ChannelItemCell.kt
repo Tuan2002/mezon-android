@@ -35,13 +35,8 @@ class ChannelItemCell(
             textAlign = Paint.Align.CENTER
         }
         private val activeBgRectF = RectF()
-        private val mutePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            style = Paint.Style.STROKE
-            strokeWidth = LayoutHelper.dp(2).toFloat()
-            strokeCap = Paint.Cap.ROUND
-            strokeJoin = Paint.Join.ROUND
-        }
 
+        private const val MUTED_CONTENT_ALPHA = 0.6f
         private const val VOICE_ACTIVE_GREEN = 0xFF16A34A.toInt()
 
         private val ACTIVE_RADIUS = LayoutHelper.dp(6).toFloat()
@@ -119,6 +114,10 @@ class ChannelItemCell(
             }
         }
 
+        if (channel?.isMuted != ch.isMuted) {
+            needInvalidate = true
+        }
+
         if ((mask and NotificationCenter.UPDATE_MASK_CHAT_NAME) != 0) {
             if (channel?.channelLabel != ch.channelLabel) {
                 truncatedName = ""
@@ -145,15 +144,18 @@ class ChannelItemCell(
 
     override fun onDraw(canvas: Canvas) {
         val ch = channel ?: return
-        val hasUnread = ch.hasUnread
-        val hasMentionBadge = ch.unreadCount > 0
+        val isMutedVisual = ch.isMuted && !isActive
+        val showUnreadHighlight = ch.hasUnread && !isMutedVisual
+        val showMentionBadge = ch.unreadCount > 0
 
         val textColor = when {
-            isActive || hasUnread -> themeColors.onSurface
+            isActive -> themeColors.onSurface
+            isMutedVisual -> withAlpha(themeColors.onSurfaceVariant, MUTED_CONTENT_ALPHA)
+            showUnreadHighlight -> themeColors.onSurface
             else -> themeColors.onSurfaceVariant
         }
         namePaint.color = textColor
-        namePaint.typeface = if (hasUnread) android.graphics.Typeface.DEFAULT_BOLD else android.graphics.Typeface.DEFAULT
+        namePaint.typeface = if (showUnreadHighlight) android.graphics.Typeface.DEFAULT_BOLD else android.graphics.Typeface.DEFAULT
 
         if (isActive) {
             activeBgPaint.color = themeColors.primaryContainer
@@ -166,7 +168,7 @@ class ChannelItemCell(
 
         val cy = height / 2f
 
-        if (hasUnread && !isActive && !ch.isThread) {
+        if (showUnreadHighlight && !ch.isThread) {
             unreadDotPaint.color = themeColors.onSurface
             canvas.drawCircle(0f, cy, unreadDotRadius, unreadDotPaint)
         }
@@ -191,7 +193,7 @@ class ChannelItemCell(
         icon.draw(canvas)
 
         val textX = paddingHPx + iconSizePx + iconMarginPx
-        val badgeWidth = if (hasMentionBadge) badgeSizePx + BADGE_GAP else 0
+        val badgeWidth = if (showMentionBadge) badgeSizePx + BADGE_GAP else 0
         val availW = width - textX - paddingHPx - badgeWidth
 
         if (truncatedName.isEmpty() || truncatedNameWidth != availW) {
@@ -201,7 +203,7 @@ class ChannelItemCell(
         val textY = cy - (namePaint.descent() + namePaint.ascent()) / 2
         canvas.drawText(truncatedName, textX.toFloat(), textY, namePaint)
 
-        if (hasMentionBadge) {
+        if (showMentionBadge) {
             val badgeText = if (ch.unreadCount > 99) "99+" else ch.unreadCount.toString()
             val textW = unreadBadgeTextPaint.measureText(badgeText)
             val badgeW = (textW + BADGE_TEXT_PAD).coerceAtLeast(badgeSizePx.toFloat())
@@ -212,9 +214,12 @@ class ChannelItemCell(
             canvas.drawRoundRect(badgeRectF, badgeSizePx / 2f, badgeSizePx / 2f, unreadBadgePaint)
             val textY2 = cy - (unreadBadgeTextPaint.descent() + unreadBadgeTextPaint.ascent()) / 2
             canvas.drawText(badgeText, badgeLeft + badgeW / 2f, textY2, unreadBadgeTextPaint)
-        } else if (ch.isMuted) {
-            drawMuteIcon(canvas, (width - paddingHPx - iconSizePx / 2f), cy)
         }
+    }
+
+    private fun withAlpha(color: Int, alphaFraction: Float): Int {
+        val alpha = (255f * alphaFraction).toInt().coerceIn(0, 255)
+        return color and 0x00FFFFFF or (alpha shl 24)
     }
 
     private fun resolveIconDrawable(type: Int, isPrivate: Boolean, isAgeRestricted: Boolean = false): Drawable {
@@ -226,12 +231,5 @@ class ChannelItemCell(
         currentIconAgeRestricted = isAgeRestricted
         currentIconDrawable = resolveChannelIcon(type, isPrivate, isAgeRestricted).getDrawable(context)
         return currentIconDrawable!!
-    }
-
-    private fun drawMuteIcon(canvas: Canvas, cx: Float, cy: Float) {
-        mutePaint.color = themeColors.onSurfaceVariant
-        val r = iconSizePx * 0.35f
-        canvas.drawCircle(cx, cy, r, mutePaint)
-        canvas.drawLine(cx - r, cy - r, cx + r, cy + r, mutePaint)
     }
 }

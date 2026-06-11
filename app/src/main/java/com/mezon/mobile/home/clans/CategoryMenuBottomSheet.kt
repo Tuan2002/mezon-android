@@ -2,18 +2,18 @@ package com.mezon.mobile.home.clans
 
 import android.graphics.Typeface
 import android.os.Bundle
-import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
+import android.view.ViewGroup
 import android.widget.FrameLayout
-import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
+import android.widget.Toast
 import com.mezon.mobile.R
-import com.mezon.mobile.core.AndroidUtilities
 import com.mezon.mobile.core.BottomSheet
 import com.mezon.mobile.core.LayoutHelper
 import com.mezon.mobile.core.ThemeColors
+import com.mezon.mobile.home.clans.settings.ClanSettingsUiHelpers
 import com.mezon.mobile.ui.cells.AvatarView
 import com.mezon.mobile.ui.cells.MezonIcon
 
@@ -23,161 +23,157 @@ class CategoryMenuBottomSheet(
     private val clanName: String,
     private val clanLogoUrl: String,
     private val categoryId: Long,
+    private val categoryName: String,
     private val canManageChannel: Boolean,
+    private val canManageClan: Boolean,
     private val onMarkAsRead: () -> Unit,
-    private val onCreateChannel: () -> Unit
+    private val onCreateChannel: () -> Unit,
 ) : BottomSheet(context) {
 
-    private val themeColors = ThemeColors.instance
+    private val theme = ThemeColors.instance
 
     init {
-        containerHeight = (AndroidUtilities.displaySize.y * 0.45f).toInt()
+        containerHeight = ViewGroup.LayoutParams.WRAP_CONTENT
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        val sectionGap = 14f
+        val showCreateChannel = canManageChannel && categoryId != 0L
+
+        fun dismissAndRun(action: () -> Unit): Runnable = Runnable {
+            dismiss()
+            action()
+        }
+
+        fun showComingSoon() {
+            Toast.makeText(context, context.getString(R.string.feature_coming_soon), Toast.LENGTH_SHORT).show()
+        }
+
+        fun buildRow(
+            label: String,
+            icon: MezonIcon,
+            labelColor: Int = theme.colorText,
+            iconColor: Int = theme.textStrong,
+            onClick: () -> Unit,
+        ) = ClanSettingsUiHelpers.buildMezonMenuRow(
+            context,
+            theme,
+            icon,
+            label,
+            labelColor,
+            iconColor,
+            dismissAndRun(onClick),
+        )
+
+        fun addSection(parent: LinearLayout, rows: List<View>, topGap: Float = sectionGap) {
+            if (rows.all { it.visibility == View.GONE }) return
+            parent.addView(
+                ClanSettingsUiHelpers.buildMezonSection(context, theme, null, rows),
+                LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, 0f, Gravity.NO_GRAVITY, 0f, topGap, 0f, 0f)
+            )
+        }
 
         val header = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             setPadding(0, 0, 0, LayoutHelper.dp(30))
         }
-
-        val avatarWrap = FrameLayout(context).apply {
-            layoutParams = LinearLayout.LayoutParams(LayoutHelper.dp(60), LayoutHelper.dp(60))
-        }
-        val avatarView = AvatarView(context).apply {
-            setSizeDp(60)
-            setRoundRadius(10f)
-            setInfo(clanId, clanName)
-            setImageUrl(clanLogoUrl.ifBlank { "" })
-        }
-        avatarWrap.addView(avatarView, FrameLayout.LayoutParams(
-            FrameLayout.LayoutParams.MATCH_PARENT,
-            FrameLayout.LayoutParams.MATCH_PARENT
-        ))
-
-        val title = TextView(context).apply {
-            text = clanName.ifBlank { "…" }
-            setTextColor(themeColors.textStrong)
-            textSize = 17f
-            typeface = Typeface.DEFAULT_BOLD
-            maxLines = 2
-            ellipsize = android.text.TextUtils.TruncateAt.END
-        }
-
-        header.addView(avatarWrap, LayoutHelper.createLinear(LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT).apply {
-            marginEnd = LayoutHelper.dp(15)
-        })
-        header.addView(title, LayoutHelper.createLinear(0, LayoutHelper.WRAP_CONTENT, 1f))
-
-        val interactiveCreate = canManageChannel && categoryId != 0L
-        val rowLabelColor =
-            if (interactiveCreate) themeColors.textStrong else themeColors.onSurfaceVariant
-
-        fun buildActionRow(label: String, icon: MezonIcon, onClick: () -> Unit): LinearLayout {
-            return LinearLayout(context).apply {
-                orientation = LinearLayout.HORIZONTAL
-                gravity = Gravity.CENTER_VERTICAL
-                setPadding(LayoutHelper.dp(14), LayoutHelper.dp(14), LayoutHelper.dp(14), LayoutHelper.dp(14))
-                background = android.graphics.drawable.RippleDrawable(
-                    android.content.res.ColorStateList.valueOf(themeColors.onSurface and 0x1AFFFFFF),
-                    android.graphics.drawable.ColorDrawable(themeColors.surfaceVariant),
-                    android.graphics.drawable.ColorDrawable(0xFFFFFFFF.toInt())
-                )
-                isClickable = true
-                isFocusable = true
-                setOnClickListener {
-                    dismiss()
-                    onClick()
-                }
-                addView(
-                    ImageView(context).apply {
-                        setImageDrawable(icon.getDrawable(context, themeColors.textStrong))
-                        scaleType = ImageView.ScaleType.FIT_CENTER
-                    },
-                    LayoutHelper.createLinear(20, 20).apply { rightMargin = LayoutHelper.dp(12) }
-                )
-                addView(
-                    TextView(context).apply {
-                        text = label
-                        setTextColor(themeColors.textStrong)
-                        setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
-                        typeface = Typeface.DEFAULT_BOLD
-                    },
-                    LayoutHelper.createLinear(0, LayoutHelper.WRAP_CONTENT, 1f)
-                )
-                contentDescription = label
+        val avatarWrap = FrameLayout(context)
+        avatarWrap.addView(
+            AvatarView(context).apply {
+                setSizeDp(60)
+                setRoundRadius(10f)
+                setInfo(clanId, clanName)
+                setImageUrl(clanLogoUrl.ifBlank { "" })
+            },
+            FrameLayout.LayoutParams(LayoutHelper.dp(60), LayoutHelper.dp(60))
+        )
+        header.addView(
+            avatarWrap,
+            LayoutHelper.createLinear(LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT).apply {
+                marginEnd = LayoutHelper.dp(15)
             }
-        }
-
-        val markAsReadRow = buildActionRow(
-            context.getString(R.string.category_menu_mark_as_read),
-            MezonIcon.markUnreadIcon,
-            onMarkAsRead
+        )
+        header.addView(
+            TextView(context).apply {
+                text = categoryName.ifBlank { clanName.ifBlank { "…" } }
+                setTextColor(theme.textStrong)
+                textSize = 17f
+                typeface = Typeface.DEFAULT_BOLD
+                maxLines = 2
+                ellipsize = android.text.TextUtils.TruncateAt.END
+            },
+            LayoutHelper.createLinear(0, LayoutHelper.WRAP_CONTENT, 1f)
         )
 
-        val createRow = LinearLayout(context).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(LayoutHelper.dp(14), LayoutHelper.dp(14), LayoutHelper.dp(14), LayoutHelper.dp(14))
-            background = if (interactiveCreate) {
-                android.graphics.drawable.RippleDrawable(
-                    android.content.res.ColorStateList.valueOf(themeColors.onSurface and 0x1AFFFFFF),
-                    android.graphics.drawable.ColorDrawable(themeColors.surfaceVariant),
-                    android.graphics.drawable.ColorDrawable(0xFFFFFFFF.toInt())
+        val watchRows = listOf(
+            buildRow(
+                context.getString(R.string.category_menu_mark_as_read),
+                MezonIcon.eyeIcon,
+                onClick = onMarkAsRead,
+            )
+        )
+
+        val notificationRows = listOf(
+            buildRow(
+                context.getString(R.string.category_menu_mute_category),
+                MezonIcon.bellSlashIcon,
+                onClick = { showComingSoon() },
+            ),
+            buildRow(
+                context.getString(R.string.category_menu_notification_settings),
+                MezonIcon.channelNotificaitionIcon,
+                onClick = { showComingSoon() },
+            ),
+        )
+
+        val organizationRows = buildList {
+            if (canManageClan) {
+                add(
+                    buildRow(
+                        context.getString(R.string.category_menu_edit_category),
+                        MezonIcon.settingIcon,
+                        onClick = { showComingSoon() },
+                    )
                 )
-            } else {
-                android.graphics.drawable.ColorDrawable(themeColors.surfaceVariant)
             }
-            isClickable = interactiveCreate
-            isFocusable = interactiveCreate
-            if (interactiveCreate) {
-                setOnClickListener {
-                    dismiss()
-                    onCreateChannel()
-                }
+            if (showCreateChannel) {
+                add(
+                    buildRow(
+                        context.getString(R.string.category_menu_create_channel),
+                        MezonIcon.plusLargeIcon,
+                        onClick = onCreateChannel,
+                    )
+                )
+            }
+            if (canManageClan) {
+                add(
+                    buildRow(
+                        context.getString(R.string.category_menu_delete_category),
+                        MezonIcon.closeLargeIcon,
+                        labelColor = theme.redStrong,
+                        iconColor = theme.redStrong,
+                        onClick = { showComingSoon() },
+                    )
+                )
             }
         }
 
-        val plusIcon = ImageView(context).apply {
-            setImageDrawable(MezonIcon.plusLargeIcon.getDrawable(context, rowLabelColor))
-            scaleType = ImageView.ScaleType.FIT_CENTER
-        }
-        createRow.addView(plusIcon, LayoutHelper.createLinear(20, 20).apply { rightMargin = LayoutHelper.dp(12) })
-
-        val createLabel = TextView(context).apply {
-            text = context.getString(R.string.category_menu_create_channel)
-            setTextColor(rowLabelColor)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
-            typeface = Typeface.DEFAULT_BOLD
-        }
-        createRow.addView(createLabel, LayoutHelper.createLinear(0, LayoutHelper.WRAP_CONTENT, 1f))
-
-        createRow.contentDescription = if (interactiveCreate) {
-            context.getString(R.string.category_menu_create_channel)
-        } else {
-            "${context.getString(R.string.category_menu_create_channel)}. " +
-                context.getString(R.string.category_menu_create_channel_unavailable)
-        }
-
-        val root = LinearLayout(context).apply {
+        val content = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(themeColors.background)
-            setPadding(LayoutHelper.dp(20), LayoutHelper.dp(4), LayoutHelper.dp(20), LayoutHelper.dp(20))
+            setBackgroundColor(theme.background)
+            setPadding(LayoutHelper.dp(20), 0, LayoutHelper.dp(20), LayoutHelper.dp(20))
             addView(header, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT))
-            addView(markAsReadRow, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT).apply {
-                topMargin = LayoutHelper.dp(8)
-            })
-            addView(createRow, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT).apply {
-                topMargin = LayoutHelper.dp(8)
-            })
+            addSection(this, watchRows, topGap = 0f)
+            addSection(this, notificationRows)
+            if (organizationRows.isNotEmpty()) {
+                addSection(this, organizationRows)
+            }
         }
 
-        if (!canManageChannel) {
-            createRow.visibility = View.GONE
-        }
-
-        setCustomView(root)
+        setCustomView(ClanSettingsUiHelpers.newMezonScrollRoot(context).apply {
+            addView(content, LayoutHelper.createScroll(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT))
+        })
         super.onCreate(savedInstanceState)
     }
 }

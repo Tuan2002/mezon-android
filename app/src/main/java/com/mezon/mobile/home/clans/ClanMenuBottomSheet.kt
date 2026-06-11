@@ -30,6 +30,7 @@ class ClanMenuBottomSheet(
     notificationMuted: Boolean,
     private val permissionState: ClanSettingsPermissionState,
     showEmptyCategories: Boolean,
+    private val onShowEmptyCategoriesChanged: (Boolean) -> Unit,
     private val onOpenClanSettings: Runnable,
     private val onOpenAuditLog: Runnable,
     private val onOpenInvite: Runnable,
@@ -266,9 +267,8 @@ class ClanMenuBottomSheet(
 
         swRow.addView(SwitchView(context, theme).apply {
             setChecked(showEmptyCategories, animated = false)
-            onCheckedChange = {
-                showComingSoon()
-                setChecked(showEmptyCategories, animated = false)
+            onCheckedChange = { checked ->
+                onShowEmptyCategoriesChanged(checked)
             }
         })
 

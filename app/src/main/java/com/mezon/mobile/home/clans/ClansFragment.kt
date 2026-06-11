@@ -1,5 +1,7 @@
 package com.mezon.mobile.home.clans
 
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.util.Log
 import android.content.res.ColorStateList
@@ -62,12 +64,18 @@ import com.mezon.mobile.home.clans.settings.AuditLogSettingFragment
 import com.mezon.mobile.home.clans.settings.ClanSettingFragment
 import com.mezon.mobile.home.clans.settings.InvitePeopleBottomSheet
 import com.mezon.mobile.home.clans.settings.InvitePeopleController
+import com.mezon.mobile.home.chat.channelinfo.ChannelSettingsFragment
+import com.mezon.mobile.home.chat.thread.ThreadListFragment
+import com.mezon.mobile.network.CHANNEL_TYPE_CHANNEL
 import com.mezon.mobile.search.GlobalSearchFragment
 import com.mezon.mobile.ui.cells.MezonIcon
 import com.mezon.mobile.ui.cells.ToastOverlay
 import com.mezon.mobile.ui.MezonToast
 import com.mezon.mobile.home.qr.QrScanFragment
 import com.mezon.mobile.home.profile.UserController
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 private const val TAG_CHANNEL_OPEN = "ClansFragment"
 
@@ -82,6 +90,7 @@ class ClansFragment : BaseFragment() {
     private lateinit var userClanController: UserClanController
     private lateinit var voiceController: VoiceController
     private lateinit var channelCategoryExpandStore: ChannelCategoryExpandStore
+    private lateinit var showEmptyCategoryStore: ShowEmptyCategoryStore
     private lateinit var userController: UserController
     private lateinit var roleController: RoleController
     private lateinit var permissionPolicy: PermissionPolicy
@@ -134,6 +143,7 @@ class ClansFragment : BaseFragment() {
         userClanController = entryPoint.userClanController()
         voiceController = entryPoint.voiceController()
         channelCategoryExpandStore = entryPoint.channelCategoryExpandStore()
+        showEmptyCategoryStore = entryPoint.showEmptyCategoryStore()
         userController = entryPoint.userController()
         roleController = entryPoint.roleController()
         permissionPolicy = entryPoint.permissionPolicy()
@@ -328,32 +338,69 @@ class ClansFragment : BaseFragment() {
                 val selClan = clansController.selectedClanId.value
                 if (selClan == 0L) return@channelLongClick
                 val clan = clansController.clans.value.firstOrNull { it.clanId == selClan } ?: return@channelLongClick
+                val showThreadList = channel.type == CHANNEL_TYPE_CHANNEL && !channel.isThread
+                val showMarkFavorite = !channel.isThread
+                val isFavorite = channelController.isFavorite(selClan, channel.channelId)
+                val canEdit = permissionPolicy.canOpenChannelSettings(
+                    channel.channelId,
+                    selClan,
+                    channel.type,
+                    channel.parentId,
+                )
+                val canDelete = permissionPolicy.canDeleteChannelFromMenu(channel, selClan)
+                val menuChannel = channelController.findChannelById(channel.channelId, selClan) ?: channel
                 ChannelMenuBottomSheet(
                     context,
-                    channel,
+                    menuChannel,
                     clan.clanName,
                     clan.logo,
+                    isFavorite,
+                    showMarkFavorite,
+                    showThreadList,
+                    canEdit,
+                    canDelete,
                     onMarkAsRead = {
                         channelController.requestMarkAsRead(
                             channel.clanId,
                             categoryId = channel.categoryId,
                             channelId = channel.channelId
                         )
-                    }
+                    },
+                    onToggleFavorite = {
+                        toggleChannelFavorite(channel, selClan)
+                    },
+                    onCopyLink = {
+                        copyChannelLink(channel, selClan)
+                    },
+                    onMuteChannel = {
+                        handleChannelMute(channel, selClan)
+                    },
+                    onOpenThreadList = {
+                        openThreadList(channel, selClan)
+                    },
+                    onEditChannel = {
+                        openChannelSettings(channel, selClan)
+                    },
+                    onDeleteChannel = {
+                        confirmDeleteChannel(channel, selClan)
+                    },
                 ).show()
             }
-            onSectionLongClick = sectionLongClick@ { catId, _, _ ->
+            onSectionLongClick = sectionLongClick@ { catId, categoryName, _ ->
                 val selClan = clansController.selectedClanId.value
                 if (selClan == 0L || catId == 0L) return@sectionLongClick
                 val clan = clansController.clans.value.firstOrNull { it.clanId == selClan }
                 if (clan != null) {
+                    val permState = permissionPolicy.clanSettingsPermissionState(clan.clanId)
                     CategoryMenuBottomSheet(
                         context,
                         clan.clanId,
                         clan.clanName,
                         clan.logo,
                         catId,
+                        categoryName,
                         canManageChannel = permissionPolicy.canManageChannelForClan(clan.clanId),
+                        canManageClan = permState.isCanEditRole,
                         onMarkAsRead = {
                             channelController.requestMarkAsRead(clan.clanId, categoryId = catId)
                         },
@@ -920,7 +967,7 @@ class ClansFragment : BaseFragment() {
         roleController.loadRolesForClanThen(clanId, force = true, Runnable {
             val members = userClanController.getClanMembers(clanId)
             val permissionState = permissionPolicy.clanSettingsPermissionState(clanId)
-            val expandState = channelCategoryExpandStore.load(clanId)
+            val showEmptyCategories = showEmptyCategoryStore.isEnabled(clanId)
             dismissClanMenuSheet()
             val sheet = ClanMenuBottomSheet(
                 ctx,
@@ -932,7 +979,11 @@ class ClansFragment : BaseFragment() {
                 members.size,
                 false,
                 permissionState,
-                expandState.allExpanded,
+                showEmptyCategories,
+                { enabled ->
+                    showEmptyCategoryStore.setEnabled(clanId, enabled)
+                    updateChannelList()
+                },
                 Runnable {
                     dismissClanMenuThen(Runnable {
                         presentFragment(ClanSettingFragment.newInstance(clanId))
@@ -990,7 +1041,8 @@ class ClansFragment : BaseFragment() {
 
     private fun updateChannelList() {
         val clanId = clansController.selectedClanId.value
-        val sections = channelController.getChannelSections(clanId)
+        val showEmptyCategories = showEmptyCategoryStore.isEnabled(clanId)
+        val sections = channelController.getChannelSections(clanId, showEmptyCategories)
         channelListView.bind(clanId, sections)
         if (clanId != lastVoiceFetchClanId) {
             lastVoiceFetchClanId = clanId
@@ -1150,6 +1202,112 @@ class ClansFragment : BaseFragment() {
             TAG_CHANNEL_OPEN,
             "onChannelSelected openChat channelId=${channel.channelId} clanId=$clanIdForJoin type=${channel.type}",
         )
+    }
+
+    private fun openThreadList(channel: ClanChannelEntity, clanId: Long) {
+        if (channel.type != CHANNEL_TYPE_CHANNEL || channel.isThread) return
+        presentFragment(
+            ThreadListFragment.newInstance(
+                channelId = channel.channelId,
+                channelName = channel.channelLabel,
+                clanId = clanId,
+            )
+        )
+    }
+
+    private fun copyChannelLink(channel: ClanChannelEntity, clanId: Long) {
+        val ctx = fragmentView?.context ?: return
+        val link = "https://mezon.ai/chat/clans/$clanId/channels/${channel.channelId}"
+        val clipboard = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        clipboard.setPrimaryClip(ClipData.newPlainText("channel_link", link))
+        MezonToast.show(this, ToastOverlay.ToastType.INFO, getString(R.string.invite_link_copied))
+    }
+
+    private fun toggleChannelFavorite(channel: ClanChannelEntity, clanId: Long) {
+        if (channelController.isFavorite(clanId, channel.channelId)) {
+            channelController.removeFavorite(clanId, channel.channelId)
+        } else {
+            channelController.addFavorite(clanId, channel.channelId)
+        }
+    }
+
+    private fun handleChannelMute(channel: ClanChannelEntity, clanId: Long) {
+        val ctx = fragmentView?.context ?: return
+        if (channelController.isChannelMuted(clanId, channel.channelId)) {
+            channelController.unmuteChannel(clanId, channel.channelId)
+            return
+        }
+        val liveChannel = channelController.findChannelById(channel.channelId, clanId) ?: channel
+        ChannelMuteBottomSheet(ctx, liveChannel) { muteTimeSeconds, active ->
+            channelController.setChannelMuted(clanId, channel.channelId, muteTimeSeconds, active)
+        }.show()
+    }
+
+    private fun openChannelSettings(channel: ClanChannelEntity, clanId: Long) {
+        if (!permissionPolicy.canOpenChannelSettings(
+                channel.channelId,
+                clanId,
+                channel.type,
+                channel.parentId,
+            )
+        ) {
+            return
+        }
+        presentFragment(
+            ChannelSettingsFragment.newInstance(
+                channelId = channel.channelId,
+                channelName = channel.channelLabel,
+                clanId = clanId,
+                channelType = channel.type,
+                isChannelPrivate = channel.isPrivate,
+            )
+        )
+    }
+
+    private fun confirmDeleteChannel(channel: ClanChannelEntity, clanId: Long) {
+        val act = getParentActivity() ?: return
+        if (!permissionPolicy.canDeleteChannelFromMenu(channel, clanId)) return
+        val clan = clansController.clans.value.firstOrNull { it.clanId == clanId }
+        if (clan != null && clan.welcomeChannelId != 0L && clan.welcomeChannelId == channel.channelId) {
+            MezonToast.show(
+                this,
+                ToastOverlay.ToastType.ERROR,
+                getString(R.string.channel_settings_delete_system_channel),
+            )
+            return
+        }
+        val titleRes = if (channel.isThread) {
+            R.string.channel_settings_delete_confirm_thread_title
+        } else {
+            R.string.channel_settings_delete_confirm_channel_title
+        }
+        AlertDialog.Builder(act)
+            .setTitle(getString(titleRes))
+            .setMessage(getString(R.string.channel_settings_delete_confirm_message, channel.channelLabel))
+            .setNegativeButton(getString(R.string.common_cancel), null)
+            .setPositiveButton(getString(R.string.common_delete)) { _, _ ->
+                performDeleteChannel(channel, clanId)
+            }
+            .show()
+    }
+
+    private fun performDeleteChannel(channel: ClanChannelEntity, clanId: Long) {
+        fragmentScope.launch {
+            val result = channelController.deleteChannelDesc(clanId, channel.channelId, channel.type)
+            withContext(Dispatchers.Main.immediate) {
+                if (result.isSuccess) {
+                    updateChannelList()
+                } else {
+                    val msg = result.exceptionOrNull()?.message?.takeIf { it.length < 200 }
+                        ?: getString(R.string.common_something_went_wrong)
+                    MezonToast.show(
+                        this@ClansFragment,
+                        ToastOverlay.ToastType.ERROR,
+                        getString(R.string.channel_settings_delete_failed, msg),
+                    )
+                }
+            }
+        }
     }
 
     private fun showJoinVoiceBottomSheet(channel: ClanChannelEntity, clanId: Long) {

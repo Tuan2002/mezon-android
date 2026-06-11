@@ -125,6 +125,25 @@ class PermissionPolicy @Inject constructor(
         return checkAnyPermission(listOf(ADMINISTRATOR, MANAGE_CHANNEL), null, null)
     }
 
+    fun canDeleteChannelFromMenu(channel: ClanChannelEntity, clanId: Long): Boolean {
+        if (clanId == 0L || channel.channelId == 0L) return false
+        if (isWelcomeChannel(clanId, channel.channelId)) return false
+        return if (channel.isThread) {
+            ensurePermissionChecker(listOf(CLAN_OWNER, MANAGE_THREAD, ADMINISTRATOR), channel.channelId, clanId)
+            checkPermission(CLAN_OWNER, channel.channelId, clanId) ||
+                checkPermission(ADMINISTRATOR, null, clanId) ||
+                checkPermission(MANAGE_THREAD, channel.channelId, clanId)
+        } else {
+            ensurePermissionChecker(listOf(ADMINISTRATOR, MANAGE_CHANNEL), null, clanId)
+            canManageChannelForClan(clanId)
+        }
+    }
+
+    private fun isWelcomeChannel(clanId: Long, channelId: Long): Boolean {
+        val clan = clansController.clans.value.firstOrNull { it.clanId == clanId } ?: return true
+        return clan.welcomeChannelId != 0L && clan.welcomeChannelId == channelId
+    }
+
     fun canCreateThreadFromMessage(channelId: Long, clanId: Long): Boolean {
         if (channelId == 0L || clanId == 0L) return false
         ensurePermissionChecker(listOf(CLAN_OWNER, MANAGE_THREAD, MANAGE_CHANNEL), channelId, clanId)
