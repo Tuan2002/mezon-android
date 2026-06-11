@@ -19,8 +19,10 @@ import kotlinx.coroutines.withContext
 class MemberListAdapter(
     private val theme: ThemeColors,
     private val isDm: Boolean,
-    private val creatorId: Long
+    creatorId: Long
 ) : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
+
+    private var creatorId = creatorId
 
     private val rows = ArrayList<Any>()
     private var allMembers = ArrayList<ClanMember>()
@@ -40,6 +42,12 @@ class MemberListAdapter(
     fun setFilter(query: String) {
         filterQuery = query.trim().lowercase()
         rebuildRows()
+    }
+
+    fun updateCreatorId(id: Long) {
+        if (creatorId == id) return
+        creatorId = id
+        notifyDataSetChanged()
     }
 
     private fun rebuildRows() {
@@ -130,7 +138,11 @@ class MemberListAdapter(
     override fun onBindViewHolder(holder: RecyclerView.ViewHolder, position: Int) {
         when (val item = rows[position]) {
             is SectionHeader -> (holder.itemView as TextView).text = item.title
-            is ClanMember -> (holder.itemView as MemberCell).update(0, item)
+            is ClanMember -> {
+                val cell = holder.itemView as MemberCell
+                cell.setCreatorId(creatorId)
+                cell.update(0, item)
+            }
         }
     }
 

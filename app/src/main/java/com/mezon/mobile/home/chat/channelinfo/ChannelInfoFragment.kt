@@ -38,6 +38,7 @@ import com.mezon.mobile.home.MemberResolver
 import com.mezon.mobile.home.UserClanController
 import com.mezon.mobile.home.clans.ChannelController
 import com.mezon.mobile.home.clans.ChannelPermissionController
+import com.mezon.mobile.home.clans.ClansController
 import com.mezon.mobile.home.clans.PermissionPolicy
 
 import com.mezon.mobile.home.clans.CHANNEL_TYPE_APP
@@ -114,6 +115,7 @@ class ChannelInfoFragment : BaseFragment() {
     private lateinit var chatController: ChatController
     private lateinit var channelController: ChannelController
     private lateinit var channelPermissionController: ChannelPermissionController
+    private lateinit var clansController: ClansController
     private lateinit var permissionPolicy: PermissionPolicy
     private var settingsActionGap: View? = null
     private var settingsActionView: View? = null
@@ -259,6 +261,7 @@ class ChannelInfoFragment : BaseFragment() {
         chatController = entryPoint.chatController()
         channelController = entryPoint.channelController()
         channelPermissionController = entryPoint.channelPermissionController()
+        clansController = entryPoint.clansController()
         permissionPolicy = entryPoint.permissionPolicy()
         channelFilesController = entryPoint.channelFilesController()
         channelGalleryController = entryPoint.channelGalleryController()
@@ -580,7 +583,7 @@ class ChannelInfoFragment : BaseFragment() {
             ))
         }
 
-        memberListAdapter = MemberListAdapter(themeColors, isDm, 0L)
+        memberListAdapter = MemberListAdapter(themeColors, isDm, resolveMemberListOwnerId())
 
         membersRecyclerView = RecyclerListView(context).apply {
             layoutManager = LinearLayoutManager(context)
@@ -930,8 +933,20 @@ class ChannelInfoFragment : BaseFragment() {
     }
 
     private fun reloadMembers() {
+        memberListAdapter?.updateCreatorId(resolveMemberListOwnerId())
         val members = memberResolver.resolveChannelMembers(clanId, channelId, channelType)
         memberListAdapter?.setData(members)
+    }
+
+    private fun resolveMemberListOwnerId(): Long {
+        return when {
+            channelType == CHANNEL_TYPE_GROUP ->
+                dialogsController.getDialog(channelId)?.groupCreatorId ?: 0L
+            channelType == CHANNEL_TYPE_DM -> 0L
+            clanId != 0L ->
+                clansController.clans.value.firstOrNull { it.clanId == clanId }?.creatorId ?: 0L
+            else -> 0L
+        }
     }
 
     private fun triggerMemberLoad() {
