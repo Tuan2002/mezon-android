@@ -60,6 +60,11 @@ class WelcomeMessageCell(context: Context, private val theme: ThemeColors) : Vie
         invalidate()
     }
 
+    override fun invalidate() {
+        if (messageEntity == null) return
+        super.invalidate()
+    }
+
     override fun onAttachedToWindow() {
         super.onAttachedToWindow()
         attachedToWindow = true

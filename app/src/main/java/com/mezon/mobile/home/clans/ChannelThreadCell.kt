@@ -50,7 +50,8 @@ class ChannelThreadCell(
     private var isFirst = false
     private var isLast = false
     private var isActive = false
-    private var truncatedName: CharSequence = ""
+    private var truncatedName: String = ""
+    private var truncatedNameWidth = -1
 
     private val cellHeightPx = LayoutHelper.dp(36)
     private val connectorLineX = LayoutHelper.dp(26).toFloat()
@@ -146,11 +147,12 @@ class ChannelThreadCell(
         val badgeWidth = if (hasMentionBadge) badgeSizePx + BADGE_GAP else 0
         val availW = width - textStartX - paddingRightPx - badgeWidth
 
-        if (truncatedName.isEmpty()) {
-            truncatedName = TextUtils.ellipsize(th.channelLabel, namePaint, availW.toFloat(), TextUtils.TruncateAt.END)
+        if (truncatedName.isEmpty() || truncatedNameWidth != availW) {
+            truncatedNameWidth = availW
+            truncatedName = TextUtils.ellipsize(th.channelLabel, namePaint, availW.toFloat(), TextUtils.TruncateAt.END).toString()
         }
         val textY = cy - (namePaint.descent() + namePaint.ascent()) / 2
-        canvas.drawText(truncatedName.toString(), textStartX.toFloat(), textY, namePaint)
+        canvas.drawText(truncatedName, textStartX.toFloat(), textY, namePaint)
 
         if (hasMentionBadge) {
             val badgeText = if (th.unreadCount > 99) "99+" else th.unreadCount.toString()

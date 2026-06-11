@@ -23,6 +23,10 @@ class DmLogoCell(
 
     companion object {
         private const val DEFAULT_LOGO_URL = "https://cdn.mezon.ai/landing-page-mezon/logodefault.webp"
+
+        private val BADGE_HEIGHT = LayoutHelper.dp(16f).toFloat()
+        private val BADGE_PAD_H = LayoutHelper.dp(4f).toFloat()
+        private val BADGE_OFFSET = LayoutHelper.dp(2f).toFloat()
     }
 
     private val iconSizePx = LayoutHelper.dp(42)
@@ -33,6 +37,10 @@ class DmLogoCell(
     private var logoCancellable: MezonImageLoader.Cancellable? = null
     private val clipPath = Path()
     private val clipRect = RectF()
+    private var clipPathLeft = Int.MIN_VALUE
+    private var clipPathTop = Int.MIN_VALUE
+    private var clipPathRight = Int.MIN_VALUE
+    private var clipPathBottom = Int.MIN_VALUE
     private val bitmapDestRect = android.graphics.Rect()
 
     private val badgeBgPaint = Paint(Paint.ANTI_ALIAS_FLAG)
@@ -106,8 +114,14 @@ class DmLogoCell(
         val bottom = (cy + half).toInt()
 
         clipRect.set(left.toFloat(), top.toFloat(), right.toFloat(), bottom.toFloat())
-        clipPath.reset()
-        clipPath.addRoundRect(clipRect, cornerRadius, cornerRadius, Path.Direction.CW)
+        if (clipPathLeft != left || clipPathTop != top || clipPathRight != right || clipPathBottom != bottom) {
+            clipPathLeft = left
+            clipPathTop = top
+            clipPathRight = right
+            clipPathBottom = bottom
+            clipPath.reset()
+            clipPath.addRoundRect(clipRect, cornerRadius, cornerRadius, Path.Direction.CW)
+        }
 
         canvas.save()
         canvas.clipPath(clipPath)
@@ -125,16 +139,14 @@ class DmLogoCell(
 
         if (pendingCount > 0) {
             badgeBgPaint.color = themeColors.badgeRed
-            val badgeH = LayoutHelper.dp(16f).toFloat()
             val textW = badgeTextPaint.measureText(badgeText)
-            val padH = LayoutHelper.dp(4f).toFloat()
-            val badgeW = (textW + padH * 2).coerceAtLeast(badgeH)
-            val badgeRadius = badgeH / 2f
+            val badgeW = (textW + BADGE_PAD_H * 2).coerceAtLeast(BADGE_HEIGHT)
+            val badgeRadius = BADGE_HEIGHT / 2f
 
-            val badgeRight = right.toFloat() + LayoutHelper.dp(2f)
+            val badgeRight = right.toFloat() + BADGE_OFFSET
             val badgeLeft = badgeRight - badgeW
-            val badgeTop = top.toFloat() - LayoutHelper.dp(2f)
-            badgeRect.set(badgeLeft, badgeTop, badgeRight, badgeTop + badgeH)
+            val badgeTop = top.toFloat() - BADGE_OFFSET
+            badgeRect.set(badgeLeft, badgeTop, badgeRight, badgeTop + BADGE_HEIGHT)
 
             canvas.drawRoundRect(badgeRect, badgeRadius, badgeRadius, badgeBgPaint)
             val textY = badgeRect.centerY() - (badgeTextPaint.descent() + badgeTextPaint.ascent()) / 2

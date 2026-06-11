@@ -31,7 +31,12 @@ class ShareContactCardLayout(private val context: Context) {
     private var currentAvatarUrl = ""
     private val cardRect = RectF()
     private val clipPath = Path()
+    private var clipPathW = Float.NaN
+    private var clipPathH = 0f
     private val avatarClipPath = Path()
+    private var avatarClipCx = Float.NaN
+    private var avatarClipCy = 0f
+    private var avatarClipR = 0f
     private val profileHitRect = RectF()
     private val callHitRect = RectF()
     private val messageHitRect = RectF()
@@ -72,9 +77,7 @@ class ShareContactCardLayout(private val context: Context) {
         cardWidth = (maxBubbleWidth * 0.9f).toInt().coerceAtLeast(LayoutHelper.dp(200))
         showOnline = isOnline
         rippleLight = theme.resolvedMode == com.mezon.mobile.ui.theme.ThemeMode.LIGHT
-        val innerPadH = LayoutHelper.dp(12)
-        val headerPadV = LayoutHelper.dp(16)
-        val textBlockW = (cardWidth - innerPadH - TEXT_RIGHT_PAD - AVATAR_SIZE - AVATAR_GAP).coerceAtLeast(1)
+        val textBlockW = (cardWidth - INNER_PAD_H - TEXT_RIGHT_PAD - AVATAR_SIZE - AVATAR_GAP).coerceAtLeast(1)
 
         DISPLAY_PAINT.typeface = Typeface.DEFAULT_BOLD
         DISPLAY_PAINT.textSize = LayoutHelper.sp(14f)
@@ -110,8 +113,8 @@ class ShareContactCardLayout(private val context: Context) {
 
         val textStackH = (displayLayout?.height ?: 0) + USERNAME_GAP + (usernameLayout?.height ?: 0)
         val headerContentH = maxOf(AVATAR_SIZE, textStackH)
-        headerHeight = headerPadV * 2 + headerContentH
-        textBlockTop = headerPadV + (headerContentH - textStackH) / 2f
+        headerHeight = HEADER_PAD_V * 2 + headerContentH
+        textBlockTop = HEADER_PAD_V + (headerContentH - textStackH) / 2f
 
         callIcon = MezonIcon.phoneCallIcon.getDrawable(context).mutate().apply {
             setColorFilter(actionTint, android.graphics.PorterDuff.Mode.SRC_IN)
@@ -145,8 +148,12 @@ class ShareContactCardLayout(private val context: Context) {
     fun draw(canvas: Canvas, left: Float, top: Float) {
         canvas.save()
         canvas.translate(left, top)
-        clipPath.reset()
-        clipPath.addRoundRect(cardRect, CARD_RADIUS, CARD_RADIUS, Path.Direction.CW)
+        if (clipPathW != cardRect.width() || clipPathH != cardRect.height()) {
+            clipPathW = cardRect.width()
+            clipPathH = cardRect.height()
+            clipPath.reset()
+            clipPath.addRoundRect(cardRect, CARD_RADIUS, CARD_RADIUS, Path.Direction.CW)
+        }
         canvas.save()
         canvas.clipPath(clipPath)
         canvas.drawRoundRect(cardRect, CARD_RADIUS, CARD_RADIUS, cardBgPaint)
@@ -154,10 +161,8 @@ class ShareContactCardLayout(private val context: Context) {
         canvas.drawLine(0f, actionTop, cardWidth.toFloat(), actionTop, actionTopDividerPaint)
         canvas.drawLine(cardWidth / 2f, actionTop, cardWidth / 2f, blockHeight.toFloat(), dividerPaint)
 
-        val innerPadH = LayoutHelper.dp(12).toFloat()
-        val headerPadV = LayoutHelper.dp(16).toFloat()
-        val avatarLeft = innerPadH
-        val avatarTop = headerPadV + (headerHeight - headerPadV * 2 - AVATAR_SIZE) / 2f
+        val avatarLeft = INNER_PAD_H.toFloat()
+        val avatarTop = HEADER_PAD_V + (headerHeight - HEADER_PAD_V * 2 - AVATAR_SIZE) / 2f
         drawAvatar(canvas, avatarLeft, avatarTop)
 
         val textLeft = avatarLeft + AVATAR_SIZE + AVATAR_GAP
@@ -194,8 +199,13 @@ class ShareContactCardLayout(private val context: Context) {
         val cx = left + AVATAR_SIZE / 2f
         val cy = top + AVATAR_SIZE / 2f
         val outerR = AVATAR_SIZE / 2f
-        avatarClipPath.reset()
-        avatarClipPath.addCircle(cx, cy, outerR, Path.Direction.CW)
+        if (avatarClipCx != cx || avatarClipCy != cy || avatarClipR != outerR) {
+            avatarClipCx = cx
+            avatarClipCy = cy
+            avatarClipR = outerR
+            avatarClipPath.reset()
+            avatarClipPath.addCircle(cx, cy, outerR, Path.Direction.CW)
+        }
         canvas.save()
         canvas.clipPath(avatarClipPath)
         avatarDrawable.setBounds(
@@ -319,6 +329,8 @@ class ShareContactCardLayout(private val context: Context) {
     companion object {
         private val AVATAR_SIZE = LayoutHelper.dp(40)
         private val AVATAR_GAP = LayoutHelper.dp(12)
+        private val INNER_PAD_H = LayoutHelper.dp(12)
+        private val HEADER_PAD_V = LayoutHelper.dp(16)
         private val TEXT_RIGHT_PAD = LayoutHelper.dp(10)
         private val USERNAME_GAP = LayoutHelper.dp(2)
         private val CARD_RADIUS = LayoutHelper.dpf(12f)

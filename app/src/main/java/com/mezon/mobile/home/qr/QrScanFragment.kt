@@ -50,6 +50,7 @@ class QrScanFragment : BaseFragment() {
         private const val REQUEST_CAMERA = 7001
         private const val REQUEST_GALLERY = 7002
         private const val SCAN_THROTTLE_MS = 5000L
+        private const val GALLERY_QR_MAX_EDGE = 2048
 
         private fun extractLuminance(image: ImageProxy): ByteArray? {
             val plane = image.planes.firstOrNull() ?: return null
@@ -452,9 +453,7 @@ class QrScanFragment : BaseFragment() {
     private fun decodeFromGallery(uri: Uri) {
         val ctx = requireContext()
         fragmentScope.launch(Dispatchers.IO) {
-            val bitmap = runCatching {
-                ctx.contentResolver.openInputStream(uri)?.use { android.graphics.BitmapFactory.decodeStream(it) }
-            }.getOrNull()
+            val bitmap = runCatching { decodeGalleryBitmapSampled(ctx.contentResolver, uri) }.getOrNull()
             val value = bitmap?.let { QrCodeUtils.decodeFromBitmap(it) }
             launch(Dispatchers.Main) {
                 if (value == null) {
@@ -463,6 +462,22 @@ class QrScanFragment : BaseFragment() {
                     onQrScanned(value)
                 }
             }
+        }
+    }
+
+    private fun decodeGalleryBitmapSampled(resolver: android.content.ContentResolver, uri: Uri): android.graphics.Bitmap? {
+        val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        resolver.openInputStream(uri)?.use {
+            android.graphics.BitmapFactory.decodeStream(it, null, bounds)
+        } ?: return null
+        val maxEdgePx = maxOf(bounds.outWidth, bounds.outHeight)
+        var sample = 1
+        while (maxEdgePx / sample > GALLERY_QR_MAX_EDGE) {
+            sample *= 2
+        }
+        val opts = android.graphics.BitmapFactory.Options().apply { inSampleSize = sample }
+        return resolver.openInputStream(uri)?.use {
+            android.graphics.BitmapFactory.decodeStream(it, null, opts)
         }
     }
 

@@ -68,6 +68,7 @@ class FriendsHomeFragment : BaseFragment() {
     private val debounceHandler = Handler(Looper.getMainLooper())
     private var query = ""
     private var allFriends = emptyList<Friend>()
+    private var needsFriendsRefresh = false
 
     override fun onInject(entryPoint: FragmentEntryPoint) {
         friendController = entryPoint.friendController()
@@ -80,10 +81,13 @@ class FriendsHomeFragment : BaseFragment() {
     override fun onFragmentCreate(): Boolean {
         super.onFragmentCreate()
         observe(NotificationCenter.friendsLoaded) { _, _, _ ->
-            if (fragmentView != null) {
-                allFriends = friendController.friends.value
-                reloadList()
+            if (fragmentView == null) return@observe
+            if (isPaused) {
+                needsFriendsRefresh = true
+                return@observe
             }
+            allFriends = friendController.friends.value
+            reloadList()
         }
         observe(NotificationCenter.themeChanged) { _, _, _ ->
             if (fragmentView != null) {
@@ -93,6 +97,15 @@ class FriendsHomeFragment : BaseFragment() {
         }
         friendController.loadFriendRelations(noCache = true)
         return true
+    }
+
+    override fun onBecomeFullyVisible() {
+        super.onBecomeFullyVisible()
+        if (needsFriendsRefresh && fragmentView != null) {
+            needsFriendsRefresh = false
+            allFriends = friendController.friends.value
+            reloadList()
+        }
     }
 
     override fun createView(context: Context): View {

@@ -22,7 +22,9 @@ private data class OptionLine(
     val top: Float,
     val height: Float,
     val voteCount: Int,
-    val percentage: Int
+    val percentage: Int,
+    val metaText: String,
+    val metaWidth: Float
 )
 
 private data class OptionLabelCacheEntry(
@@ -179,17 +181,15 @@ class PollMessageLayout(private val context: Context) {
         for (ans in visible) {
             val count = parsed.countFor(ans.index)
             val pct = if (parsed.totalVotes > 0) ((count * 100f) / parsed.totalVotes).toInt().coerceIn(0, 100) else 0
+            val meta = "${pct}% · " + context.resources.getQuantityString(
+                R.plurals.poll_option_votes,
+                count,
+                count
+            )
+            val mw = metaPaint.measureText(meta)
             var labelMaxW = labelBaseW.toFloat()
             if (showResults) {
-                val meta = "${pct}% · " + context.resources.getQuantityString(
-                    R.plurals.poll_option_votes,
-                    count,
-                    count
-                )
-                val mw = metaPaint.measureText(meta)
-                val side = LayoutHelper.dp(18).toFloat()
-                val edgePad = LayoutHelper.dp(10).toFloat()
-                labelMaxW = (labelBaseW - mw - side - edgePad - LayoutHelper.dp(6)).coerceAtLeast(LayoutHelper.dp(40).toFloat())
+                labelMaxW = (labelBaseW - mw - CHECK_SIDE - CHECK_EDGE_PAD - META_CHECK_GAP).coerceAtLeast(LayoutHelper.dp(40).toFloat())
             }
             val labelLayout = obtainOptionLabelLayout(
                 answerIndex = ans.index,
@@ -204,7 +204,9 @@ class PollMessageLayout(private val context: Context) {
                     top = y,
                     height = optionH,
                     voteCount = count,
-                    percentage = pct
+                    percentage = pct,
+                    metaText = meta,
+                    metaWidth = mw
                 )
             )
             y += optionH + gap
@@ -365,25 +367,24 @@ class PollMessageLayout(private val context: Context) {
     fun draw(canvas: Canvas, left: Float, top: Float, parsed: ParsedPoll, state: PollLocalState, currentUserId: Long) {
         canvas.save()
         canvas.translate(left, top)
-        val r = LayoutHelper.dpf(12f)
         tmpRect.set(cardRect)
-        canvas.drawRoundRect(tmpRect, r, r, cardPaint)
+        canvas.drawRoundRect(tmpRect, CARD_RADIUS, CARD_RADIUS, cardPaint)
 
-        val pad = LayoutHelper.dp(12).toFloat()
+        val pad = CARD_PAD
         var y = pad
         questionLayout?.let { lay ->
             canvas.save()
             canvas.translate(pad, y)
             lay.draw(canvas)
             canvas.restore()
-            y += lay.height + LayoutHelper.dp(6)
+            y += lay.height + QUESTION_GAP
         }
         subtitleLayout?.let { lay ->
             canvas.save()
             canvas.translate(pad, y)
             lay.draw(canvas)
             canvas.restore()
-            y += lay.height + LayoutHelper.dp(10)
+            y += lay.height + SUBTITLE_GAP
         }
 
         val nowSec = System.currentTimeMillis() / 1000L
@@ -403,7 +404,7 @@ class PollMessageLayout(private val context: Context) {
         }
 
         if (expandLinkVisible && expandLinkText.isNotEmpty()) {
-            canvas.drawText(expandLinkText, expandLinkRect.left, expandLinkRect.bottom - LayoutHelper.dp(4), linkPaint)
+            canvas.drawText(expandLinkText, expandLinkRect.left, expandLinkRect.bottom - EXPAND_LINK_BASELINE_PAD, linkPaint)
         }
 
         canvas.drawText(
@@ -422,8 +423,7 @@ class PollMessageLayout(private val context: Context) {
         }
 
         if (actionLabel.isNotEmpty() && !actionButtonRect.isEmpty) {
-            val rr = LayoutHelper.dpf(8f)
-            canvas.drawRoundRect(actionButtonRect, rr, rr, buttonPaint)
+            canvas.drawRoundRect(actionButtonRect, BUTTON_RADIUS, BUTTON_RADIUS, buttonPaint)
             val fx = actionButtonRect.left + (actionButtonRect.width() - buttonTextPaint.measureText(actionLabel)) / 2f
             val fy = actionButtonRect.centerY() - (buttonTextPaint.ascent() + buttonTextPaint.descent()) / 2f
             canvas.drawText(actionLabel, fx, fy, buttonTextPaint)
@@ -445,32 +445,28 @@ class PollMessageLayout(private val context: Context) {
         val h = line.height
         val left = pad
         val right = pad + innerW
-        val rx = LayoutHelper.dpf(10f)
         tmpRect.set(left, top, right, top + h)
-        canvas.drawRoundRect(tmpRect, rx, rx, optionBgPaint)
+        canvas.drawRoundRect(tmpRect, OPTION_RADIUS, OPTION_RADIUS, optionBgPaint)
 
         if (highlightSelection) {
-            canvas.drawRoundRect(tmpRect, rx, rx, optionSelectionFillPaint)
-            canvas.drawRoundRect(tmpRect, rx, rx, optionSelectionStrokePaint)
+            canvas.drawRoundRect(tmpRect, OPTION_RADIUS, OPTION_RADIUS, optionSelectionFillPaint)
+            canvas.drawRoundRect(tmpRect, OPTION_RADIUS, OPTION_RADIUS, optionSelectionStrokePaint)
         }
 
         if (showResults) {
             val fillW = innerW * (line.percentage / 100f)
             barFillPaint.alpha = if (isChosen) 210 else 110
-            val inset = LayoutHelper.dp(4).toFloat()
-            val inset8 = LayoutHelper.dp(8).toFloat()
             tmpRect.set(
-                left + inset,
-                top + inset,
-                left + inset + min(fillW, innerW - inset8),
-                top + h - inset
+                left + BAR_INSET,
+                top + BAR_INSET,
+                left + BAR_INSET + min(fillW, innerW - BAR_INSET_RIGHT),
+                top + h - BAR_INSET
             )
-            val barRx = LayoutHelper.dpf(6f)
-            canvas.drawRoundRect(tmpRect, barRx, barRx, barFillPaint)
+            canvas.drawRoundRect(tmpRect, BAR_RADIUS, BAR_RADIUS, barFillPaint)
             barFillPaint.alpha = 255
         }
 
-        val labelX = left + LayoutHelper.dp(12)
+        val labelX = left + OPTION_LABEL_PAD
         val lay = line.labelLayout
         val labelTop = top + (h - lay.height) / 2f
         canvas.save()
@@ -480,22 +476,14 @@ class PollMessageLayout(private val context: Context) {
 
         if (showResults) {
             val labelY = top + h / 2f - (optionLabelPaint.descent() + optionLabelPaint.ascent()) / 2f
-            val meta = "${line.percentage}% · " + context.resources.getQuantityString(
-                R.plurals.poll_option_votes,
-                line.voteCount,
-                line.voteCount
-            )
-            val mw = metaPaint.measureText(meta)
-            val side = LayoutHelper.dp(18).toFloat()
-            val edgePad = LayoutHelper.dp(10).toFloat()
-            val cx = right - edgePad - side / 2f
-            val metaRight = if (isChosen) cx - side / 2f - LayoutHelper.dp(6).toFloat() else right - LayoutHelper.dp(12)
-            canvas.drawText(meta, metaRight - mw, labelY, metaPaint)
+            val side = CHECK_SIDE
+            val cx = right - CHECK_EDGE_PAD - side / 2f
+            val metaRight = if (isChosen) cx - side / 2f - META_CHECK_GAP else right - OPTION_LABEL_PAD
+            canvas.drawText(line.metaText, metaRight - line.metaWidth, labelY, metaPaint)
             if (isChosen) {
                 val cy = top + h / 2f
                 tmpRect.set(cx - side / 2f, cy - side / 2f, cx + side / 2f, cy + side / 2f)
-                val checkRx = LayoutHelper.dpf(4f)
-                canvas.drawRoundRect(tmpRect, checkRx, checkRx, checkPaint)
+                canvas.drawRoundRect(tmpRect, CHECK_RADIUS, CHECK_RADIUS, checkPaint)
                 canvas.drawLine(cx - side * 0.12f, cy, cx - side * 0.02f, cy + side * 0.14f, checkStroke)
                 canvas.drawLine(cx - side * 0.02f, cy + side * 0.14f, cx + side * 0.18f, cy - side * 0.12f, checkStroke)
             }
@@ -536,6 +524,24 @@ class PollMessageLayout(private val context: Context) {
         if (!actionButtonRect.isEmpty && actionButtonRect.contains(lx, ly)) return PollTap.PrimaryAction
         if (detailLinkText.isNotEmpty() && detailLinkRect.contains(lx, ly)) return PollTap.ViewDetails
         return null
+    }
+
+    companion object {
+        private val CARD_RADIUS = LayoutHelper.dpf(12f)
+        private val CARD_PAD = LayoutHelper.dp(12).toFloat()
+        private val QUESTION_GAP = LayoutHelper.dp(6)
+        private val SUBTITLE_GAP = LayoutHelper.dp(10)
+        private val EXPAND_LINK_BASELINE_PAD = LayoutHelper.dp(4)
+        private val BUTTON_RADIUS = LayoutHelper.dpf(8f)
+        private val OPTION_RADIUS = LayoutHelper.dpf(10f)
+        private val BAR_INSET = LayoutHelper.dp(4).toFloat()
+        private val BAR_INSET_RIGHT = LayoutHelper.dp(8).toFloat()
+        private val BAR_RADIUS = LayoutHelper.dpf(6f)
+        private val OPTION_LABEL_PAD = LayoutHelper.dp(12)
+        private val CHECK_SIDE = LayoutHelper.dp(18).toFloat()
+        private val CHECK_EDGE_PAD = LayoutHelper.dp(10).toFloat()
+        private val META_CHECK_GAP = LayoutHelper.dp(6).toFloat()
+        private val CHECK_RADIUS = LayoutHelper.dpf(4f)
     }
 }
 

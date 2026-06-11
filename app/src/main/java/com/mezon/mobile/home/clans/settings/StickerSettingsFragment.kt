@@ -293,12 +293,17 @@ class StickerSettingsFragment : BaseFragment() {
             BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts)
             val srcW = opts.outWidth.coerceAtLeast(1)
             val srcH = opts.outHeight.coerceAtLeast(1)
-            val scale = minOf(maxDim.toFloat() / srcW, maxDim.toFloat() / srcH, 1f)
-            val tW = (srcW * scale).toInt().coerceAtLeast(1)
-            val tH = (srcH * scale).toInt().coerceAtLeast(1)
-            val full = BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: return null
-            if (tW == srcW && tH == srcH) full
-            else Bitmap.createScaledBitmap(full, tW, tH, true).also { if (it !== full) full.recycle() }
+            var sample = 1
+            while (srcW / (sample * 2) >= maxDim && srcH / (sample * 2) >= maxDim) {
+                sample *= 2
+            }
+            val decodeOpts = BitmapFactory.Options().apply { inSampleSize = sample }
+            val decoded = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, decodeOpts) ?: return null
+            val scale = minOf(maxDim.toFloat() / decoded.width, maxDim.toFloat() / decoded.height, 1f)
+            val tW = (decoded.width * scale).toInt().coerceAtLeast(1)
+            val tH = (decoded.height * scale).toInt().coerceAtLeast(1)
+            if (tW == decoded.width && tH == decoded.height) decoded
+            else Bitmap.createScaledBitmap(decoded, tW, tH, true).also { if (it !== decoded) decoded.recycle() }
         } catch (_: Exception) {
             null
         }

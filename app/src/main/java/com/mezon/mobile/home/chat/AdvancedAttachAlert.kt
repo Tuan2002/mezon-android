@@ -132,15 +132,23 @@ class AdvancedAttachAlert(
     }
 
     private fun onFunctionClicked(item: FunctionItem) {
+        val delegate = advancedDelegate
         dismiss()
         when (item.id) {
-            "location" -> advancedDelegate?.onLocationSelected()
-            "files" -> advancedDelegate?.onFilesSelected()
-            "buzz" -> advancedDelegate?.onBuzzSelected()
-            "anonymous" -> advancedDelegate?.onAnonymousToggled()
-            "poll" -> advancedDelegate?.onCreatePollRequested()
-            "share_contact" -> advancedDelegate?.onShareContactSelected()
+            "location" -> delegate?.onLocationSelected()
+            "files" -> delegate?.onFilesSelected()
+            "buzz" -> delegate?.onBuzzSelected()
+            "anonymous" -> delegate?.onAnonymousToggled()
+            "poll" -> delegate?.onCreatePollRequested()
+            "share_contact" -> delegate?.onShareContactSelected()
             else -> Toast.makeText(context, R.string.feature_coming_soon, Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    override fun dismiss() {
+        super.dismiss()
+        if (isDismissed()) {
+            advancedDelegate = null
         }
     }
 }

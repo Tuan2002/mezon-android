@@ -53,6 +53,7 @@ class MessagesFragment : BaseFragment() {
     private lateinit var addMessageFab: FrameLayout
     private lateinit var addMessageIcon: ImageView
     private var scrollingManually = false
+    private var pendingPartialUpdateMask = 0
     private var dialogsListFrozen = false
     private var frozenDialogsList: List<DirectMessage>? = null
     private var viewJustCreated = false
@@ -89,7 +90,7 @@ class MessagesFragment : BaseFragment() {
         }
         observe(NotificationCenter.dialogsNeedReload) { _, _, _ ->
             Log.d(TAG, "dialogsNeedReload received: fragmentView=${fragmentView != null} isPaused=$isPaused frozen=$dialogsListFrozen")
-            if (fragmentView == null || dialogsListFrozen) return@observe
+            if (fragmentView == null || dialogsListFrozen || isPaused) return@observe
             updateDialogsList()
         }
         observe(NotificationCenter.updateInterfaces) { _, _, args ->
@@ -157,6 +158,11 @@ class MessagesFragment : BaseFragment() {
                 scrollingManually = newState != RecyclerView.SCROLL_STATE_IDLE
                 if (newState == RecyclerView.SCROLL_STATE_IDLE) {
                     updateCellVisibility()
+                    if (pendingPartialUpdateMask != 0) {
+                        val mask = pendingPartialUpdateMask
+                        pendingPartialUpdateMask = 0
+                        updateVisibleRows(mask)
+                    }
                 }
             }
         })
@@ -465,7 +471,10 @@ class MessagesFragment : BaseFragment() {
     }
 
     private fun updateVisibleRows(mask: Int) {
-        if (scrollingManually) return
+        if (scrollingManually) {
+            pendingPartialUpdateMask = pendingPartialUpdateMask or mask
+            return
+        }
         if ((mask and NotificationCenter.UPDATE_MASK_NEW_MESSAGE) != 0 || mask == 0) {
             updateDialogsList()
             return

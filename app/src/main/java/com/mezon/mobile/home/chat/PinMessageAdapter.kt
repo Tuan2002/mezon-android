@@ -32,7 +32,9 @@ class PinMessageAdapter(
 
     override fun getItemId(position: Int): Long {
         if (position !in items.indices) return RecyclerView.NO_ID
-        val key = items[position].pinDedupeKey()
+        val item = items[position]
+        if (item.messageId != 0L) return item.messageId
+        val key = item.pinDedupeKey()
         if (key.isNotEmpty()) return key.hashCode().toLong()
         return position.toLong()
     }

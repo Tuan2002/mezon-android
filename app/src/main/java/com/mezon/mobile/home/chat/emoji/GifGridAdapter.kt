@@ -24,8 +24,12 @@ class GifGridAdapter(
 
     init { setHasStableIds(true) }
 
-    override fun getItemId(position: Int): Long =
-        if (position in gifs.indices) gifs[position].id.hashCode().toLong() else RecyclerView.NO_ID
+    override fun getItemId(position: Int): Long {
+        if (position !in gifs.indices) return RecyclerView.NO_ID
+        var h = 1125899906842597L
+        for (c in gifs[position].id) h = 31 * h + c.code
+        return h
+    }
 
     fun setData(newGifs: List<TenorGif>) {
         diffJob?.cancel()

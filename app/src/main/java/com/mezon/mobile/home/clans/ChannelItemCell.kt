@@ -72,7 +72,8 @@ class ChannelItemCell(
         private set
     private var isActive = false
     private var voiceActive = false
-    private var truncatedName: CharSequence = ""
+    private var truncatedName: String = ""
+    private var truncatedNameWidth = -1
     private var currentIconDrawable: Drawable? = null
     private var currentIconType: Int = -1
     private var currentIconPrivate: Boolean = false
@@ -133,6 +134,11 @@ class ChannelItemCell(
         return false
     }
 
+    override fun invalidate() {
+        if (channel == null) return
+        super.invalidate()
+    }
+
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
         setMeasuredDimension(MeasureSpec.getSize(widthMeasureSpec), cellHeightPx)
     }
@@ -188,11 +194,12 @@ class ChannelItemCell(
         val badgeWidth = if (hasMentionBadge) badgeSizePx + BADGE_GAP else 0
         val availW = width - textX - paddingHPx - badgeWidth
 
-        if (truncatedName.isEmpty()) {
-            truncatedName = TextUtils.ellipsize(ch.channelLabel, namePaint, availW.toFloat(), TextUtils.TruncateAt.END)
+        if (truncatedName.isEmpty() || truncatedNameWidth != availW) {
+            truncatedNameWidth = availW
+            truncatedName = TextUtils.ellipsize(ch.channelLabel, namePaint, availW.toFloat(), TextUtils.TruncateAt.END).toString()
         }
         val textY = cy - (namePaint.descent() + namePaint.ascent()) / 2
-        canvas.drawText(truncatedName.toString(), textX.toFloat(), textY, namePaint)
+        canvas.drawText(truncatedName, textX.toFloat(), textY, namePaint)
 
         if (hasMentionBadge) {
             val badgeText = if (ch.unreadCount > 99) "99+" else ch.unreadCount.toString()

@@ -25,6 +25,8 @@ class GifCell(context: Context, private val themeColors: ThemeColors) : View(con
     private val loader = MezonImageLoader.getInstance(context)
     private val clipPath = android.graphics.Path()
     private val clipRect = android.graphics.RectF()
+    private var clipPathWidth = Float.NaN
+    private var clipPathHeight = Float.NaN
 
     private val drawableCallback = object : Drawable.Callback {
         override fun invalidateDrawable(who: Drawable) { this@GifCell.invalidate() }
@@ -78,9 +80,13 @@ class GifCell(context: Context, private val themeColors: ThemeColors) : View(con
         val h = measuredHeight.toFloat()
 
         canvas.save()
-        clipPath.reset()
-        clipRect.set(0f, 0f, w, h)
-        clipPath.addRoundRect(clipRect, CORNER_RADIUS, CORNER_RADIUS, android.graphics.Path.Direction.CW)
+        if (clipPathWidth != w || clipPathHeight != h) {
+            clipPathWidth = w
+            clipPathHeight = h
+            clipRect.set(0f, 0f, w, h)
+            clipPath.reset()
+            clipPath.addRoundRect(clipRect, CORNER_RADIUS, CORNER_RADIUS, android.graphics.Path.Direction.CW)
+        }
         canvas.clipPath(clipPath)
 
         val d = animDrawable

@@ -4,7 +4,9 @@ import com.mezon.mobile.BuildConfig
 import com.mezon.mobile.di.ApplicationScope
 import com.mezon.mobile.di.IoDispatcher
 import com.mezon.mobile.home.clans.ClansController
+import com.mezon.mobile.network.ApiCacheTracker
 import com.mezon.mobile.network.MezonApi
+import com.mezon.mobile.network.apiCacheKey
 import com.mezon.mobile.session.SessionManager
 import com.mezon.mobile.util.AttachmentUploader
 import com.mezon.mezon.rtapi.ClanUpdatedEvent
@@ -25,30 +27,50 @@ class CommunitySettingsController @Inject constructor(
     private val api: MezonApi,
     private val sessionManager: SessionManager,
     private val clansController: ClansController,
+    private val cacheTracker: ApiCacheTracker,
     @IoDispatcher private val ioDispatcher: CoroutineDispatcher,
     @ApplicationScope private val appScope: CoroutineScope,
 ) {
     private val _uiState = MutableStateFlow(CommunityUiState())
     val uiState: StateFlow<CommunityUiState> = _uiState.asStateFlow()
 
+    private val serverStateByClan = HashMap<Long, CommunityClanState>()
+
+    private fun communityCacheKey(clanId: Long) = apiCacheKey("communityClanDesc", clanId)
+
+    private fun invalidateServerCache(clanId: Long) {
+        synchronized(this) { serverStateByClan.remove(clanId) }
+        cacheTracker.invalidate(communityCacheKey(clanId))
+    }
+
     fun load(clanId: Long) {
         appScope.launch {
             _uiState.update { it.copy(mode = CommunityScreenMode.LOADING) }
             try {
-                val server = sessionManager.withAutoRefresh { session ->
-                    withContext(ioDispatcher) {
-                        val list = api.listClanDescs(session.apiUrl, session.token)
-                        val desc = list.clandescList.firstOrNull { it.clanId == clanId }
-                            ?: error("Clan not found in ListClanDescs")
-                        CommunityClanState(
-                            clanId = desc.clanId,
-                            isCommunityEnabled = desc.isCommunity,
-                            communityBannerUrl = desc.communityBanner,
-                            about = desc.about,
-                            description = desc.description,
-                            shortUrl = desc.shortUrl,
-                        )
+                val cached = synchronized(this@CommunitySettingsController) { serverStateByClan[clanId] }
+                val server = if (cached != null &&
+                    cacheTracker.shouldCall(communityCacheKey(clanId)) == ApiCacheTracker.ShouldCall.SKIP
+                ) {
+                    cached
+                } else {
+                    val fetched = sessionManager.withAutoRefresh { session ->
+                        withContext(ioDispatcher) {
+                            val list = api.listClanDescs(session.apiUrl, session.token)
+                            val desc = list.clandescList.firstOrNull { it.clanId == clanId }
+                                ?: error("Clan not found in ListClanDescs")
+                            CommunityClanState(
+                                clanId = desc.clanId,
+                                isCommunityEnabled = desc.isCommunity,
+                                communityBannerUrl = desc.communityBanner,
+                                about = desc.about,
+                                description = desc.description,
+                                shortUrl = desc.shortUrl,
+                            )
+                        }
                     }
+                    synchronized(this@CommunitySettingsController) { serverStateByClan[clanId] = fetched }
+                    cacheTracker.markCalled(communityCacheKey(clanId))
+                    fetched
                 }
                 val draft = CommunityFormDraft(
                     about = server.about,
@@ -165,6 +187,7 @@ class CommunitySettingsController @Inject constructor(
                         }
                     }
                 }
+                invalidateServerCache(clanId)
                 clansController.mergeCommunityFlag(clanId, enabled = true)
                 val newDraft = state.draft.copy(pendingBannerBytes = null)
                 _uiState.update {
@@ -220,6 +243,7 @@ class CommunitySettingsController @Inject constructor(
                         }
                     }
                 }
+                invalidateServerCache(clanId)
                 val newDraft = state.draft.copy(pendingBannerBytes = null)
                 _uiState.update {
                     it.copy(
@@ -246,6 +270,7 @@ class CommunitySettingsController @Inject constructor(
                         api.updateClanDesc(session.apiUrl, session.token, clanId, isCommunity = false)
                     }
                 }
+                invalidateServerCache(clanId)
                 clansController.mergeCommunityFlag(clanId, enabled = false)
                 _uiState.update {
                     CommunityUiState(
@@ -272,6 +297,7 @@ class CommunitySettingsController @Inject constructor(
                         api.updateClanDesc(session.apiUrl, session.token, clanId, about = about)
                     }
                 }
+                invalidateServerCache(clanId)
                 _uiState.update {
                     val newInitial = it.initial.copy(about = it.draft.about)
                     it.copy(initial = newInitial, showSaveBar = it.draft.hasChangesComparedTo(newInitial))
@@ -292,6 +318,7 @@ class CommunitySettingsController @Inject constructor(
                         api.updateClanDesc(session.apiUrl, session.token, clanId, description = desc)
                     }
                 }
+                invalidateServerCache(clanId)
                 _uiState.update {
                     val newInitial = it.initial.copy(description = it.draft.description)
                     it.copy(initial = newInitial, showSaveBar = it.draft.hasChangesComparedTo(newInitial))
@@ -312,6 +339,7 @@ class CommunitySettingsController @Inject constructor(
                         api.updateClanDesc(session.apiUrl, session.token, clanId, shortUrl = slug, isCommunity = true)
                     }
                 }
+                invalidateServerCache(clanId)
                 _uiState.update {
                     val newInitial = it.initial.copy(shortUrl = it.draft.shortUrl)
                     it.copy(initial = newInitial, showSaveBar = it.draft.hasChangesComparedTo(newInitial))
@@ -328,6 +356,7 @@ class CommunitySettingsController @Inject constructor(
                         api.updateClanDesc(session.apiUrl, session.token, clanId, clearCommunityBanner = true)
                     }
                 }
+                invalidateServerCache(clanId)
                 _uiState.update {
                     val newDraft = it.draft.copy(bannerPreviewUrl = null, pendingBannerBytes = null)
                     val newInitial = it.initial.copy(bannerPreviewUrl = null)
@@ -342,6 +371,7 @@ class CommunitySettingsController @Inject constructor(
     }
 
     fun applyClanUpdatedEvent(event: ClanUpdatedEvent) {
+        invalidateServerCache(event.clanId)
         if (event.clanId != _uiState.value.server.clanId) return
         _uiState.update { state ->
             val d = state.draft.copy(

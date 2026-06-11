@@ -1,5 +1,6 @@
 package com.mezon.mobile.network
 
+import com.mezon.mobile.BuildConfig
 import com.mezon.mobile.di.ApplicationScope
 import com.mezon.mobile.session.SessionManager
 import com.mezon.mobile.util.SentryReporter
@@ -842,10 +843,12 @@ class MezonSocket @Inject constructor(
             return
         }
 
-        when (case) {
-            Envelope.MessageCase.MESSAGE_TYPING_EVENT,
-            Envelope.MessageCase.STATUS_PRESENCE_EVENT -> Unit
-            else -> Log.d(TAG, "Event: $case")
+        if (BuildConfig.DEBUG) {
+            when (case) {
+                Envelope.MessageCase.MESSAGE_TYPING_EVENT,
+                Envelope.MessageCase.STATUS_PRESENCE_EVENT -> Unit
+                else -> Log.d(TAG, "Event: $case")
+            }
         }
         if (!_events.tryEmit(envelope)) {
             scope.launch { _events.emit(envelope) }

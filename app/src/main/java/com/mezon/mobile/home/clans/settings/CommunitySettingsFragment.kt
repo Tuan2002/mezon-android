@@ -39,6 +39,7 @@ class CommunitySettingsFragment : BaseFragment() {
         private const val ARG_CLAN_ID = "clanId"
         private const val REQ_PICK_BANNER = 4201
         private const val MAX_BANNER_BYTES = 10 * 1024 * 1024
+        private const val MAX_BANNER_DECODE_EDGE = 2048
 
         fun newInstance(clanId: Long): CommunitySettingsFragment =
             CommunitySettingsFragment().apply {
@@ -692,7 +693,15 @@ class CommunitySettingsFragment : BaseFragment() {
                 "image/webp" -> "webp"
                 else -> "jpg"
             }
-            val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+            val boundsOpts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeByteArray(bytes, 0, bytes.size, boundsOpts)
+            val maxEdgePx = maxOf(boundsOpts.outWidth, boundsOpts.outHeight)
+            var sample = 1
+            while (maxEdgePx / sample > MAX_BANNER_DECODE_EDGE) {
+                sample *= 2
+            }
+            val decodeOpts = BitmapFactory.Options().apply { inSampleSize = sample }
+            val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, decodeOpts)
             BannerLoadResult.Ok(bytes, mimeType, ext, bitmap)
         } catch (_: Exception) {
             BannerLoadResult.Failed

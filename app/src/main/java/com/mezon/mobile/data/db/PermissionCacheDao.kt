@@ -47,7 +47,7 @@ interface PermissionCatalogDao {
 
 @Dao
 interface ClanUserMaxPermissionDao {
-    @Query("SELECT * FROM clan_user_max_permission")
+    @Query("SELECT * FROM clan_user_max_permission LIMIT 5000")
     suspend fun getAll(): List<ClanUserMaxPermissionEntity>
 
     @Query("SELECT * FROM clan_user_max_permission WHERE clanId = :clanId LIMIT 1")

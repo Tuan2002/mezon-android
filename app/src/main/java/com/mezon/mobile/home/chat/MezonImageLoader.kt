@@ -530,6 +530,20 @@ class MezonImageLoader private constructor(context: Context) {
         largeCache.evictAll()
     }
 
+    fun clearDiskCache() {
+        DECODE_EXECUTOR.execute {
+            deleteDirContents(diskCacheDir)
+            deleteDirContents(avatarCacheDir)
+        }
+    }
+
+    private fun deleteDirContents(dir: File) {
+        val files = runCatching { dir.listFiles() }.getOrNull() ?: return
+        for (f in files) {
+            runCatching { f.delete() }
+        }
+    }
+
     fun removeFromCache(url: String, reqWidth: Int, reqHeight: Int) {
         val key = cacheKey(stableUrlForDiskAndMemory(url), reqWidth, reqHeight)
         smallCache.remove(key)
@@ -645,11 +659,11 @@ class MezonImageLoader private constructor(context: Context) {
         }
 
         DECODE_EXECUTOR.execute {
+            val tmpFile = File(diskCacheDir, "uri_" + cacheKey)
             try {
                 diskCacheDir.mkdirs()
-                val tmpFile = File(diskCacheDir, "uri_" + cacheKey)
                 appContext.contentResolver.openInputStream(uri)?.use { input ->
-                    FileOutputStream(tmpFile).use { output -> input.copyTo(output) }
+                    FileOutputStream(tmpFile).use { output -> copyStreamCapped(input, output) }
                 } ?: throw IOException("Cannot open URI: $uri")
 
                 val opts = BitmapFactory.Options()
@@ -669,12 +683,27 @@ class MezonImageLoader private constructor(context: Context) {
                     dispatchError(cacheKey, IOException("Decode failed for $uri"))
                 }
             } catch (e: Exception) {
+                runCatching { tmpFile.delete() }
                 dispatchError(cacheKey, e)
             }
         }
         return Cancellable {
             cb.cancel()
             removePendingCallback("", cacheKey, cb)
+        }
+    }
+
+    private fun copyStreamCapped(input: java.io.InputStream, output: FileOutputStream) {
+        val buffer = ByteArray(STREAM_COPY_CHUNK_BYTES)
+        var total = 0L
+        while (true) {
+            val read = input.read(buffer)
+            if (read <= 0) break
+            total += read
+            if (total > MAX_LOCAL_COPY_BYTES) {
+                throw IOException("Content exceeds max local copy size")
+            }
+            output.write(buffer, 0, read)
         }
     }
 
@@ -699,6 +728,8 @@ class MezonImageLoader private constructor(context: Context) {
             return raw.coerceAtMost(RETRY_MAX_DELAY_MS)
         }
         private const val MAX_DECODE_QUEUE = 64
+        private const val MAX_LOCAL_COPY_BYTES = 64L * 1024 * 1024
+        private const val STREAM_COPY_CHUNK_BYTES = 64 * 1024
         private const val LARGE_FILE_TRIM_PRIORITY_BYTES = 384_000
         private const val TRIM_DEBOUNCE_MS = 60_000L
 

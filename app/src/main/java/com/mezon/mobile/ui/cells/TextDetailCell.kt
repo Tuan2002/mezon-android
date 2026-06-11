@@ -13,6 +13,10 @@ import com.mezon.mobile.core.ThemeColors
 
 class TextDetailCell(context: Context, private val theme: ThemeColors) : FrameLayout(context) {
 
+    companion object {
+        private val DIVIDER_LEFT_PAD = LayoutHelper.dp(20).toFloat()
+    }
+
     val textView: TextView
     val valueTextView: TextView
     private val textContainer: LinearLayout
@@ -78,9 +82,8 @@ class TextDetailCell(context: Context, private val theme: ThemeColors) : FrameLa
 
     override fun onDraw(canvas: Canvas) {
         if (needDivider) {
-            val leftPad = LayoutHelper.dp(20).toFloat()
             val y = (height - 1).toFloat()
-            canvas.drawRect(leftPad, y, width.toFloat(), y + 1f, theme.dividerPaint)
+            canvas.drawRect(DIVIDER_LEFT_PAD, y, width.toFloat(), y + 1f, theme.dividerPaint)
         }
     }
 

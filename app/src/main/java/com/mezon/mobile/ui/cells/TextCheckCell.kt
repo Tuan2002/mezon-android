@@ -13,6 +13,10 @@ import com.mezon.mobile.core.ThemeColors
 
 class TextCheckCell(context: Context, private val theme: ThemeColors) : FrameLayout(context) {
 
+    companion object {
+        private val DIVIDER_LEFT_PAD = LayoutHelper.dp(20).toFloat()
+    }
+
     val textView: TextView
     val subtitleTextView: TextView
     private val switchView = SwitchView(context, theme)
@@ -105,9 +109,8 @@ class TextCheckCell(context: Context, private val theme: ThemeColors) : FrameLay
 
     override fun onDraw(canvas: Canvas) {
         if (needDivider) {
-            val leftPad = LayoutHelper.dp(20).toFloat()
             val y = (height - 1).toFloat()
-            canvas.drawRect(leftPad, y, width.toFloat(), y + 1f, theme.dividerPaint)
+            canvas.drawRect(DIVIDER_LEFT_PAD, y, width.toFloat(), y + 1f, theme.dividerPaint)
         }
     }
 

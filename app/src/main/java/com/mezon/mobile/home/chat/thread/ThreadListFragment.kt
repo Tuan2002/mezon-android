@@ -132,6 +132,7 @@ class ThreadListFragment : BaseFragment() {
             if (changedClanId == clanId) refreshCachedThreadList(animateChanges = false)
         }
         observe(NotificationCenter.updateInterfaces) { _, _, args ->
+            if (isPaused) return@observe
             val mask = args.firstOrNull() as? Int ?: return@observe
             val interestedMask = NotificationCenter.UPDATE_MASK_NEW_MESSAGE or
                 NotificationCenter.UPDATE_MASK_BADGE or

@@ -49,6 +49,8 @@ class AccountSettingFragment : BaseFragment() {
 
     private lateinit var listView: RecyclerListView
     private lateinit var listAdapter: ListAdapter
+    private var pendingInterfaceMask = 0
+    private var pendingFullRefresh = false
 
     override fun onInject(entryPoint: FragmentEntryPoint) {
         accountController = entryPoint.accountController()
@@ -64,6 +66,11 @@ class AccountSettingFragment : BaseFragment() {
         observe(NotificationCenter.updateInterfaces) { _, _, args ->
             if (fragmentView == null) return@observe
             val mask = args.firstOrNull() as? Int ?: 0
+            if (isPaused) {
+                if (mask == 0) pendingFullRefresh = true
+                else pendingInterfaceMask = pendingInterfaceMask or mask
+                return@observe
+            }
             updateVisibleRows(mask)
         }
         observe(NotificationCenter.themeChanged) { _, _, _ ->
@@ -94,6 +101,22 @@ class AccountSettingFragment : BaseFragment() {
 
         updateRows()
         return wrapWithActionBar(getString(R.string.account_settings_title), listView)
+    }
+
+    override fun onBecomeFullyVisible() {
+        super.onBecomeFullyVisible()
+        if (fragmentView == null) return
+        if (pendingFullRefresh) {
+            pendingFullRefresh = false
+            pendingInterfaceMask = 0
+            updateVisibleRows(0)
+            return
+        }
+        if (pendingInterfaceMask != 0) {
+            val mask = pendingInterfaceMask
+            pendingInterfaceMask = 0
+            updateVisibleRows(mask)
+        }
     }
 
     private fun updateVisibleRows(mask: Int) {

@@ -97,6 +97,10 @@ class ClansFragment : BaseFragment() {
     private lateinit var channelPanel: LinearLayout
     private var listFrozen = false
     private var lastVoiceFetchClanId = 0L
+    private var railScrollingManually = false
+    private var pendingUpdateMask = 0
+
+    private val FULL_UPDATE_MASK = Int.MIN_VALUE
 
     private var bannerImage: ImageView? = null
     private var bannerCancellable: MezonImageLoader.Cancellable? = null
@@ -250,6 +254,16 @@ class ClansFragment : BaseFragment() {
                 moveDuration = 220L
             }
             setSelectorType(RecyclerListView.SELECTOR_CIRCLE_TO_BOUND)
+            addOnScrollListener(object : RecyclerView.OnScrollListener() {
+                override fun onScrollStateChanged(rv: RecyclerView, newState: Int) {
+                    railScrollingManually = newState != RecyclerView.SCROLL_STATE_IDLE
+                    if (!railScrollingManually && pendingUpdateMask != 0) {
+                        val mask = pendingUpdateMask
+                        pendingUpdateMask = 0
+                        updateVisibleRows(if (mask and FULL_UPDATE_MASK != 0) 0 else mask)
+                    }
+                }
+            })
         }
         serverAdapter = ServerRailAdapter()
         serverRail.adapter = serverAdapter
@@ -686,6 +700,10 @@ class ClansFragment : BaseFragment() {
             if ((mask and NotificationCenter.UPDATE_MASK_BADGE) != 0) {
                 updateServerRail()
             }
+            return
+        }
+        if (railScrollingManually) {
+            pendingUpdateMask = pendingUpdateMask or (if (mask == 0) FULL_UPDATE_MASK else mask)
             return
         }
         if (mask == 0) {

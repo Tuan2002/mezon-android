@@ -620,6 +620,10 @@ class NotificationsFragment : BaseFragment() {
 
     private fun updateVisibleRows(mask: Int) {
         if (isPaused) return
+        if (scrollingManually && mask != 0) {
+            pendingPartialUpdateMask = pendingPartialUpdateMask or mask
+            return
+        }
         if (currentCategory == NOTIF_TAB_TOPICS_UI) return
         if (mask == 0) {
             refreshList()

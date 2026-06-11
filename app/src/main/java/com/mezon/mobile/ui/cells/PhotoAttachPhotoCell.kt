@@ -129,6 +129,15 @@ class PhotoAttachPhotoCell(context: Context, private val theme: ThemeColors) : F
 
     private class CheckOverlayView(context: Context, private val theme: ThemeColors) : View(context) {
 
+        companion object {
+            private val CHECK_SIZE = LayoutHelper.dp(22f).toFloat()
+            private val CHECK_MARGIN = LayoutHelper.dp(6f).toFloat()
+            private val DURATION_PAD_H = LayoutHelper.dp(6f).toFloat()
+            private val DURATION_PAD_V = LayoutHelper.dp(2f).toFloat()
+            private val DURATION_MARGIN = LayoutHelper.dp(4f).toFloat()
+            private val DURATION_RADIUS = LayoutHelper.dp(4f).toFloat()
+        }
+
         private var checked = false
         private var checkNum = -1
         private var videoDuration = -1
@@ -173,42 +182,37 @@ class PhotoAttachPhotoCell(context: Context, private val theme: ThemeColors) : F
                 canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), overlayPaint)
             }
 
-            val checkSize = LayoutHelper.dp(22f).toFloat()
-            val checkMargin = LayoutHelper.dp(6f).toFloat()
-            val cx = width - checkMargin - checkSize / 2
-            val cy = checkMargin + checkSize / 2
+            val cx = width - CHECK_MARGIN - CHECK_SIZE / 2
+            val cy = CHECK_MARGIN + CHECK_SIZE / 2
 
             if (checked) {
                 checkBgPaint.color = theme.primary
-                canvas.drawCircle(cx, cy, checkSize / 2, checkBgPaint)
+                canvas.drawCircle(cx, cy, CHECK_SIZE / 2, checkBgPaint)
                 if (checkNum >= 0) {
                     val text = (checkNum + 1).toString()
                     val ty = cy - (checkTextPaint.descent() + checkTextPaint.ascent()) / 2
                     canvas.drawText(text, cx, ty, checkTextPaint)
                 }
             } else {
-                canvas.drawCircle(cx, cy, checkSize / 2 - uncheckBorderPaint.strokeWidth / 2, uncheckBorderPaint)
+                canvas.drawCircle(cx, cy, CHECK_SIZE / 2 - uncheckBorderPaint.strokeWidth / 2, uncheckBorderPaint)
             }
 
             if (videoDuration >= 0) {
                 val durationText = formatDuration(videoDuration)
                 val textWidth = durationTextPaint.measureText(durationText)
-                val padH = LayoutHelper.dp(6f).toFloat()
-                val padV = LayoutHelper.dp(2f).toFloat()
-                val bgHeight = durationTextPaint.textSize + padV * 2
-                val bgWidth = textWidth + padH * 2
-                val margin = LayoutHelper.dp(4f).toFloat()
+                val bgHeight = durationTextPaint.textSize + DURATION_PAD_V * 2
+                val bgWidth = textWidth + DURATION_PAD_H * 2
 
                 tmpRect.set(
-                    margin,
-                    height - margin - bgHeight,
-                    margin + bgWidth,
-                    height - margin
+                    DURATION_MARGIN,
+                    height - DURATION_MARGIN - bgHeight,
+                    DURATION_MARGIN + bgWidth,
+                    height - DURATION_MARGIN
                 )
-                canvas.drawRoundRect(tmpRect, LayoutHelper.dp(4f).toFloat(), LayoutHelper.dp(4f).toFloat(), durationBgPaint)
+                canvas.drawRoundRect(tmpRect, DURATION_RADIUS, DURATION_RADIUS, durationBgPaint)
 
-                val textX = tmpRect.left + padH
-                val textY = tmpRect.bottom - padV - durationTextPaint.descent()
+                val textX = tmpRect.left + DURATION_PAD_H
+                val textY = tmpRect.bottom - DURATION_PAD_V - durationTextPaint.descent()
                 canvas.drawText(durationText, textX, textY, durationTextPaint)
             }
         }

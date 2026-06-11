@@ -13,6 +13,7 @@ import android.text.style.ForegroundColorSpan
 import android.view.View
 import com.mezon.mobile.core.LayoutHelper
 import com.mezon.mobile.core.ThemeColors
+import com.mezon.mobile.home.chat.ChatMessageCell
 import com.mezon.mobile.home.chat.CodeFenceSpan
 import com.mezon.mobile.home.chat.ImageReceiver
 import com.mezon.mobile.home.chat.ShimmerEffect
@@ -950,7 +951,9 @@ class EmbedMessageRenderer(
                         canvas, xImg, y, xImg + cw, y + ch,
                         IMG_RADIUS, theme().resolvedMode != ThemeMode.LIGHT,
                     )
-                    parent.postInvalidateDelayed(32)
+                    if (parent.isAttachedToWindow && (parent as? ChatMessageCell)?.visibleOnScreen != false) {
+                        parent.postInvalidateDelayed(32)
+                    }
                 }
                 xImg += cw + GAP
             }

@@ -31,11 +31,13 @@ class ChannelSectionCell(
 
     private var categoryName: String = ""
     private var isExpanded: Boolean = true
-    private var truncated: CharSequence = ""
+    private var truncated: String = ""
+    private var truncatedWidth = -1
 
     private val paddingHPx = LayoutHelper.dp(16)
     private val arrowSizePx = LayoutHelper.dp(10)
     private val cellHeightPx = LayoutHelper.dp(36)
+    private val textGapPx = LayoutHelper.dp(8)
 
     fun bind(name: String, expanded: Boolean, favorite: Boolean = false) {
         categoryName = name.uppercase()
@@ -67,12 +69,13 @@ class ChannelSectionCell(
         }
         canvas.drawPath(arrowPath, arrowPaint)
 
-        val textX = paddingHPx + arrowSizePx + LayoutHelper.dp(8)
+        val textX = paddingHPx + arrowSizePx + textGapPx
         val availW = width - textX - paddingHPx
-        if (truncated.isEmpty() || truncated.length != categoryName.length) {
-            truncated = TextUtils.ellipsize(categoryName, textPaint, availW.toFloat(), TextUtils.TruncateAt.END)
+        if (truncated.isEmpty() || truncatedWidth != availW) {
+            truncatedWidth = availW
+            truncated = TextUtils.ellipsize(categoryName, textPaint, availW.toFloat(), TextUtils.TruncateAt.END).toString()
         }
         val textY = cy - (textPaint.descent() + textPaint.ascent()) / 2
-        canvas.drawText(truncated.toString(), textX.toFloat(), textY, textPaint)
+        canvas.drawText(truncated, textX.toFloat(), textY, textPaint)
     }
 }

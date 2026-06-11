@@ -26,6 +26,13 @@ import com.mezon.mobile.ui.cells.BackupImageView
 import com.mezon.mobile.ui.cells.MezonIcon
 import com.mezon.mobile.util.createImgproxyUrl
 import java.util.Locale
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 private const val VIEW_HEADER = 1
 private const val VIEW_GRID = 2
@@ -55,43 +62,67 @@ internal class ChannelMediaGalleryAdapter(
 ) : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
 
     private var rows = listOf<MediaGalleryRow>()
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private var diffJob: Job? = null
 
     init {
         setHasStableIds(true)
     }
 
     fun submit(newRows: List<MediaGalleryRow>) {
-        val old = rows
-        rows = newRows
-
-        val diffResult = DiffUtil.calculateDiff(object : DiffUtil.Callback() {
-            override fun getOldListSize() = old.size
-            override fun getNewListSize() = newRows.size
-
-            override fun areItemsTheSame(oldItemPosition: Int, newItemPosition: Int): Boolean {
-                val o = old[oldItemPosition]
-                val n = newRows[newItemPosition]
-                return when {
-                    o is MediaGalleryRow.HeaderRow && n is MediaGalleryRow.HeaderRow ->
-                        o.epochDay == n.epochDay
-                    o is MediaGalleryRow.GridRow && n is MediaGalleryRow.GridRow ->
-                        o.epochDay == n.epochDay && o.rowIndex == n.rowIndex &&
-                            stable(o.a) == stable(n.a) &&
-                            stable(o.b) == stable(n.b) &&
-                            stable(o.c) == stable(n.c)
-                    o is MediaGalleryRow.LoadingFooter && n is MediaGalleryRow.LoadingFooter ->
-                        true
-                    else -> false
+        diffJob?.cancel()
+        if (rows.size < 50 && newRows.size < 50) {
+            applyRows(newRows, DiffUtil.calculateDiff(GalleryDiffCallback(rows, newRows)))
+        } else {
+            val oldRows = rows
+            diffJob = scope.launch {
+                val result = withContext(Dispatchers.Default) {
+                    DiffUtil.calculateDiff(GalleryDiffCallback(oldRows, newRows))
                 }
+                applyRows(newRows, result)
             }
-
-            override fun areContentsTheSame(oldItemPosition: Int, newItemPosition: Int): Boolean =
-                old[oldItemPosition] == newRows[newItemPosition]
-        })
-        diffResult.dispatchUpdatesTo(this)
+        }
     }
 
-    private fun stable(it: ChannelGalleryMediaItem?) = it?.id ?: 0L
+    private fun applyRows(newRows: List<MediaGalleryRow>, result: DiffUtil.DiffResult) {
+        rows = newRows
+        result.dispatchUpdatesTo(this)
+    }
+
+    override fun onDetachedFromRecyclerView(recyclerView: RecyclerView) {
+        diffJob?.cancel()
+        scope.cancel()
+    }
+
+    private class GalleryDiffCallback(
+        private val old: List<MediaGalleryRow>,
+        private val new: List<MediaGalleryRow>
+    ) : DiffUtil.Callback() {
+        override fun getOldListSize() = old.size
+        override fun getNewListSize() = new.size
+
+        override fun areItemsTheSame(oldItemPosition: Int, newItemPosition: Int): Boolean {
+            val o = old[oldItemPosition]
+            val n = new[newItemPosition]
+            return when {
+                o is MediaGalleryRow.HeaderRow && n is MediaGalleryRow.HeaderRow ->
+                    o.epochDay == n.epochDay
+                o is MediaGalleryRow.GridRow && n is MediaGalleryRow.GridRow ->
+                    o.epochDay == n.epochDay && o.rowIndex == n.rowIndex &&
+                        stable(o.a) == stable(n.a) &&
+                        stable(o.b) == stable(n.b) &&
+                        stable(o.c) == stable(n.c)
+                o is MediaGalleryRow.LoadingFooter && n is MediaGalleryRow.LoadingFooter ->
+                    true
+                else -> false
+            }
+        }
+
+        override fun areContentsTheSame(oldItemPosition: Int, newItemPosition: Int): Boolean =
+            old[oldItemPosition] == new[newItemPosition]
+
+        private fun stable(it: ChannelGalleryMediaItem?) = it?.id ?: 0L
+    }
 
     override fun getItemId(position: Int): Long {
         return when (val r = rows[position]) {

@@ -311,6 +311,11 @@ class MainActivity : BasePermissionsActivity(),
         actionBarLayout.onLowMemory()
     }
 
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        com.mezon.mobile.home.chat.ThumbnailCache.trimMemory(level)
+    }
+
     override fun onUserLeaveHint() {
         super.onUserLeaveHint()
         if (tryEnterPiP()) return
@@ -746,6 +751,7 @@ class MainActivity : BasePermissionsActivity(),
         com.mezon.mobile.home.chat.MezonImageLoader.getInstance(this).also {
             it.cancelAll()
             it.clearMemoryCache()
+            it.clearDiskCache()
         }
         actionBarLayout.removeAllFragments()
         actionBarLayout.containerView.removeAllViews()
@@ -781,6 +787,11 @@ class MainActivity : BasePermissionsActivity(),
         entryPoint.audioPlayerController().stop()
         entryPoint.messagesController().clearCachedUsersAndChannels()
         entryPoint.apiCacheTracker().invalidateAll()
+        com.mezon.mobile.home.chat.MezonImageLoader.getInstance(this).also {
+            it.cancelAll()
+            it.clearMemoryCache()
+            it.clearDiskCache()
+        }
         if (removeAll) {
             actionBarLayout.removeAllFragments()
         }

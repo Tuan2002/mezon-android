@@ -5,6 +5,7 @@ import android.text.TextUtils
 import android.view.Gravity
 import android.widget.LinearLayout
 import android.widget.TextView
+import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.RecyclerView
 import com.mezon.mobile.core.LayoutHelper
 import com.mezon.mobile.core.ThemeColors
@@ -16,10 +17,18 @@ class MessageActivitiesAdapter(
 
     private val items = ArrayList<MessageActivityRow>()
 
+    init {
+        setHasStableIds(true)
+    }
+
+    override fun getItemId(position: Int): Long =
+        if (position in items.indices) items[position].userId else RecyclerView.NO_ID
+
     fun setData(newItems: List<MessageActivityRow>) {
+        val result = DiffUtil.calculateDiff(ActivityDiffCallback(items, newItems))
         items.clear()
         items.addAll(newItems)
-        notifyDataSetChanged()
+        result.dispatchUpdatesTo(this)
     }
 
     override fun getItemCount(): Int = items.size
@@ -41,6 +50,18 @@ class MessageActivitiesAdapter(
     }
 
     class Holder(val cell: MessageActivityStripCell) : RecyclerView.ViewHolder(cell)
+
+    private class ActivityDiffCallback(
+        private val old: List<MessageActivityRow>,
+        private val new: List<MessageActivityRow>
+    ) : DiffUtil.Callback() {
+        override fun getOldListSize() = old.size
+        override fun getNewListSize() = new.size
+        override fun areItemsTheSame(oldPos: Int, newPos: Int) =
+            old[oldPos].userId == new[newPos].userId
+        override fun areContentsTheSame(oldPos: Int, newPos: Int) =
+            old[oldPos] == new[newPos]
+    }
 }
 
 class MessageActivityStripCell(

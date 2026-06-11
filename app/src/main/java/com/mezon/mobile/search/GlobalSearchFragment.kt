@@ -107,7 +107,6 @@ class GlobalSearchFragment : BaseFragment() {
     private var membersDisplayLimit = LOCAL_PAGE_SIZE
     private var channelsDisplayLimit = LOCAL_PAGE_SIZE
     private var isLoadingMore = false
-    private var scrollingManually = false
     private var filterChannelId = 0L
     private var filterChannelName = ""
     private var hideChannelsTab = false
@@ -412,7 +411,6 @@ class GlobalSearchFragment : BaseFragment() {
 
         recyclerView.addOnScrollListener(object : RecyclerView.OnScrollListener() {
             override fun onScrollStateChanged(rv: RecyclerView, newState: Int) {
-                scrollingManually = newState != RecyclerView.SCROLL_STATE_IDLE
                 if (newState == RecyclerView.SCROLL_STATE_DRAGGING) {
                     AndroidUtilities.hideKeyboard(searchCell.editText)
                 }

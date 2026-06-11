@@ -217,7 +217,7 @@ class ChannelInfoFragment : BaseFragment() {
         }
 
         observe(NotificationCenter.channelGalleryDidLoad) { _, _, args ->
-            if (fragmentView == null) return@observe
+            if (fragmentView == null || isPaused) return@observe
             val ch = args.firstOrNull() as? Long ?: return@observe
             if (ch != channelId) return@observe
             fragmentView?.context?.let { ctx -> mediaTab?.syncFromApi(ctx) }
@@ -226,6 +226,10 @@ class ChannelInfoFragment : BaseFragment() {
             if (fragmentView == null) return@observe
             val ch = args.firstOrNull() as? Long ?: return@observe
             if (ch != channelId) return@observe
+            if (isPaused) {
+                pendingGalleryError = true
+                return@observe
+            }
             fragmentView?.context?.let { ctx -> mediaTab?.onGalleryLoadFailure(ctx) }
         }
 
@@ -236,11 +240,16 @@ class ChannelInfoFragment : BaseFragment() {
         return true
     }
 
+    private var pendingGalleryError = false
+
     override fun onBecomeFullyVisible() {
         super.onBecomeFullyVisible()
         if (channelGalleryController.isInitialLoadFinished(channelId)) {
             fragmentView?.context?.let { ctx -> mediaTab?.syncFromApi(ctx) }
+        } else if (pendingGalleryError) {
+            fragmentView?.context?.let { ctx -> mediaTab?.onGalleryLoadFailure(ctx) }
         }
+        pendingGalleryError = false
     }
 
     override fun dismissDialogOnPause(dialog: Dialog): Boolean {

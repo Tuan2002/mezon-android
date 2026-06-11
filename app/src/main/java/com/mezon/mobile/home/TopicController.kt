@@ -9,8 +9,10 @@ import com.mezon.mobile.home.chat.SdTopicEntity
 import com.mezon.mobile.home.chat.toSdTopicEntity
 import com.mezon.mobile.home.chat.toSdTopicEntityFromEvent
 import com.mezon.mobile.home.clans.ChannelController
+import com.mezon.mobile.network.ApiCacheTracker
 import com.mezon.mobile.network.MezonApi
 import com.mezon.mobile.network.SocketEventDispatcher
+import com.mezon.mobile.network.apiCacheKey
 import com.mezon.mobile.session.SessionManager
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
@@ -28,6 +30,7 @@ class TopicController @Inject constructor(
     private val dispatcher: SocketEventDispatcher,
     private val notificationCenter: NotificationCenter,
     private val channelController: dagger.Lazy<ChannelController>,
+    private val cacheTracker: ApiCacheTracker,
     @IoDispatcher private val ioDispatcher: CoroutineDispatcher,
     @ApplicationScope private val appScope: CoroutineScope
 ) {
@@ -72,13 +75,23 @@ class TopicController @Inject constructor(
 
     fun loadTopics(clanId: Long, forceRefresh: Boolean = false) {
         if (clanId == 0L) return
-        if (!forceRefresh && clanId == currentClanId && topics.isNotEmpty()) {
-            notificationCenter.postNotificationOnMainThread(NotificationCenter.topicsNeedReload)
-            return
+        val cacheKey = apiCacheKey("listSdTopic", clanId)
+        if (!forceRefresh) {
+            val canSkipFetch = synchronized(this) {
+                clanId == currentClanId &&
+                    (topics.isNotEmpty() ||
+                        (clanBound && cacheTracker.shouldCall(cacheKey) == ApiCacheTracker.ShouldCall.SKIP))
+            }
+            if (canSkipFetch) {
+                notificationCenter.postNotificationOnMainThread(NotificationCenter.topicsNeedReload)
+                return
+            }
         }
-        if (isLoading && clanId == currentClanId) return
-        isLoading = true
-        currentClanId = clanId
+        synchronized(this) {
+            if (isLoading && clanId == currentClanId) return
+            isLoading = true
+            currentClanId = clanId
+        }
         appScope.launch(ioDispatcher) {
             try {
                 sessionManager.withAutoRefresh { session ->
@@ -97,12 +110,13 @@ class TopicController @Inject constructor(
                         items.forEach { topicsDict.put(it.id, it) }
                         clanBound = true
                     }
+                    cacheTracker.markCalled(cacheKey)
                     channelController.get().registerSdTopicChannels(items)
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "loadTopics failed clanId=$clanId", e)
             } finally {
-                isLoading = false
+                synchronized(this@TopicController) { isLoading = false }
                 notificationCenter.postNotificationOnMainThread(NotificationCenter.topicsNeedReload)
             }
         }
@@ -195,23 +209,27 @@ class TopicController @Inject constructor(
             synchronized(this) {
                 if (!clanBound || clanId != currentClanId) return@collect
                 val existing = topicsDict.get(topicId) ?: return@collect
-                updated = existing.copy(
+                val next = existing.copy(
                     lastSentMessageId = message.messageId,
                     lastSentSenderId = message.senderId,
                     lastSentContent = message.content,
                     lastSentTimestampSeconds = message.createTimeSeconds.toLong()
                 )
+                if (next == existing && topics.firstOrNull()?.id == topicId) return@collect
+                updated = next
                 val index = topics.indexOfFirst { it.id == topicId }
                 if (index >= 0) {
                     topics.removeAt(index)
-                    topics.add(0, updated!!)
-                    topicsDict.put(topicId, updated!!)
+                    topics.add(0, next)
+                    topicsDict.put(topicId, next)
                     shouldReload = true
                 }
             }
             if (shouldReload && updated != null) {
                 channelController.get().registerSdTopicChannel(updated!!)
-                notificationCenter.postNotificationOnMainThread(NotificationCenter.topicsNeedReload)
+                notificationCenter.postNotificationOnMainThread(
+                    NotificationCenter.topicsNeedReload, updated!!, topicId
+                )
             }
         }
     }

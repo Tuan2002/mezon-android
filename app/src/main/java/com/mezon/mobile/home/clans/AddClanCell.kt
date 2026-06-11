@@ -14,6 +14,11 @@ class AddClanCell(
     private val themeColors: ThemeColors
 ) : View(context) {
 
+    companion object {
+        private val CORNER_RADIUS = LayoutHelper.dp(8).toFloat()
+        private val PLUS_ICON_SIZE = LayoutHelper.dp(18)
+    }
+
     private val iconSizePx = LayoutHelper.dp(42)
     private val plusDrawable: Drawable = MezonIcon.plusLargeIcon.getDrawable(context, themeColors.blurple)
     private val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG)
@@ -33,10 +38,10 @@ class AddClanCell(
             cy - half,
             cx + half,
             cy + half,
-            LayoutHelper.dp(8).toFloat(),
-            LayoutHelper.dp(8).toFloat(),
+            CORNER_RADIUS,
+            CORNER_RADIUS,
             bgPaint
         )
-        MezonIcon.drawIcon(canvas, plusDrawable, cx.toInt(), cy.toInt(), LayoutHelper.dp(18))
+        MezonIcon.drawIcon(canvas, plusDrawable, cx.toInt(), cy.toInt(), PLUS_ICON_SIZE)
     }
 }

@@ -61,6 +61,7 @@ import javax.inject.Singleton
 import dagger.hilt.android.qualifiers.ApplicationContext
 
 private const val TAG = "DialogsController"
+private const val MAX_TRANSCODE_SOURCE_BYTES = 32 * 1024 * 1024
 
 sealed class DmGroupAvatarUploadResult {
     data class Success(val url: String) : DmGroupAvatarUploadResult()
@@ -652,7 +653,9 @@ class DialogsController @Inject constructor(
         uri: Uri,
         maxBytes: Int
     ): ByteArray? {
-        val sourceBytes = contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: return null
+        val sourceBytes = runCatching {
+            FileUtils.readContentUriBytesCapped(contentResolver, uri, MAX_TRANSCODE_SOURCE_BYTES)
+        }.getOrNull() ?: return null
         if (sourceBytes.isEmpty()) return null
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         BitmapFactory.decodeByteArray(sourceBytes, 0, sourceBytes.size, bounds)
@@ -839,6 +842,7 @@ class DialogsController @Inject constructor(
             msg.code == MessageEntity.CODE_UPDATE_EPHEMERAL ||
             msg.code == MessageEntity.CODE_DELETE_EPHEMERAL
         var updatedDm: DirectMessage? = null
+        var orderChanged = true
         synchronized(this) {
             var dm = dialogsDict[msg.channelId]
             if (dm == null) {
@@ -919,12 +923,19 @@ class DialogsController @Inject constructor(
                 )
                 updatedDm = result
                 dialogsDict.put(msg.channelId, result)
-                reorderDialogInPlace(msg.channelId, result, isContentMutation || isEphemeralControl)
+                orderChanged = reorderDialogInPlace(msg.channelId, result, isContentMutation || isEphemeralControl)
             }
         }
         updatedDm?.let { dm ->
             appScope.launch(ioDispatcher) { directMessageDao.upsert(dm) }
-            notificationCenter.postNotificationOnMainThread(NotificationCenter.dialogsNeedReload)
+            if (orderChanged) {
+                notificationCenter.postNotificationOnMainThread(NotificationCenter.dialogsNeedReload)
+            } else {
+                notificationCenter.postNotificationOnMainThread(
+                    NotificationCenter.updateInterfaces,
+                    NotificationCenter.UPDATE_MASK_MESSAGE_TEXT or NotificationCenter.UPDATE_MASK_BADGE
+                )
+            }
         }
     }
 
@@ -932,12 +943,12 @@ class DialogsController @Inject constructor(
         channelId: Long,
         result: DirectMessage,
         isContentMutation: Boolean
-    ) {
+    ): Boolean {
         val oldIdx = dialogs.indexOfFirst { it.channelId == channelId }
-        if (oldIdx < 0) return
+        if (oldIdx < 0) return true
         if (isContentMutation) {
             dialogs[oldIdx] = result
-            return
+            return false
         }
         dialogs.removeAt(oldIdx)
         var lo = 0
@@ -948,6 +959,7 @@ class DialogsController @Inject constructor(
             if (dialogs[mid].lastSentMessageTs > target) lo = mid + 1 else hi = mid
         }
         dialogs.add(lo, result)
+        return lo != oldIdx
     }
 
     private fun mergeDmUnreadFromList(cachedUnread: Int, api: DirectMessage): Int {
