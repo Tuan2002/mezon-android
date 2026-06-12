@@ -43,7 +43,11 @@ import com.mezon.mobile.ui.cells.SearchCell
 import com.mezon.mobile.ui.cells.ToastOverlay
 import com.mezon.mobile.home.chat.UserProfileBottomSheet
 import com.mezon.mobile.network.CHANNEL_TYPE_DM
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.Locale
@@ -329,6 +333,8 @@ class ClanMembersFragment : BaseFragment() {
     private inner class ClanMembersAdapter : RecyclerView.Adapter<ClanMembersAdapter.Holder>() {
 
         private var rows: List<ClanMember> = emptyList()
+        private val diffScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+        private var diffJob: Job? = null
 
         init {
             setHasStableIds(true)
@@ -342,9 +348,21 @@ class ClanMembersFragment : BaseFragment() {
                 displayName.lowercase(Locale.getDefault()).contains(q) ||
                     m.username.lowercase(Locale.getDefault()).contains(q)
             }
-            val diff = DiffUtil.calculateDiff(MemberDiffCallback(rows, nextRows))
-            rows = nextRows
-            diff.dispatchUpdatesTo(this)
+            if (nextRows.size < 50) {
+                val diff = DiffUtil.calculateDiff(MemberDiffCallback(rows, nextRows))
+                rows = nextRows
+                diff.dispatchUpdatesTo(this)
+            } else {
+                val oldRows = rows
+                diffJob?.cancel()
+                diffJob = diffScope.launch {
+                    val diff = withContext(Dispatchers.Default) {
+                        DiffUtil.calculateDiff(MemberDiffCallback(oldRows, nextRows))
+                    }
+                    rows = nextRows
+                    diff.dispatchUpdatesTo(this@ClanMembersAdapter)
+                }
+            }
         }
 
         override fun getItemCount(): Int = rows.size
@@ -531,11 +549,7 @@ class ClanMembersFragment : BaseFragment() {
             drawDivider = divider
             val displayName = member.clanNick.takeIf { it.isNotBlank() } ?: member.displayName.takeIf { it.isNotBlank() } ?: member.username
             avatarView.setInfo(member.userId, displayName)
-            if (member.avatarUrl.isNotBlank()) {
-                avatarView.setImageUrl(member.avatarUrl)
-            } else {
-                avatarView.setImageUrl("")
-            }
+            avatarView.setImageUrl(member.clanAvatar.ifBlank { member.avatarUrl })
             displayNameText.text = displayName
             usernameText.text = member.username
 
