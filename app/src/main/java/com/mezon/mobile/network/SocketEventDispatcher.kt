@@ -6,6 +6,7 @@ import com.mezon.mezon.api.CreateEventRequest
 import com.mezon.mezon.api.GiveCoffeeEvent
 import com.mezon.mezon.api.MessageReaction
 import com.mezon.mezon.api.Notification
+import com.mezon.mezon.api.NotificationUserChannel
 import com.mezon.mezon.api.TokenSentEvent
 import com.mezon.mezon.rtapi.AddClanUserEvent
 import com.mezon.mezon.rtapi.AIAgentEnabledEvent
@@ -223,6 +224,9 @@ class SocketEventDispatcher @Inject constructor(
     private val _unmuteEvents = MutableSharedFlow<UnmuteEvent>(extraBufferCapacity = 4)
     val unmuteEvents: SharedFlow<UnmuteEvent> = _unmuteEvents.asSharedFlow()
 
+    private val _notiUserChannelEvents = MutableSharedFlow<NotificationUserChannel>(extraBufferCapacity = 8)
+    val notiUserChannelEvents: SharedFlow<NotificationUserChannel> = _notiUserChannelEvents.asSharedFlow()
+
     private val _clanEventCreated = MutableSharedFlow<CreateEventRequest>(extraBufferCapacity = 4)
     val clanEventCreated: SharedFlow<CreateEventRequest> = _clanEventCreated.asSharedFlow()
 
@@ -359,6 +363,8 @@ class SocketEventDispatcher @Inject constructor(
                 _tokenSentEvents.emit(envelope.tokenSentEvent)
             Envelope.MessageCase.UNMUTE_EVENT ->
                 _unmuteEvents.emit(envelope.unmuteEvent)
+            Envelope.MessageCase.NOTI_USER_CHANNEL ->
+                _notiUserChannelEvents.emit(envelope.notiUserChannel)
             Envelope.MessageCase.CLAN_EVENT_CREATED ->
                 _clanEventCreated.emit(envelope.clanEventCreated)
             Envelope.MessageCase.GIVE_COFFEE_EVENT ->

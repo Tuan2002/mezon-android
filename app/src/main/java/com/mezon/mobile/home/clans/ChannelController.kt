@@ -22,6 +22,7 @@ import com.mezon.mobile.session.SessionManager
 import com.mezon.mezon.api.CategoryDesc
 import com.mezon.mezon.api.CategoryDescList
 import com.mezon.mezon.api.ChannelDescription
+import com.mezon.mezon.api.NotificationUserChannel
 import com.mezon.mezon.rtapi.CategoryEvent
 import com.mezon.mobile.home.chat.SdTopicEntity
 import com.mezon.mobile.home.chat.toClanChannelEntity
@@ -54,11 +55,40 @@ const val FAVORITE_CATEGORY_ID = -1L
 const val FAVORITE_CATEGORY_NAME = "Favorites"
 
 const val CHANNEL_MUTE_ACTIVE_INFINITY = -1
+const val SET_MUTE_ACTIVE_UNMUTE = 0
+const val NOTIFICATION_ACTIVE_ON = 1
+const val NOTIFICATION_DEFAULT_SETTING_ID = 0L
 const val CHANNEL_MUTE_DURATION_15M = 15 * 60
 const val CHANNEL_MUTE_DURATION_1H = 3600
 const val CHANNEL_MUTE_DURATION_3H = 3 * 3600
 const val CHANNEL_MUTE_DURATION_8H = 8 * 3600
 const val CHANNEL_MUTE_DURATION_24H = 24 * 3600
+
+fun isMutedFromSetMuteRequest(muteTimeSeconds: Int, active: Int): Boolean {
+    if (muteTimeSeconds == CHANNEL_MUTE_ACTIVE_INFINITY) return true
+    if (muteTimeSeconds == 0 && active == SET_MUTE_ACTIVE_UNMUTE) return false
+    if (muteTimeSeconds > 0) return true
+    return active == CHANNEL_MUTE_ACTIVE_INFINITY
+}
+
+fun isMutedFromNotificationUserChannel(noti: NotificationUserChannel): Boolean {
+    return isDmMutedFromNotificationSetting(noti)
+}
+
+fun normalizeDmMuteExpirySeconds(raw: Int): Int {
+    if (raw == CHANNEL_MUTE_ACTIVE_INFINITY) return raw
+    if (raw <= 0) return 0
+    if (raw > 100_000_000) return raw
+    return (System.currentTimeMillis() / 1000 + raw).toInt()
+}
+
+fun isDmMutedFromNotificationSetting(noti: NotificationUserChannel): Boolean {
+    if (noti.id == NOTIFICATION_DEFAULT_SETTING_ID) return false
+    val timeMute = noti.timeMuteSeconds
+    if (timeMute == CHANNEL_MUTE_ACTIVE_INFINITY) return true
+    if (timeMute <= 0) return false
+    return timeMute.toLong() > System.currentTimeMillis() / 1000
+}
 
 @Singleton
 class ChannelController @Inject constructor(
@@ -673,7 +703,7 @@ class ChannelController @Inject constructor(
         active: Int = 0,
     ): Result<Unit> {
         val previousMuted = isChannelMuted(clanId, channelId)
-        val isMuted = active == CHANNEL_MUTE_ACTIVE_INFINITY || muteTimeSeconds > 0
+        val isMuted = isMutedFromSetMuteRequest(muteTimeSeconds, active)
         patchChannelMuteLocally(clanId, channelId, isMuted)
         return runCatching {
             sessionManager.withAutoRefresh { session ->
@@ -1726,6 +1756,16 @@ class ChannelController @Inject constructor(
                 val channelId = event.channelId
                 if (clanId == 0L || channelId == 0L) return@collect
                 patchChannelMuteLocally(clanId, channelId, isMuted = false)
+            }
+        }
+
+        appScope.launch {
+            dispatcher.notiUserChannelEvents.collect { noti ->
+                val channelId = noti.channelId
+                if (channelId == 0L) return@collect
+                val channel = findChannelById(channelId) ?: return@collect
+                val isMuted = isMutedFromNotificationUserChannel(noti)
+                patchChannelMuteLocally(channel.clanId, channelId, isMuted)
             }
         }
     }

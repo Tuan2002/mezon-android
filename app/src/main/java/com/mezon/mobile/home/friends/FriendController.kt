@@ -215,6 +215,17 @@ class FriendController @Inject constructor(
         )
     }
 
+    fun blockUser(userId: Long, username: String, onResult: (success: Boolean) -> Unit) {
+        requestFriendRelationUpdate(
+            userId = userId,
+            username = username,
+            onRequest = { session, ids, usernames ->
+                api.blockFriends(session.apiUrl, session.token, ids, usernames)
+            },
+            onResult = onResult
+        )
+    }
+
     fun unblockUser(userId: Long, username: String, onResult: (success: Boolean) -> Unit) {
         appScope.launch {
             try {
@@ -231,6 +242,11 @@ class FriendController @Inject constructor(
                 withContext(Dispatchers.Main) { onResult(false) }
             }
         }
+    }
+
+    fun isUserBlockedByMe(userId: Long): Boolean {
+        if (userId == 0L) return false
+        return _blockedUsers.value.any { it.user.id == userId }
     }
 
     fun findFriendByUserId(userId: Long): Friend? {

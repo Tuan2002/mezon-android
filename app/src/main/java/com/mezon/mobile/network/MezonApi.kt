@@ -2,6 +2,8 @@
 package com.mezon.mobile.network
 
 import com.mezon.mobile.BuildConfig
+import com.mezon.mobile.home.clans.CHANNEL_MUTE_ACTIVE_INFINITY
+import com.mezon.mobile.home.clans.SET_MUTE_ACTIVE_UNMUTE
 import com.mezon.mobile.util.SentryReporter
 import android.net.Uri
 import android.util.Base64
@@ -26,6 +28,8 @@ import com.mezon.mezon.api.ChannelMessageList
 import com.mezon.mezon.api.createChannelDescRequest
 import com.mezon.mezon.api.ClanDescList
 import com.mezon.mezon.api.NotificationSetting
+import com.mezon.mezon.api.NotificationUserChannel
+import com.mezon.mezon.api.notificationChannel
 import com.mezon.mezon.api.SystemMessage
 import com.mezon.mezon.api.SystemMessageRequest
 import com.mezon.mezon.api.PinMessagesList
@@ -1026,6 +1030,16 @@ class MezonApi @Inject constructor(
         val request = notificationClan { this.clanId = clanId }
         val bytes = rpc(apiUrl, token, "GetNotificationClan", request.toByteArray())
         return NotificationSetting.parseFrom(bytes)
+    }
+
+    suspend fun getNotificationChannel(
+        apiUrl: String,
+        token: String,
+        channelId: Long,
+    ): NotificationUserChannel {
+        val request = notificationChannel { this.channelId = channelId }
+        val bytes = rpc(apiUrl, token, "GetNotificationChannel", request.toByteArray())
+        return NotificationUserChannel.parseFrom(bytes)
     }
 
     suspend fun setClanDefaultNotification(
@@ -2623,8 +2637,12 @@ class MezonApi @Inject constructor(
         val request = setMuteRequest {
             id = channelId
             muteTime = muteTimeSeconds
-            this.active = active
             this.clanId = clanId
+            when {
+                muteTimeSeconds == CHANNEL_MUTE_ACTIVE_INFINITY -> Unit
+                muteTimeSeconds > 0 -> Unit
+                else -> this.active = SET_MUTE_ACTIVE_UNMUTE
+            }
         }
         rpc(apiUrl, token, "SetMuteChannel", request.toByteArray())
     }
@@ -2725,6 +2743,17 @@ class MezonApi @Inject constructor(
             this.channelId = channelId
         }
         rpc(apiUrl, token, "DeleteChannelDesc", request.toByteArray())
+    }
+
+    suspend fun closeDirectMess(
+        apiUrl: String,
+        token: String,
+        channelId: Long,
+    ) {
+        val request = deleteChannelDescRequest {
+            this.channelId = channelId
+        }
+        rpc(apiUrl, token, "CloseDirectMess", request.toByteArray())
     }
 
     suspend fun checkDuplicateName(

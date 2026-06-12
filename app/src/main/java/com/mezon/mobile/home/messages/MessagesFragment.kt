@@ -17,6 +17,7 @@ import androidx.recyclerview.widget.ConcatAdapter
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.mezon.mobile.R
+import com.mezon.mobile.core.AlertDialog
 import com.mezon.mobile.core.AndroidUtilities
 import com.mezon.mobile.core.BaseFragment
 import com.mezon.mobile.core.LayoutHelper
@@ -26,12 +27,22 @@ import com.mezon.mobile.core.StartupCache
 import com.mezon.mobile.di.FragmentEntryPoint
 import com.mezon.mobile.home.DialogsController
 import com.mezon.mobile.home.friends.AddFriendFragment
+import com.mezon.mobile.home.friends.FRIEND_STATE_BLOCKED
+import com.mezon.mobile.home.friends.FRIEND_STATE_FRIEND
+import com.mezon.mobile.home.friends.FRIEND_STATE_INVITE_RECEIVED
+import com.mezon.mobile.home.friends.FRIEND_STATE_INVITE_SENT
 import com.mezon.mobile.home.friends.FriendController
+import com.mezon.mobile.home.profile.UserController
 import com.mezon.mobile.network.CHANNEL_TYPE_DM
+import com.mezon.mobile.network.CHANNEL_TYPE_GROUP
 import com.mezon.mobile.search.GlobalSearchFragment
 import com.mezon.mobile.ui.cells.MezonIcon
+import com.mezon.mobile.ui.MezonToast
+import com.mezon.mobile.ui.cells.ToastOverlay
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 private const val TAG = "MessagesFragment"
 
@@ -39,8 +50,12 @@ class MessagesFragment : BaseFragment() {
 
     private lateinit var controller: DialogsController
     private lateinit var friendController: FriendController
+    private lateinit var userController: UserController
+    private lateinit var dmPinStorage: DmPinStorage
     private lateinit var messageActivitiesController: MessageActivitiesController
     private lateinit var appScope: CoroutineScope
+    private lateinit var ioDispatcher: CoroutineDispatcher
+    private lateinit var mainDispatcher: CoroutineDispatcher
 
     private lateinit var headerTitle: TextView
     private lateinit var addFriendBadgeText: TextView
@@ -63,8 +78,12 @@ class MessagesFragment : BaseFragment() {
     override fun onInject(entryPoint: FragmentEntryPoint) {
         controller = entryPoint.dialogsController()
         friendController = entryPoint.friendController()
+        userController = entryPoint.userController()
+        dmPinStorage = entryPoint.dmPinStorage()
         messageActivitiesController = entryPoint.messageActivitiesController()
         appScope = entryPoint.applicationScope()
+        ioDispatcher = entryPoint.ioDispatcher()
+        mainDispatcher = entryPoint.mainDispatcher()
     }
 
     override fun onFragmentCreate(): Boolean {
@@ -152,6 +171,12 @@ class MessagesFragment : BaseFragment() {
                 val dm = view.directMessage ?: return@OnItemClickListener
                 onOpenChat?.invoke(dm.channelId, dm.displayName.ifEmpty { dm.label }, 0L, dm.type)
             }
+        })
+        recyclerView.setOnItemLongClickListener(RecyclerListView.OnItemLongClickListener { view, _ ->
+            if (view !is DialogCell) return@OnItemLongClickListener false
+            val dm = view.directMessage ?: return@OnItemLongClickListener false
+            showDmMenu(dm)
+            true
         })
         recyclerView.addOnScrollListener(object : RecyclerView.OnScrollListener() {
             override fun onScrollStateChanged(recyclerView: RecyclerView, newState: Int) {
@@ -242,7 +267,7 @@ class MessagesFragment : BaseFragment() {
             ::recyclerView.isInitialized && recyclerView.visibility != View.VISIBLE) {
             recyclerView.visibility = View.VISIBLE
             emptyView.visibility = View.GONE
-            adapter.setData(emptyList())
+            adapter.setMessages(emptyList())
         }
     }
 
@@ -521,7 +546,7 @@ class MessagesFragment : BaseFragment() {
         if (hasActivities) {
             recyclerView.visibility = View.VISIBLE
             emptyView.visibility = View.GONE
-            adapter.setData(emptyList())
+            adapter.setMessages(emptyList())
             syncMessageActivitiesStrip()
         } else {
             recyclerView.visibility = View.GONE
@@ -542,6 +567,242 @@ class MessagesFragment : BaseFragment() {
         recyclerView.visibility = View.VISIBLE
         emptyView.visibility = View.GONE
         errorView.visibility = View.GONE
-        adapter.setData(messages)
+        val pinnedIds = dmPinStorage.getPinnedIds()
+        val entries = buildSectionedDmEntries(
+            messages,
+            pinnedIds,
+            getString(R.string.dm_pin_section),
+            getString(R.string.dm_all_messages_section),
+        )
+        adapter.setData(entries)
+    }
+
+    private fun showDmMenu(dm: DirectMessage) {
+        appScope.launch {
+            if (dm.type == CHANNEL_TYPE_GROUP) {
+                controller.ensureDmParticipantsLoaded(dm.channelId)
+            }
+            controller.refreshDmNotificationSetting(dm.channelId)
+            withContext(mainDispatcher) {
+                val menuDm = controller.getDialog(dm.channelId) ?: dm
+                presentDmMenu(menuDm)
+            }
+        }
+    }
+
+    private fun presentDmMenu(dm: DirectMessage) {
+        val ctx = fragmentView?.context ?: return
+        val options = buildDmMenuOptions(dm)
+        DmMenuBottomSheet(
+            context = ctx,
+            dm = dm,
+            options = options,
+            onLeaveGroup = { confirmLeaveGroup(dm, deleteIfLastMember = false) },
+            onDeleteGroup = { confirmLeaveGroup(dm, deleteIfLastMember = true) },
+            onCloseDm = { performCloseDm(dm.channelId) },
+            onAddFriend = { performAddFriend(dm) },
+            onRemoveFriend = { performRemoveFriend(dm) },
+            onBlockUser = { performBlockUser(dm, block = true) },
+            onUnblockUser = { performBlockUser(dm, block = false) },
+            onMarkAsRead = { performMarkAsRead(dm.channelId) },
+            onTogglePin = { confirmTogglePin(dm.channelId, options.isPinned) },
+            onMute = { handleDmMute(dm) },
+        ).show()
+    }
+
+    private fun buildDmMenuOptions(dm: DirectMessage): DmMenuOptions {
+        val isGroup = dm.type == CHANNEL_TYPE_GROUP
+        val isChatWithMyself = dm.type == CHANNEL_TYPE_DM && dm.otherUserId == userController.userId
+        val memberCount = controller.getGroupMemberCount(dm.channelId)
+        val lastOne = isGroup && memberCount <= 1
+        val friend = if (!isGroup && dm.otherUserId != 0L) {
+            friendController.findFriendByUserId(dm.otherUserId)
+        } else {
+            null
+        }
+        val friendState = friend?.state
+        val didIBlockUser = !isGroup && friendController.isUserBlockedByMe(dm.otherUserId)
+        val showFriendActions = !isGroup && !isChatWithMyself &&
+            friendState != FRIEND_STATE_BLOCKED &&
+            friendState != FRIEND_STATE_INVITE_SENT &&
+            friendState != FRIEND_STATE_INVITE_RECEIVED
+        return DmMenuOptions(
+            showLeaveGroup = isGroup && !lastOne,
+            showDeleteGroup = isGroup && lastOne,
+            showCloseDm = !isGroup,
+            showAddFriend = showFriendActions && friendState != FRIEND_STATE_FRIEND,
+            showRemoveFriend = showFriendActions && friendState == FRIEND_STATE_FRIEND,
+            showBlockUser = !isGroup && !isChatWithMyself &&
+                (friendState == FRIEND_STATE_FRIEND || didIBlockUser) && !didIBlockUser,
+            showUnblockUser = !isGroup && didIBlockUser,
+            showMarkAsRead = !isChatWithMyself,
+            showPin = true,
+            isPinned = dmPinStorage.isPinned(dm.channelId),
+            showMute = !isChatWithMyself,
+            isMuted = controller.isDmMuted(dm.channelId).also { muted ->
+                if (com.mezon.mobile.BuildConfig.DEBUG) {
+                    android.util.Log.d(
+                        "DialogsController:Mute",
+                        "menu ch=${dm.channelId} isMuted=$muted mem=${dm.isMute}",
+                    )
+                }
+            },
+        )
+    }
+
+    private fun confirmLeaveGroup(dm: DirectMessage, deleteIfLastMember: Boolean) {
+        val act = getParentActivity() ?: return
+        val name = dm.displayName.ifBlank { dm.label }
+        val titleRes = if (deleteIfLastMember) R.string.dm_delete_group_confirm_title else R.string.dm_leave_group_confirm_title
+        val messageRes = if (deleteIfLastMember) R.string.dm_delete_group_confirm_message else R.string.dm_leave_group_confirm_message
+        AlertDialog.Builder(act)
+            .setTitle(getString(titleRes, name))
+            .setMessage(getString(messageRes, name))
+            .setNegativeButton(getString(R.string.common_cancel), null)
+            .setPositiveButton(getString(R.string.common_yes)) { _, _ ->
+                performLeaveGroup(dm, deleteIfLastMember)
+            }
+            .show()
+    }
+
+    private fun performLeaveGroup(dm: DirectMessage, deleteIfLastMember: Boolean) {
+        val currentUserId = userController.userId
+        if (currentUserId == 0L) return
+        appScope.launch {
+            val result = controller.leaveDmGroup(dm.channelId, dm.type, currentUserId, deleteIfLastMember)
+            withContext(mainDispatcher) {
+                if (result.isFailure) {
+                    MezonToast.show(
+                        this@MessagesFragment,
+                        ToastOverlay.ToastType.ERROR,
+                        getString(R.string.common_something_went_wrong),
+                    )
+                }
+            }
+        }
+    }
+
+    private fun performCloseDm(channelId: Long) {
+        appScope.launch {
+            val result = controller.closeDirectMessage(channelId)
+            withContext(mainDispatcher) {
+                if (result.isFailure) {
+                    MezonToast.show(
+                        this@MessagesFragment,
+                        ToastOverlay.ToastType.ERROR,
+                        getString(R.string.common_something_went_wrong),
+                    )
+                }
+            }
+        }
+    }
+
+    private fun performMarkAsRead(channelId: Long) {
+        appScope.launch {
+            val result = controller.markDialogAsReadFromMenu(channelId)
+            withContext(mainDispatcher) {
+                if (result.isFailure) {
+                    MezonToast.show(
+                        this@MessagesFragment,
+                        ToastOverlay.ToastType.ERROR,
+                        getString(R.string.common_something_went_wrong),
+                    )
+                }
+            }
+        }
+    }
+
+    private fun performAddFriend(dm: DirectMessage) {
+        friendController.sendFriendRequest(dm.otherUserId, dm.username) { success ->
+            if (!success) {
+                MezonToast.show(this, ToastOverlay.ToastType.ERROR, getString(R.string.common_something_went_wrong))
+            }
+        }
+    }
+
+    private fun performRemoveFriend(dm: DirectMessage) {
+        friendController.deleteFriendRelation(dm.otherUserId, dm.username) { success ->
+            if (!success) {
+                MezonToast.show(this, ToastOverlay.ToastType.ERROR, getString(R.string.common_something_went_wrong))
+            }
+        }
+    }
+
+    private fun performBlockUser(dm: DirectMessage, block: Boolean) {
+        val onResult: (Boolean) -> Unit = { success ->
+            val msg = when {
+                block && success -> getString(R.string.dm_block_user_success)
+                block && !success -> getString(R.string.dm_block_user_failed)
+                !block && success -> getString(R.string.dm_unblock_user_success)
+                else -> getString(R.string.dm_unblock_user_failed)
+            }
+            MezonToast.show(
+                this,
+                if (success) ToastOverlay.ToastType.SUCCESS else ToastOverlay.ToastType.ERROR,
+                msg,
+            )
+        }
+        if (block) {
+            friendController.blockUser(dm.otherUserId, dm.username, onResult)
+        } else {
+            friendController.unblockUser(dm.otherUserId, dm.username, onResult)
+        }
+    }
+
+    private fun confirmTogglePin(channelId: Long, isPinned: Boolean) {
+        val act = getParentActivity() ?: return
+        val titleRes = if (isPinned) R.string.dm_unpin_confirm_title else R.string.dm_pin_confirm_title
+        val messageRes = if (isPinned) R.string.dm_unpin_confirm_message else R.string.dm_pin_confirm_message
+        val actionRes = if (isPinned) R.string.dm_unpin_confirm_action else R.string.dm_pin_confirm_action
+        AlertDialog.Builder(act)
+            .setTitle(getString(titleRes))
+            .setMessage(getString(messageRes))
+            .setNegativeButton(getString(R.string.common_cancel), null)
+            .setPositiveButton(getString(actionRes)) { _, _ ->
+                if (isPinned) {
+                    dmPinStorage.unpin(channelId)
+                    updateDialogsList()
+                } else {
+                    when (dmPinStorage.pin(channelId)) {
+                        DmPinResult.Success -> updateDialogsList()
+                        DmPinResult.MaxReached -> MezonToast.show(
+                            this,
+                            ToastOverlay.ToastType.ERROR,
+                            getString(R.string.dm_pin_max_reached, DmPinStorage.MAX_PINNED),
+                        )
+                    }
+                }
+            }
+            .show()
+    }
+
+    private fun handleDmMute(dm: DirectMessage) {
+        val ctx = fragmentView?.context ?: return
+        if (controller.isDmMuted(dm.channelId)) {
+            appScope.launch {
+                val result = controller.setDialogMuted(dm.channelId, muteTimeSeconds = 0, active = 0)
+                withContext(mainDispatcher) {
+                    if (result.isSuccess) {
+                        MezonToast.show(this@MessagesFragment, ToastOverlay.ToastType.SUCCESS, getString(R.string.dm_unmute_success))
+                    } else {
+                        MezonToast.show(this@MessagesFragment, ToastOverlay.ToastType.ERROR, getString(R.string.dm_unmute_failed))
+                    }
+                }
+            }
+            return
+        }
+        val label = dm.displayName.ifBlank { dm.label }
+        DmMuteBottomSheet(ctx, label) { muteTimeSeconds, active ->
+            appScope.launch {
+                val result = controller.setDialogMuted(dm.channelId, muteTimeSeconds, active)
+                withContext(mainDispatcher) {
+                    if (result.isSuccess) {
+                        MezonToast.show(this@MessagesFragment, ToastOverlay.ToastType.SUCCESS, getString(R.string.dm_mute_success))
+                    } else {
+                        MezonToast.show(this@MessagesFragment, ToastOverlay.ToastType.ERROR, getString(R.string.dm_mute_failed))
+                    }
+                }
+            }
+        }.show()
     }
 }
