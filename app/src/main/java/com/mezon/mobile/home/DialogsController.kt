@@ -616,22 +616,14 @@ class DialogsController @Inject constructor(
                     val currentUserId = session.userId.toLongOrNull() ?: 0L
                     val mutedIds = mutedDmChannelIdsForMerge()
 
-                    val groupResponse = api.listChannelDescs(
+                    val response = api.listChannelDescs(
                         session.apiUrl,
                         session.token,
                         CHANNEL_TYPE_GROUP,
                         page,
                         limit,
                     )
-                    val dmResponse = api.listChannelDescs(
-                        session.apiUrl,
-                        session.token,
-                        CHANNEL_TYPE_DM,
-                        page,
-                        limit,
-                    )
-                    val rawList = (groupResponse.channeldescList + dmResponse.channeldescList)
-                        .distinctBy { it.channelId }
+                    val rawList = response.channeldescList
 
                     val activeDescs = rawList.filter { it.active == 1 }
                     synchronized(this@DialogsController) {
@@ -994,12 +986,7 @@ class DialogsController @Inject constructor(
         }
     }
 
-    fun getGroupMemberCount(channelId: Long): Int {
-        val count = getParticipants(channelId).size
-        if (count > 0) return count
-        val dm = getDialog(channelId) ?: return 0
-        return if (dm.type == CHANNEL_TYPE_GROUP) 2 else 0
-    }
+    fun getGroupMemberCount(channelId: Long): Int = getParticipants(channelId).size
 
     private fun updateDialogMuteState(channelId: Long, isMuted: Boolean) {
         var updated: DirectMessage? = null
@@ -1015,10 +1002,6 @@ class DialogsController @Inject constructor(
         updated?.let { row ->
             appScope.launch(ioDispatcher) { directMessageDao.upsert(row) }
             notificationCenter.postNotificationOnMainThread(NotificationCenter.dialogsNeedReload)
-            notificationCenter.postNotificationOnMainThread(
-                NotificationCenter.updateInterfaces,
-                NotificationCenter.UPDATE_MASK_STATUS,
-            )
         }
     }
 
@@ -1489,7 +1472,7 @@ class DialogsController @Inject constructor(
                             dialogsDict.put(dm.channelId, dm)
                         }
                     } else {
-                        mergeDbMuteFlagsIntoMemory(cached)
+                        mergeDbRowsIntoMemory(cached)
                     }
                 }
                 seedMutedDmChannelIdsFromDialogs()
@@ -1505,15 +1488,25 @@ class DialogsController @Inject constructor(
         }
     }
 
-    private fun mergeDbMuteFlagsIntoMemory(cached: List<DirectMessage>) {
+    private fun mergeDbRowsIntoMemory(cached: List<DirectMessage>) {
+        var added = false
         for (dbRow in cached) {
-            if (!dbRow.isMute) continue
-            val live = dialogsDict[dbRow.channelId] ?: continue
-            if (live.isMute) continue
-            val updated = live.copy(isMute = true)
+            val existing = dialogsDict[dbRow.channelId]
+            if (existing == null) {
+                val row = dbRow.copy(isMute = resolveDmIsMuted(dbRow.channelId, dbRow.isMute))
+                dialogsDict.put(dbRow.channelId, row)
+                dialogs.add(row)
+                added = true
+                continue
+            }
+            if (!dbRow.isMute || existing.isMute) continue
+            val updated = existing.copy(isMute = true)
             dialogsDict.put(dbRow.channelId, updated)
             val idx = dialogs.indexOfFirst { it.channelId == dbRow.channelId }
             if (idx >= 0) dialogs[idx] = updated
+        }
+        if (added) {
+            dialogs.sortByDescending { it.lastSentMessageTs }
         }
     }
 

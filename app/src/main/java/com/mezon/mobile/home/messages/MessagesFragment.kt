@@ -204,6 +204,14 @@ class MessagesFragment : BaseFragment() {
         contentFrame.addView(errorView, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.MATCH_PARENT))
 
         adapter = DmListAdapter(themeColors) { channelId -> controller.isBuzzActive(channelId) }
+        adapter.setEntryBuilder { messages ->
+            buildSectionedDmEntries(
+                messages,
+                dmPinStorage.getPinnedIds(),
+                getString(R.string.dm_pin_section),
+                getString(R.string.dm_all_messages_section),
+            )
+        }
         headerStripAdapter = MessageActivitiesStripHeaderAdapter(themeColors) { row ->
             appScope.launch {
                 val channelId = controller.getOrCreateDm(row.userId)
@@ -567,14 +575,7 @@ class MessagesFragment : BaseFragment() {
         recyclerView.visibility = View.VISIBLE
         emptyView.visibility = View.GONE
         errorView.visibility = View.GONE
-        val pinnedIds = dmPinStorage.getPinnedIds()
-        val entries = buildSectionedDmEntries(
-            messages,
-            pinnedIds,
-            getString(R.string.dm_pin_section),
-            getString(R.string.dm_all_messages_section),
-        )
-        adapter.setData(entries)
+        adapter.setMessages(messages)
     }
 
     private fun showDmMenu(dm: DirectMessage) {
@@ -614,7 +615,7 @@ class MessagesFragment : BaseFragment() {
         val isGroup = dm.type == CHANNEL_TYPE_GROUP
         val isChatWithMyself = dm.type == CHANNEL_TYPE_DM && dm.otherUserId == userController.userId
         val memberCount = controller.getGroupMemberCount(dm.channelId)
-        val lastOne = isGroup && memberCount <= 1
+        val lastOne = isGroup && memberCount == 1
         val friend = if (!isGroup && dm.otherUserId != 0L) {
             friendController.findFriendByUserId(dm.otherUserId)
         } else {
@@ -627,8 +628,8 @@ class MessagesFragment : BaseFragment() {
             friendState != FRIEND_STATE_INVITE_SENT &&
             friendState != FRIEND_STATE_INVITE_RECEIVED
         return DmMenuOptions(
-            showLeaveGroup = isGroup && !lastOne,
-            showDeleteGroup = isGroup && lastOne,
+            showLeaveGroup = isGroup && memberCount > 1,
+            showDeleteGroup = lastOne,
             showCloseDm = !isGroup,
             showAddFriend = showFriendActions && friendState != FRIEND_STATE_FRIEND,
             showRemoveFriend = showFriendActions && friendState == FRIEND_STATE_FRIEND,

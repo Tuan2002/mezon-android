@@ -41,6 +41,15 @@ class DmListAdapter(
     private val items = ArrayList<DmListEntry>()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var diffJob: Job? = null
+    private var entryBuilder: ((List<DirectMessage>) -> List<DmListEntry>)? = null
+
+    fun setEntryBuilder(builder: (List<DirectMessage>) -> List<DmListEntry>) {
+        entryBuilder = builder
+    }
+
+    private fun messagesToEntries(messages: List<DirectMessage>): List<DmListEntry> {
+        return entryBuilder?.invoke(messages) ?: messages.map { DmListEntry.Message(it) }
+    }
 
     init {
         setHasStableIds(true)
@@ -74,7 +83,7 @@ class DmListAdapter(
     }
 
     fun setMessages(newItems: List<DirectMessage>) {
-        setData(newItems.map { DmListEntry.Message(it) })
+        setData(messagesToEntries(newItems))
     }
 
     private fun applyDiff(newItems: List<DmListEntry>, result: DiffUtil.DiffResult) {
@@ -109,11 +118,12 @@ class DmListAdapter(
                 child.hasBuzz = buzzChecker?.invoke(current.channelId) == true
                 val updated = dialogMap?.get(current.channelId)
                 if (child.update(mask, updated)) {
-                    if (dialogs != null) {
-                        setMessages(buildFlatMessagesFromEntries(items, dialogs))
+                    val messages = if (dialogs != null) {
+                        buildFlatMessagesFromEntries(items, dialogs)
                     } else {
-                        setMessages(items.filterIsInstance<DmListEntry.Message>().map { it.dm })
+                        items.filterIsInstance<DmListEntry.Message>().map { it.dm }
                     }
+                    setData(messagesToEntries(messages))
                     break
                 }
             }
