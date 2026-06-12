@@ -139,11 +139,12 @@ class InvitePeopleBottomSheet(
             background = roundedFieldBg(theme.surfaceVariant)
             clipChildren = true
         }
+
         searchField = EditText(context).apply {
             hint = context.getString(R.string.invite_search_placeholder)
             setHintTextColor(theme.textDisabled)
             setTextColor(theme.colorText)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
             setSingleLine(true)
             maxLines = 1
             includeFontPadding = false
@@ -154,12 +155,12 @@ class InvitePeopleBottomSheet(
             setPadding(textStartPad, 0, textEndPad, 0)
             addTextChangedListener(object : TextWatcher {
                 override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
+                override fun afterTextChanged(s: Editable?) = Unit
                 override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
                     val text = s?.toString().orEmpty()
                     searchClearBtn.visibility = if (text.isEmpty()) View.GONE else View.VISIBLE
                     controller.onSearch(text)
                 }
-                override fun afterTextChanged(s: Editable?) = Unit
             })
         }
         val searchIcon = ImageView(context).apply {
@@ -203,12 +204,9 @@ class InvitePeopleBottomSheet(
         })
 
         listContainer = FrameLayout(context).apply {
-            background = GradientDrawable().apply {
-                cornerRadius = LayoutHelper.dpf(10f)
-                setColor(theme.surfaceVariant)
-            }
             clipToOutline = true
         }
+
         adapter = TargetAdapter()
         recycler = RecyclerListView(context).apply {
             layoutManager = LinearLayoutManager(context)
@@ -238,6 +236,7 @@ class InvitePeopleBottomSheet(
             controller.state.collect { render(it) }
         }
     }
+
 
     override fun dismiss() {
         collectJob?.cancel()
@@ -375,6 +374,7 @@ class InvitePeopleBottomSheet(
         adapter.submit(state)
     }
 
+
     private fun copyInviteLink() {
         val url = controller.state.value.inviteUrl
         if (url.isBlank()) return
@@ -413,6 +413,7 @@ class InvitePeopleBottomSheet(
         ToastOverlay(context, theme).show(act.drawerLayoutContainer, type, message)
     }
 
+
     private inner class InviteTargetViewHolder(
         v: View,
         val avatarWrap: FrameLayout,
@@ -429,9 +430,7 @@ class InvitePeopleBottomSheet(
         private var sentIds: Set<String> = emptySet()
         private var sendingId: String? = null
 
-        init {
-            setHasStableIds(true)
-        }
+        init { setHasStableIds(true) }
 
         fun submit(state: InvitePeopleUiState) {
             val newRows = state.dmTargets
@@ -469,14 +468,11 @@ class InvitePeopleBottomSheet(
                 val id = target.rowId
                 val sentChanged = prevSent.contains(id) != newSent.contains(id)
                 val sendingChanged = prevSending == id || newSending == id
-                if (sentChanged || sendingChanged) {
-                    notifyItemChanged(index, PAYLOAD_ACTION)
-                }
+                if (sentChanged || sendingChanged) notifyItemChanged(index, PAYLOAD_ACTION)
             }
         }
 
         override fun getItemId(position: Int): Long = rows[position].rowId.hashCode().toLong()
-
         override fun getItemCount() = rows.size
 
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): InviteTargetViewHolder {
@@ -548,6 +544,7 @@ class InvitePeopleBottomSheet(
 
         override fun onBindViewHolder(holder: InviteTargetViewHolder, position: Int) {
             val target = rows[position]
+
             holder.titleTv.text = target.title
 
             val isGroup = target.channelType == CHANNEL_TYPE_GROUP
@@ -587,6 +584,7 @@ class InvitePeopleBottomSheet(
             when {
                 sent -> {
                     holder.actionLabel.text = context.getString(R.string.invite_btn_invited)
+                    holder.actionLabel.setTextColor(theme.textDisabled)
                     holder.actionLabel.visibility = View.VISIBLE
                     holder.actionSpinner.visibility = View.GONE
                     holder.actionBtn.isEnabled = false
@@ -598,6 +596,7 @@ class InvitePeopleBottomSheet(
                 }
                 else -> {
                     holder.actionLabel.text = context.getString(R.string.invite_btn_invite)
+                    holder.actionLabel.setTextColor(theme.colorText)
                     holder.actionLabel.visibility = View.VISIBLE
                     holder.actionSpinner.visibility = View.GONE
                     holder.actionBtn.isEnabled = true
@@ -646,10 +645,8 @@ class InvitePeopleBottomSheet(
     ) : DiffUtil.Callback() {
         override fun getOldListSize() = oldRows.size
         override fun getNewListSize() = newRows.size
-
         override fun areItemsTheSame(oldItemPosition: Int, newItemPosition: Int): Boolean =
             oldRows[oldItemPosition].rowId == newRows[newItemPosition].rowId
-
         override fun areContentsTheSame(oldItemPosition: Int, newItemPosition: Int): Boolean =
             oldRows[oldItemPosition] == newRows[newItemPosition]
     }

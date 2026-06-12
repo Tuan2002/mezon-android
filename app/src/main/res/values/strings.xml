@@ -452,7 +452,6 @@
     <string name="invite_btn_invite">Invite</string>
     <string name="invite_btn_invited">Invited</string>
     <string name="clan_action_member_count">%d Members</string>
-    <string name="invite_btn_sent">Sent</string>
     <string name="invite_create_link_error">Could not create invite link. Try again.</string>
     <string name="invite_send_error">Could not send invite. Try again.</string>
     <string name="invite_clan_not_loaded">Clan information is not available. Try again.</string>
