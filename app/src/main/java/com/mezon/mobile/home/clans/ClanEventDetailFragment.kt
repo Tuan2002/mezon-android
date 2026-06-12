@@ -1,5 +1,4 @@
 package com.mezon.mobile.home.clans
-
 import android.content.Context
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
@@ -7,12 +6,16 @@ import android.os.Bundle
 import android.text.format.DateFormat
 import android.view.Gravity
 import android.view.View
+import android.view.ViewOutlineProvider
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
+import android.widget.ProgressBar
 import android.widget.TextView
 import androidx.core.widget.NestedScrollView
+import com.mezon.mobile.MainActivity
 import com.mezon.mobile.R
+import com.mezon.mobile.core.AlertsCreator
 import com.mezon.mobile.core.AndroidUtilities
 import com.mezon.mobile.core.BaseFragment
 import com.mezon.mobile.core.LayoutHelper
@@ -23,10 +26,15 @@ import com.mezon.mobile.home.ClanMember
 import com.mezon.mobile.home.UserClanController
 import com.mezon.mobile.home.chat.MezonImageLoader
 import com.mezon.mobile.home.profile.AccountController
-import com.mezon.mobile.network.CHANNEL_TYPE_THREAD
+import com.mezon.mobile.home.profile.UserController
+import com.mezon.mobile.ui.cells.ActionBarMenu
+import com.mezon.mobile.ui.cells.ActionBarMenuItem
 import com.mezon.mobile.ui.cells.ActionBarView
 import com.mezon.mobile.ui.cells.AvatarView
 import com.mezon.mobile.ui.cells.MezonIcon
+import com.mezon.mobile.ui.MezonToast
+import com.mezon.mobile.ui.cells.PopupMenu
+import com.mezon.mobile.ui.cells.ToastOverlay
 import com.mezon.mobile.util.DateTimeUtil
 import com.mezon.mobile.util.avatarImgproxyUrl
 import com.mezon.mobile.util.createImgproxyUrl
@@ -36,11 +44,14 @@ import kotlin.math.roundToInt
 
 class ClanEventDetailFragment : BaseFragment() {
 
+    var onOpenChannel: ((ClanChannelEntity) -> Unit)? = null
+
     companion object {
         private const val ARG_CLAN_ID = "clanId"
         private const val ARG_EVENT_ID = "eventId"
         private const val ARG_CLAN_NAME = "clanName"
         private const val ARG_CLAN_LOGO = "clanLogo"
+        private const val MENU_MORE = 2
 
         fun newInstance(
             clanId: Long,
@@ -65,12 +76,18 @@ class ClanEventDetailFragment : BaseFragment() {
     private lateinit var clanEventController: ClanEventController
     private lateinit var userClanController: UserClanController
     private lateinit var accountController: AccountController
+    private lateinit var userController: UserController
     private lateinit var contentHost: LinearLayout
+    private var actionBarMenu: ActionBarMenu? = null
+    private var moreMenuItem: ActionBarMenuItem? = null
+    private var eventMenuPopup: PopupMenu? = null
+    private var deleting = false
 
     override fun onInject(entryPoint: FragmentEntryPoint) {
         clanEventController = entryPoint.clanEventController()
         userClanController = entryPoint.userClanController()
         accountController = entryPoint.accountController()
+        userController = entryPoint.userController()
     }
 
     override fun onFragmentCreate(): Boolean {
@@ -81,7 +98,8 @@ class ClanEventDetailFragment : BaseFragment() {
         clanLogo = arguments?.getString(ARG_CLAN_LOGO).orEmpty()
         if (clanId != 0L) {
             userClanController.loadClanMembers(clanId)
-            clanEventController.loadEvents(clanId, force = false)
+            val hasEvent = clanEventController.getEvent(clanId, eventId) != null
+            clanEventController.loadEvents(clanId, force = !hasEvent)
         }
         observe(NotificationCenter.clanEventsDidLoad) { _, _, args ->
             if (isPaused || fragmentView == null) return@observe
@@ -96,6 +114,23 @@ class ClanEventDetailFragment : BaseFragment() {
         return true
     }
 
+    override fun onPause() {
+        super.onPause()
+        hideModifyMenu()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        clanEventController.getEvent(clanId, eventId)?.let { updateActionBarMenu(it) }
+    }
+
+    override fun onFragmentDestroy() {
+        dismissEventMenu()
+        actionBarMenu = null
+        moreMenuItem = null
+        super.onFragmentDestroy()
+    }
+
     override fun createView(context: Context): View {
         val root = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
@@ -103,13 +138,22 @@ class ClanEventDetailFragment : BaseFragment() {
         }
 
         actionBar = ActionBarView(context, themeColors).apply {
+            setAddToContainer(false)
+            occupyStatusBar = true
             setTitle(getString(R.string.clan_event_detail_title))
             setBackButtonImage(R.drawable.ic_close_24)
             setBackButtonContentDescription(getString(R.string.common_close))
             setCenterTitle(true)
+            actionBarMenu = createMenu()
             setMenuOnItemClick(object : ActionBarView.ActionBarMenuOnItemClick() {
                 override fun onItemClick(id: Int) {
-                    if (id == -1) finishFragment()
+                    when (id) {
+                        -1 -> finishFragment()
+                        MENU_MORE -> {
+                            val event = clanEventController.getEvent(clanId, eventId) ?: return
+                            if (canModifyEvent(event)) showEventMenu() else hideModifyMenu()
+                        }
+                    }
                 }
             })
         }
@@ -144,31 +188,251 @@ class ClanEventDetailFragment : BaseFragment() {
 
     private fun bindContent() {
         val ctx = fragmentView?.context ?: return
-        val event = clanEventController.getEvent(clanId, eventId) ?: return
-        val members = userClanController.getClanMembers(clanId)
-        val creator = members.firstOrNull { it.userId == event.creatorId }
-        val userId = accountController.accountInfo.value.userId
-        val voiceChannel = clanEventController.getChannel(clanId, event.channelVoiceId)
-        val linkedChannel = clanEventController.getChannel(clanId, event.channelId)
         contentHost.removeAllViews()
-        contentHost.addView(
-            buildEventDetailView(
-                ctx,
-                themeColors,
-                event,
-                clanName,
-                clanLogo,
-                creator,
-                members,
-                voiceChannel,
-                linkedChannel,
-                userId,
-                onToggleInterest = {
-                    val interested = !event.isInterested(userId)
-                    clanEventController.setInterested(clanId, event.id, interested) { _, _ -> bindContent() }
+        val event = clanEventController.getEvent(clanId, eventId)
+        if (event != null) {
+            updateActionBarMenu(event)
+            val members = userClanController.getClanMembers(clanId)
+            val creator = members.firstOrNull { it.userId == event.creatorId }
+            val userId = currentUserId()
+            val voiceChannel = clanEventController.getChannel(clanId, event.channelVoiceId)
+            val linkedChannel = clanEventController.getChannel(clanId, event.channelId)
+            contentHost.addView(
+                buildEventDetailView(
+                    ctx,
+                    themeColors,
+                    event,
+                    clanName,
+                    clanLogo,
+                    creator,
+                    members,
+                    voiceChannel,
+                    linkedChannel,
+                    userId,
+                    onToggleInterest = {
+                        val interested = !event.isInterested(userId)
+                        clanEventController.setInterested(clanId, event.id, interested) { _, _ -> bindContent() }
+                    },
+                ),
+            )
+            return
+        }
+        hideModifyMenu()
+        val loading = clanEventController.isLoading(clanId)
+        val loadError = clanEventController.getLoadError(clanId)
+        when {
+            loading -> contentHost.addView(buildLoadingView(ctx))
+            loadError != null -> contentHost.addView(buildErrorView(ctx, loadError))
+            else -> contentHost.addView(buildNotFoundView(ctx))
+        }
+    }
+
+    private fun buildLoadingView(context: Context): View {
+        return FrameLayout(context).apply {
+            addView(
+                ProgressBar(context),
+                FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.WRAP_CONTENT,
+                    FrameLayout.LayoutParams.WRAP_CONTENT,
+                    Gravity.CENTER,
+                ),
+            )
+        }
+    }
+
+    private fun buildErrorView(context: Context, message: String): View {
+        return LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+            setPadding(LayoutHelper.dp(24), LayoutHelper.dp(48), LayoutHelper.dp(24), LayoutHelper.dp(24))
+            addView(
+                TextView(context).apply {
+                    text = message.ifBlank { getString(R.string.clan_event_load_failed) }
+                    textSize = 14f
+                    setTextColor(themeColors.onSurfaceVariant)
+                    gravity = Gravity.CENTER
                 },
-            ),
+            )
+            addView(
+                TextView(context).apply {
+                    text = getString(R.string.common_retry)
+                    textSize = 14f
+                    setTextColor(themeColors.blurple)
+                    typeface = Typeface.DEFAULT_BOLD
+                    gravity = Gravity.CENTER
+                    setPadding(0, LayoutHelper.dp(12), 0, 0)
+                    isClickable = true
+                    isFocusable = true
+                    setOnClickListener { clanEventController.loadEvents(clanId, force = true) }
+                },
+            )
+        }
+    }
+
+    private fun buildNotFoundView(context: Context): View {
+        return LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+            setPadding(LayoutHelper.dp(24), LayoutHelper.dp(48), LayoutHelper.dp(24), LayoutHelper.dp(24))
+            addView(
+                TextView(context).apply {
+                    text = getString(R.string.clan_event_not_found)
+                    textSize = 14f
+                    setTextColor(themeColors.onSurfaceVariant)
+                    gravity = Gravity.CENTER
+                },
+            )
+            addView(
+                TextView(context).apply {
+                    text = getString(R.string.common_retry)
+                    textSize = 14f
+                    setTextColor(themeColors.blurple)
+                    typeface = Typeface.DEFAULT_BOLD
+                    gravity = Gravity.CENTER
+                    setPadding(0, LayoutHelper.dp(12), 0, 0)
+                    isClickable = true
+                    isFocusable = true
+                    setOnClickListener { clanEventController.loadEvents(clanId, force = true) }
+                },
+            )
+        }
+    }
+
+    private fun currentUserId(): Long {
+        val accountId = accountController.accountInfo.value.userId
+        return accountId.takeIf { it != 0L } ?: userController.userId
+    }
+
+    private fun canModifyEvent(event: ClanEventEntity): Boolean {
+        if (event.creatorId == 0L) return false
+        val userId = currentUserId()
+        if (userId != 0L && userId == event.creatorId) return true
+        val profileId = userController.userIdStr
+        return profileId.isNotEmpty() && profileId == event.creatorId.toString()
+    }
+
+    private fun updateActionBarMenu(event: ClanEventEntity) {
+        if (isPaused || fragmentView == null) {
+            hideModifyMenu()
+            return
+        }
+        if (canModifyEvent(event)) {
+            showModifyMenuButton()
+        } else {
+            hideModifyMenu()
+        }
+    }
+
+    private fun showModifyMenuButton() {
+        if (moreMenuItem != null) return
+        val menu = actionBarMenu ?: return
+        moreMenuItem = menu.addItem(MENU_MORE, R.drawable.ic_more_vertical_24).also { item ->
+            item.setIconColor(themeColors.textStrong)
+            item.contentDescription = getString(R.string.clan_event_menu_content_desc)
+            item.getItemIconView().apply {
+                scaleType = ImageView.ScaleType.CENTER
+                layoutParams = FrameLayout.LayoutParams(
+                    LayoutHelper.dp(48),
+                    LayoutHelper.dp(48),
+                    Gravity.CENTER,
+                )
+            }
+        }
+    }
+
+    private fun hideModifyMenu() {
+        dismissEventMenu()
+        if (moreMenuItem != null) {
+            actionBarMenu?.removeItem(MENU_MORE)
+            moreMenuItem = null
+        }
+    }
+
+    private fun showEventMenu() {
+        val event = clanEventController.getEvent(clanId, eventId) ?: return
+        if (!canModifyEvent(event)) {
+            hideModifyMenu()
+            return
+        }
+        val ctx = fragmentView?.context ?: return
+        val anchor = moreMenuItem ?: return
+        dismissEventMenu()
+        val popup = PopupMenu(ctx, themeColors)
+        popup.addItem(
+            getString(R.string.clan_event_menu_edit),
+            MezonIcon.pencilIcon.getDrawable(ctx, themeColors.colorText),
         )
+        popup.addItem(
+            getString(R.string.clan_event_menu_cancel),
+            MezonIcon.trashIcon.getDrawable(ctx, themeColors.redStrong),
+            destructive = true,
+        )
+        popup.setOnItemClickListener { index ->
+            val latestEvent = clanEventController.getEvent(clanId, eventId) ?: return@setOnItemClickListener
+            if (!canModifyEvent(latestEvent)) {
+                hideModifyMenu()
+                return@setOnItemClickListener
+            }
+            when (index) {
+                0 -> {
+                    dismissEventMenu()
+                    presentFragment(ClanEventCreateFragment.newInstance(clanId, eventId))
+                }
+                1 -> {
+                    dismissEventMenu()
+                    confirmDeleteEvent(latestEvent)
+                }
+            }
+        }
+        eventMenuPopup = popup
+        popup.show(anchor)
+    }
+
+    private fun dismissEventMenu() {
+        eventMenuPopup?.dismiss()
+        eventMenuPopup = null
+    }
+
+    private fun confirmDeleteEvent(event: ClanEventEntity) {
+        val ctx = fragmentView?.context ?: return
+        AlertsCreator.createConfirmDialog(
+            context = ctx,
+            title = getString(R.string.clan_event_delete_confirm_title),
+            message = getString(R.string.clan_event_delete_confirm_message),
+            confirmText = getString(R.string.clan_event_menu_cancel),
+            cancelText = getString(R.string.common_cancel),
+            destructive = true,
+            onConfirm = { runDeleteEvent(event) },
+        ).show()
+    }
+
+    private fun runDeleteEvent(event: ClanEventEntity) {
+        if (deleting) return
+        deleting = true
+        val creatorId = accountController.accountInfo.value.userId
+        clanEventController.deleteEvent(
+            clanId = clanId,
+            eventId = event.id,
+            creatorId = creatorId,
+            title = event.title,
+            channelId = event.channelId,
+        ) { success, error ->
+            deleting = false
+            if (success) {
+                MezonToast.show(
+                    this@ClanEventDetailFragment,
+                    ToastOverlay.ToastType.SUCCESS,
+                    getString(R.string.clan_event_delete_success),
+                )
+                finishFragment()
+            } else {
+                MezonToast.show(
+                    this@ClanEventDetailFragment,
+                    ToastOverlay.ToastType.ERROR,
+                    error ?: getString(R.string.clan_event_delete_failed),
+                )
+            }
+        }
     }
 
     private fun formatEventStartTime(context: Context, startTimeSeconds: Int): String {
@@ -190,11 +454,6 @@ class ClanEventDetailFragment : BaseFragment() {
         0 -> context.getString(R.string.clan_event_no_one_interested)
         1 -> context.getString(R.string.clan_event_one_person_interested)
         else -> context.getString(R.string.clan_event_people_interested, count)
-    }
-
-    private fun channelTypeLabel(context: Context, channel: ClanChannelEntity): String = when (channel.type) {
-        CHANNEL_TYPE_THREAD -> context.getString(R.string.clan_event_thread)
-        else -> context.getString(R.string.clan_event_channel)
     }
 
     private val EVENT_INFO_LEADING_DP = 24
@@ -249,9 +508,10 @@ class ClanEventDetailFragment : BaseFragment() {
         icon: MezonIcon,
         text: String,
         iconColor: Int = theme.colorText,
+        textColor: Int = theme.onSurfaceVariant,
         topMarginDp: Float = 0f,
     ): LinearLayout {
-        return buildDetailInfoRow(context, theme, buildInfoIconLeading(context, icon, iconColor), text, theme.onSurfaceVariant, topMarginDp)
+        return buildDetailInfoRow(context, theme, buildInfoIconLeading(context, icon, iconColor), text, textColor, topMarginDp)
     }
 
     private fun buildDetailInfoRow(
@@ -294,12 +554,24 @@ class ClanEventDetailFragment : BaseFragment() {
         }
     }
 
+    private fun openEventChannel(channel: ClanChannelEntity) {
+        onOpenChannel?.invoke(channel) ?: run {
+            (getParentActivity() as? MainActivity)?.openChat(
+                channel.channelId,
+                channel.channelLabel,
+                if (channel.clanId != 0L) channel.clanId else clanId,
+                channel.type,
+            )
+        }
+    }
+
     private fun buildEventLocationRow(
         context: Context,
         theme: ThemeColors,
         event: ClanEventEntity,
         voiceChannel: ClanChannelEntity?,
         topMarginDp: Float = 4f,
+        onChannelClick: ((ClanChannelEntity) -> Unit)? = null,
     ): View {
         return if (event.isOfflineEvent()) {
             buildInlineInfoRow(
@@ -307,20 +579,26 @@ class ClanEventDetailFragment : BaseFragment() {
                 theme,
                 MezonIcon.locationIcon,
                 event.address,
-                theme.textStrong,
-                topMarginDp,
+                iconColor = theme.textStrong,
+                textColor = theme.textStrong,
+                topMarginDp = topMarginDp,
             )
         } else {
             val label = voiceChannel?.channelLabel?.takeIf { it.isNotBlank() }
                 ?: context.getString(R.string.clan_event_private_room)
-            buildInlineInfoRow(
+            val row = buildInlineInfoRow(
                 context,
                 theme,
                 MezonIcon.channelVoice,
                 label,
-                theme.textStrong,
-                topMarginDp,
+                iconColor = if (voiceChannel != null) theme.blurple else theme.textStrong,
+                textColor = if (voiceChannel != null) theme.blurple else theme.textStrong,
+                topMarginDp = topMarginDp,
             )
+            if (voiceChannel != null && onChannelClick != null) {
+                applyChannelRowClick(row, voiceChannel, onChannelClick)
+            }
+            row
         }
     }
 
@@ -329,16 +607,18 @@ class ClanEventDetailFragment : BaseFragment() {
         theme: ThemeColors,
         linkedChannel: ClanChannelEntity?,
         topMarginDp: Float = 8f,
+        onChannelClick: ((ClanChannelEntity) -> Unit)? = null,
     ): View? {
         if (linkedChannel == null) return null
         return TextView(context).apply {
-            text = context.getString(
-                R.string.clan_event_channel_in,
-                channelTypeLabel(context, linkedChannel),
-                linkedChannel.channelLabel,
-            )
+            text = context.getString(R.string.clan_event_channel_in, linkedChannel.channelLabel)
             textSize = 12f
-            setTextColor(theme.onSurfaceVariant)
+            setTextColor(theme.blurple)
+            if (onChannelClick != null) {
+                isClickable = true
+                isFocusable = true
+                setOnClickListener { onChannelClick(linkedChannel) }
+            }
         }.also {
             it.layoutParams = LayoutHelper.createLinear(
                 LayoutHelper.MATCH_PARENT,
@@ -351,6 +631,16 @@ class ClanEventDetailFragment : BaseFragment() {
                 0f,
             )
         }
+    }
+
+    private fun applyChannelRowClick(
+        row: View,
+        channel: ClanChannelEntity,
+        onChannelClick: (ClanChannelEntity) -> Unit,
+    ) {
+        row.isClickable = true
+        row.isFocusable = true
+        row.setOnClickListener { onChannelClick(channel) }
     }
 
     private fun buildInterestedMembersSection(
@@ -446,10 +736,16 @@ class ClanEventDetailFragment : BaseFragment() {
         }
     
         if (event.logo.isNotBlank()) {
-            val bannerWidthPx = AndroidUtilities.displaySize.x
+            val bannerWidthPx = AndroidUtilities.displaySize.x - LayoutHelper.dp(32)
             val bannerHeightPx = (bannerWidthPx * 9f / 16f).roundToInt()
+            val corner = LayoutHelper.dpf(ClanEventCreateUi.EVENT_BANNER_CORNER_DP)
             val bannerShell = FrameLayout(context).apply {
-                setBackgroundColor(theme.tertiary)
+                background = GradientDrawable().apply {
+                    cornerRadius = corner
+                    setColor(theme.tertiary)
+                }
+                clipToOutline = true
+                outlineProvider = ViewOutlineProvider.BACKGROUND
                 clipChildren = true
             }
             val bannerView = ImageView(context).apply {
@@ -477,7 +773,11 @@ class ClanEventDetailFragment : BaseFragment() {
                 LinearLayout.LayoutParams(
                     LinearLayout.LayoutParams.MATCH_PARENT,
                     bannerHeightPx,
-                ),
+                ).apply {
+                    marginStart = LayoutHelper.dp(16)
+                    marginEnd = LayoutHelper.dp(16)
+                    topMargin = LayoutHelper.dp(12)
+                },
             )
         }
     
@@ -543,15 +843,19 @@ class ClanEventDetailFragment : BaseFragment() {
                 theme.colorText,
             ),
         )
-        infoBlock.addView(buildEventLocationRow(context, theme, event, voiceChannel, 10f))
+        infoBlock.addView(
+            buildEventLocationRow(context, theme, event, voiceChannel, 10f) { channel ->
+                openEventChannel(channel)
+            },
+        )
         infoBlock.addView(
             buildInlineInfoRow(
                 context,
                 theme,
                 MezonIcon.bellIcon,
                 interestedSummary(context, event.interestedCount),
-                theme.colorText,
-                10f,
+                iconColor = theme.colorText,
+                topMarginDp = 10f,
             ),
         )
         infoBlock.addView(
@@ -592,14 +896,16 @@ class ClanEventDetailFragment : BaseFragment() {
                     theme,
                     MezonIcon.eventTimeIcon,
                     context.getString(R.string.clan_event_ends_at, formatEventStartTime(context, event.endTimeSeconds)),
-                    theme.onSurfaceVariant,
-                    0f,
+                    iconColor = theme.onSurfaceVariant,
+                    topMarginDp = 0f,
                 ),
                 LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, 0f, Gravity.START, 0f, 0f, 0f, 8f),
             )
         }
     
-        buildEventChannelDetailRow(context, theme, linkedChannel, 0f)?.let {
+        buildEventChannelDetailRow(context, theme, linkedChannel, 0f) { channel ->
+            openEventChannel(channel)
+        }?.let {
             content.addView(it, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, 0f, Gravity.START, 0f, 8f, 0f, 0f))
         }
     
@@ -614,7 +920,7 @@ class ClanEventDetailFragment : BaseFragment() {
             ),
             LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, 0f, Gravity.NO_GRAVITY, 0f, 12f, 0f, 0f),
         )
-    
+
         content.addView(
             View(context).apply { setBackgroundColor(theme.outlineVariant) },
             LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, 1, 0f, Gravity.NO_GRAVITY, 0f, 4f, 0f, 0f),

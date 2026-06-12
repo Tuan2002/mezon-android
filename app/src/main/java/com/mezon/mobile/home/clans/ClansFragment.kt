@@ -164,8 +164,13 @@ class ClansFragment : BaseFragment() {
                 updateChannelAppsStrip(clanId)
             }
         }
-        observe(NotificationCenter.clanInfoUpdated) { _, _, _ ->
+        observe(NotificationCenter.clanInfoUpdated) { _, _, args ->
             if (fragmentView == null || isPaused || listFrozen) return@observe
+            val clanId = args.firstOrNull() as? Long ?: return@observe
+            if (clanId == clansController.selectedClanId.value) {
+                clanEventController.loadEvents(clanId, force = true)
+                clanEventSheet?.loadClanEvent()
+            }
             updateServerRail()
         }
         observe(NotificationCenter.clanMembersDidLoad) { _, _, args ->
@@ -174,13 +179,6 @@ class ClansFragment : BaseFragment() {
             if (clanId == clansController.selectedClanId.value) {
                 updateMemberCount()
                 syncVoiceMembersUi()
-                clanEventSheet?.loadClanEvent()
-            }
-        }
-        observe(NotificationCenter.clanEventsDidLoad) { _, _, args ->
-            if (fragmentView == null) return@observe
-            val clanId = args.firstOrNull() as? Long ?: return@observe
-            if (clanId == clansController.selectedClanId.value) {
                 clanEventSheet?.loadClanEvent()
             }
         }
@@ -898,12 +896,14 @@ class ClansFragment : BaseFragment() {
         val sheet = ClanEventBottomSheet(
             ctx,
             themeColors,
+            notificationCenter,
             clanEventController,
             userClanController,
             accountController,
             clanId,
-            onCreateEvent = Runnable { showCreateEventComingSoon() },
+            onCreateEvent = Runnable { openCreateClanEvent() },
             onOpenEventDetail = { event -> openClanEventDetail(event) },
+            onOpenChannel = { channel -> onChannelSelected(channel) },
         ).apply {
             setDrawNavigationBar(true)
         }
@@ -923,16 +923,17 @@ class ClansFragment : BaseFragment() {
                 event.id,
                 clan?.clanName.orEmpty(),
                 clan?.logo.orEmpty(),
-            ),
+            ).also { fragment ->
+                fragment.onOpenChannel = { channel -> onChannelSelected(channel) }
+            },
         )
     }
 
-    private fun showCreateEventComingSoon() {
-        Toast.makeText(
-            fragmentView?.context,
-            getString(R.string.feature_coming_soon),
-            Toast.LENGTH_SHORT,
-        ).show()
+    private fun openCreateClanEvent() {
+        val clanId = clansController.selectedClanId.value
+        if (clanId == 0L) return
+        dismissClanEventSheet()
+        presentFragment(ClanEventCreateFragment.newInstance(clanId))
     }
 
     private fun dismissClanEventSheet() {
@@ -1016,7 +1017,7 @@ class ClansFragment : BaseFragment() {
                     })
                 },
                 Runnable {
-                    dismissClanMenuThen(Runnable { showCreateEventComingSoon() })
+                    dismissClanMenuThen(Runnable { openCreateClanEvent() })
                 },
                 Runnable { confirmLeaveOrDeleteClan(clanId, clan.clanName, isLeave = true) },
                 Runnable { confirmLeaveOrDeleteClan(clanId, clan.clanName, isLeave = false) },

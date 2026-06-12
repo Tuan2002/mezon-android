@@ -30,6 +30,7 @@ import com.mezon.mobile.di.FragmentEntryPoint
 import com.mezon.mobile.home.UserClanController
 import com.mezon.mobile.home.chat.MezonImageLoader
 import com.mezon.mobile.home.clans.ChannelController
+import com.mezon.mobile.home.clans.ChannelPickerSheet
 import com.mezon.mobile.home.clans.ClansController
 import com.mezon.mobile.home.clans.ClanChannelEntity
 import com.mezon.mobile.home.clans.CreateClanRnUiTokens

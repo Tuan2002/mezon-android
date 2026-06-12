@@ -33,6 +33,7 @@ data class CreateEventDraft(
     val endTimeSeconds: Int = 0,
     val repeatType: Int = ClanEventRepeatType.DOES_NOT_REPEAT,
     val logoUrl: String = "",
+    val originalLogoUrl: String? = null,
     val editingEventId: Long = 0L,
     val editingChannelIdOld: Long = 0L,
 )

@@ -400,6 +400,7 @@ class ClansController @Inject constructor(
         invalidateBannerSources: Collection<String>? = null,
         bannerExtraWidthPx: Int = 0,
     ): ClanDesc {
+        val clearBanner = clanBannerUrl?.isEmpty() == true
         val desc = sessionManager.withAutoRefresh { session ->
             withContext(ioDispatcher) {
                 api.updateClanDesc(
@@ -407,8 +408,8 @@ class ClansController @Inject constructor(
                     session.token,
                     clanId,
                     clanName = clanName,
-                    banner = clanBannerUrl,
-                    clearBanner = false,
+                    banner = if (clearBanner) null else clanBannerUrl,
+                    clearBanner = clearBanner,
                     preventAnonymous = preventAnonymous,
                     welcomeChannelId = welcomeChannelId,
                     isOnboarding = isOnboarding,

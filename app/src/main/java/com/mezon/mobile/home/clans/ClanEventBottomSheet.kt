@@ -16,10 +16,10 @@ import android.widget.ProgressBar
 import android.widget.TextView
 import androidx.core.widget.NestedScrollView
 import com.mezon.mobile.R
-import com.mezon.mobile.network.CHANNEL_TYPE_THREAD
 import com.mezon.mobile.core.AndroidUtilities
 import com.mezon.mobile.core.BottomSheet
 import com.mezon.mobile.core.LayoutHelper
+import com.mezon.mobile.core.NotificationCenter
 import com.mezon.mobile.core.ThemeColors
 import com.mezon.mobile.home.ClanMember
 import com.mezon.mobile.home.UserClanController
@@ -27,9 +27,8 @@ import com.mezon.mobile.home.chat.MezonImageLoader
 import com.mezon.mobile.home.profile.AccountController
 import com.mezon.mobile.ui.cells.AvatarView
 import com.mezon.mobile.ui.cells.MezonIcon
-import com.mezon.mobile.util.DateTimeUtil
 import com.mezon.mobile.util.avatarImgproxyUrl
-import com.mezon.mobile.util.createImgproxyUrl
+import com.mezon.mobile.util.DateTimeUtil
 import java.util.Locale
 import kotlin.math.max
 import kotlin.math.roundToInt
@@ -37,13 +36,29 @@ import kotlin.math.roundToInt
 class ClanEventBottomSheet(
     context: Context,
     private val theme: ThemeColors,
+    private val notificationCenter: NotificationCenter,
     private val clanEventController: ClanEventController,
     private val userClanController: UserClanController,
     private val accountController: AccountController,
     private val clanId: Long,
     private val onCreateEvent: Runnable,
     private val onOpenEventDetail: (ClanEventEntity) -> Unit,
+    private val onOpenChannel: (ClanChannelEntity) -> Unit,
 ) : BottomSheet(context) {
+
+    private val logoLoadTokens = ArrayList<MezonImageLoader.Cancellable>()
+    private val eventsLoadedObserver = object : NotificationCenter.NotificationCenterDelegate {
+        override fun didReceivedNotification(id: Int, account: Int, vararg args: Any?) {
+            val idArg = args.firstOrNull() as? Long ?: return
+            if (idArg == clanId) loadClanEvent()
+        }
+    }
+    private val membersLoadedObserver = object : NotificationCenter.NotificationCenterDelegate {
+        override fun didReceivedNotification(id: Int, account: Int, vararg args: Any?) {
+            val idArg = args.firstOrNull() as? Long ?: return
+            if (idArg == clanId) loadClanEvent()
+        }
+    }
 
     private val root = LinearLayout(context).apply {
         orientation = LinearLayout.VERTICAL
@@ -57,6 +72,11 @@ class ClanEventBottomSheet(
         orientation = LinearLayout.VERTICAL
     }
     private val loadingView = ProgressBar(context)
+    private val errorView = LinearLayout(context).apply {
+        orientation = LinearLayout.VERTICAL
+        gravity = Gravity.CENTER_HORIZONTAL
+        visibility = View.GONE
+    }
     private val emptyView = LinearLayout(context).apply {
         orientation = LinearLayout.VERTICAL
         gravity = Gravity.CENTER_HORIZONTAL
@@ -71,10 +91,12 @@ class ClanEventBottomSheet(
         containerHeight = (AndroidUtilities.displaySize.y * 0.8f).toInt()
         buildHeader()
         buildEmptyState()
+        buildErrorState()
         scrollContent.addView(
             loadingView,
             LayoutHelper.createLinear(LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT, 0f, Gravity.CENTER_HORIZONTAL, 0f, 12f, 0f, 12f),
         )
+        scrollContent.addView(errorView)
         scrollContent.addView(emptyView)
         scrollContent.addView(listContainer)
         eventScrollView = NestedScrollView(context).apply {
@@ -93,7 +115,6 @@ class ClanEventBottomSheet(
             LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f),
         )
         setCustomView(root)
-        loadClanEvent()
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -101,20 +122,35 @@ class ClanEventBottomSheet(
         fixNavigationBar(theme.surface)
         userClanController.loadClanMembers(clanId)
         clanEventController.loadEvents(clanId, force = true)
+        setOnDismissListener {
+            logoLoadTokens.forEach { it.cancel() }
+            logoLoadTokens.clear()
+            notificationCenter.removeObserver(eventsLoadedObserver, NotificationCenter.clanEventsDidLoad)
+            notificationCenter.removeObserver(membersLoadedObserver, NotificationCenter.clanMembersDidLoad)
+        }
+        notificationCenter.addObserver(eventsLoadedObserver, NotificationCenter.clanEventsDidLoad)
+        notificationCenter.addObserver(membersLoadedObserver, NotificationCenter.clanMembersDidLoad)
+        loadClanEvent()
     }
 
     fun loadClanEvent() {
+        logoLoadTokens.forEach { it.cancel() }
+        logoLoadTokens.clear()
         val userId = accountController.accountInfo.value.userId
         val events = clanEventController.visibleEvents(clanId, userId)
         val loading = clanEventController.isLoading(clanId)
+        val loadError = clanEventController.getLoadError(clanId)
         loadingView.visibility = if (loading && events.isEmpty()) View.VISIBLE else View.GONE
+        errorView.visibility = if (!loading && loadError != null && events.isEmpty()) View.VISIBLE else View.GONE
         listContainer.removeAllViews()
-        emptyView.visibility = if (!loading && events.isEmpty()) View.VISIBLE else View.GONE
+        listContainer.visibility = if (events.isNotEmpty()) View.VISIBLE else View.GONE
+        emptyView.visibility = if (!loading && loadError == null && events.isEmpty()) View.VISIBLE else View.GONE
         updateHeaderCount(events.size)
         val dividerColor = theme.outlineVariant
         events.forEachIndexed { index, event ->
             val creator = userClanController.getClanMembers(clanId).firstOrNull { it.userId == event.creatorId }
             val voiceChannel = clanEventController.getChannel(clanId, event.channelVoiceId)
+            val linkedChannel = clanEventController.getChannel(clanId, event.channelId)
             listContainer.addView(
                 buildEventRow(
                     context,
@@ -123,14 +159,20 @@ class ClanEventBottomSheet(
                     creator,
                     userId,
                     voiceChannel,
+                    linkedChannel,
                     onOpen = {
                         dismiss()
                         onOpenEventDetail(event)
+                    },
+                    onOpenChannel = { channel ->
+                        dismiss()
+                        onOpenChannel(channel)
                     },
                     onToggleInterest = {
                         val interested = !event.isInterested(userId)
                         clanEventController.setInterested(clanId, event.id, interested) { _, _ -> }
                     },
+                    onLogoLoadToken = { logoLoadTokens.add(it) },
                 ),
                 LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT),
             )
@@ -257,14 +299,35 @@ class ClanEventBottomSheet(
         )
     }
 
+    private fun buildErrorState() {
+        errorView.removeAllViews()
+        errorView.addView(
+            TextView(context).apply {
+                text = context.getString(R.string.clan_event_load_failed)
+                textSize = 14f
+                setTextColor(theme.onSurfaceVariant)
+                gravity = Gravity.CENTER
+            },
+            LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, 0f, Gravity.CENTER_HORIZONTAL, 0f, 12f, 0f, 8f),
+        )
+        errorView.addView(
+            TextView(context).apply {
+                text = context.getString(R.string.common_retry)
+                textSize = 14f
+                setTextColor(theme.blurple)
+                typeface = Typeface.DEFAULT_BOLD
+                gravity = Gravity.CENTER
+                isClickable = true
+                isFocusable = true
+                setOnClickListener { clanEventController.loadEvents(clanId, force = true) }
+            },
+            LayoutHelper.createLinear(LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT, 0f, Gravity.CENTER_HORIZONTAL, 0f, 0f, 0f, 12f),
+        )
+    }
+
     private fun formatEventStartTime(context: Context, startTimeSeconds: Int): String {
         val pattern = if (DateFormat.is24HourFormat(context)) "EEE, MMM d · HH:mm" else "EEE, MMM d · h:mm a"
         return DateTimeUtil.formatEpochSeconds(startTimeSeconds, pattern, Locale.getDefault())
-    }
-
-    private fun channelTypeLabel(context: Context, channel: ClanChannelEntity): String = when (channel.type) {
-        CHANNEL_TYPE_THREAD -> context.getString(R.string.clan_event_thread)
-        else -> context.getString(R.string.clan_event_channel)
     }
 
     private val EVENT_INFO_LEADING_DP = 24
@@ -319,9 +382,10 @@ class ClanEventBottomSheet(
         icon: MezonIcon,
         text: String,
         iconColor: Int = theme.colorText,
+        textColor: Int = theme.onSurfaceVariant,
         topMarginDp: Float = 0f,
     ): LinearLayout {
-        return buildDetailInfoRow(context, theme, buildInfoIconLeading(context, icon, iconColor), text, theme.onSurfaceVariant, topMarginDp)
+        return buildDetailInfoRow(context, theme, buildInfoIconLeading(context, icon, iconColor), text, textColor, topMarginDp)
     }
 
     private fun buildDetailInfoRow(
@@ -370,6 +434,7 @@ class ClanEventBottomSheet(
         event: ClanEventEntity,
         voiceChannel: ClanChannelEntity?,
         topMarginDp: Float = 4f,
+        onChannelClick: ((ClanChannelEntity) -> Unit)? = null,
     ): View {
         return if (event.isOfflineEvent()) {
             buildInlineInfoRow(
@@ -377,19 +442,57 @@ class ClanEventBottomSheet(
                 theme,
                 MezonIcon.locationIcon,
                 event.address,
-                theme.textStrong,
-                topMarginDp,
+                iconColor = theme.textStrong,
+                textColor = theme.textStrong,
+                topMarginDp = topMarginDp,
             )
         } else {
             val label = voiceChannel?.channelLabel?.takeIf { it.isNotBlank() }
                 ?: context.getString(R.string.clan_event_private_room)
-            buildInlineInfoRow(
+            val row = buildInlineInfoRow(
                 context,
                 theme,
                 MezonIcon.channelVoice,
                 label,
-                theme.textStrong,
+                iconColor = if (voiceChannel != null) theme.blurple else theme.textStrong,
+                textColor = if (voiceChannel != null) theme.blurple else theme.textStrong,
+                topMarginDp = topMarginDp,
+            )
+            if (voiceChannel != null && onChannelClick != null) {
+                row.isClickable = true
+                row.isFocusable = true
+                row.setOnClickListener { onChannelClick(voiceChannel) }
+            }
+            row
+        }
+    }
+
+    private fun buildEventLinkedChannelRow(
+        context: Context,
+        theme: ThemeColors,
+        linkedChannel: ClanChannelEntity?,
+        topMarginDp: Float = 4f,
+        onChannelClick: ((ClanChannelEntity) -> Unit)? = null,
+    ): View? {
+        if (linkedChannel == null) return null
+        return TextView(context).apply {
+            text = context.getString(R.string.clan_event_channel_in, linkedChannel.channelLabel)
+            textSize = 12f
+            setTextColor(theme.blurple)
+            if (onChannelClick != null) {
+                isClickable = true
+                isFocusable = true
+                setOnClickListener { onChannelClick(linkedChannel) }
+            }
+            layoutParams = LayoutHelper.createLinear(
+                LayoutHelper.MATCH_PARENT,
+                LayoutHelper.WRAP_CONTENT,
+                0f,
+                Gravity.START,
+                0f,
                 topMarginDp,
+                0f,
+                0f,
             )
         }
     }
@@ -473,8 +576,11 @@ class ClanEventBottomSheet(
         creator: ClanMember?,
         currentUserId: Long,
         voiceChannel: ClanChannelEntity?,
+        linkedChannel: ClanChannelEntity?,
         onOpen: () -> Unit,
+        onOpenChannel: (ClanChannelEntity) -> Unit,
         onToggleInterest: () -> Unit,
+        onLogoLoadToken: (MezonImageLoader.Cancellable) -> Unit,
     ): View {
         val pad = LayoutHelper.dp(16)
         val root = LinearLayout(context).apply {
@@ -580,21 +686,24 @@ class ClanEventBottomSheet(
     
         val mainRow = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
-            isClickable = true
-            isFocusable = true
-            setOnClickListener(openClick)
         }
         val textCol = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             layoutParams = LinearLayout.LayoutParams(0, LayoutHelper.WRAP_CONTENT, 1f)
         }
+        val titleBlock = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            isClickable = true
+            isFocusable = true
+            setOnClickListener(openClick)
+        }
         if (eventBadgeLabel(context, event) != null) {
-            textCol.addView(
+            titleBlock.addView(
                 buildEventBadge(context, theme, event),
                 LayoutHelper.createLinear(LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT, 0f, Gravity.START, 0f, 0f, 0f, 6f),
             )
         }
-        textCol.addView(
+        titleBlock.addView(
             TextView(context).apply {
                 text = event.title
                 textSize = 15f
@@ -603,7 +712,7 @@ class ClanEventBottomSheet(
             },
         )
         if (event.description.isNotBlank()) {
-            textCol.addView(
+            titleBlock.addView(
                 TextView(context).apply {
                     text = event.description
                     textSize = 13f
@@ -613,25 +722,22 @@ class ClanEventBottomSheet(
                 LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, 0f, Gravity.START, 0f, 4f, 0f, 0f),
             )
         }
-        textCol.addView(buildEventLocationRow(context, theme, event, voiceChannel, 4f))
+        textCol.addView(titleBlock)
+        textCol.addView(
+            buildEventLocationRow(context, theme, event, voiceChannel, 4f, onOpenChannel),
+        )
+        buildEventLinkedChannelRow(context, theme, linkedChannel, 4f, onOpenChannel)?.let {
+            textCol.addView(it)
+        }
         mainRow.addView(textCol)
         if (event.logo.isNotBlank()) {
-            val logoWrap = FrameLayout(context).apply {
-                background = GradientDrawable().apply {
-                    cornerRadius = LayoutHelper.dp(8f).toFloat()
-                    setColor(theme.tertiary)
-                }
-            }
-            val logoView = ImageView(context).apply {
-                scaleType = ImageView.ScaleType.CENTER_CROP
-            }
-            logoWrap.addView(logoView, FrameLayout.LayoutParams(LayoutHelper.dp(56), LayoutHelper.dp(56)))
-            MezonImageLoader.getInstance(context).load(event.logo, 112, LayoutHelper.dp(56), onSuccess = { bitmap ->
-                logoView.setImageBitmap(bitmap)
-            })
+            val thumb = ClanEventCreateUi.buildEventLogoThumbnail(context, theme, event.logo, onLogoLoadToken)
+            thumb.isClickable = true
+            thumb.isFocusable = true
+            thumb.setOnClickListener(openClick)
             mainRow.addView(
-                logoWrap,
-                LinearLayout.LayoutParams(LayoutHelper.dp(56), LayoutHelper.dp(56)).apply {
+                thumb,
+                LinearLayout.LayoutParams(LayoutHelper.dp(ClanEventCreateUi.EVENT_THUMB_SIZE_DP), LayoutHelper.dp(ClanEventCreateUi.EVENT_THUMB_SIZE_DP)).apply {
                     leftMargin = LayoutHelper.dp(10)
                 },
             )

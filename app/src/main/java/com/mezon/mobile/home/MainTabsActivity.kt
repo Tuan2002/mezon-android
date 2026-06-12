@@ -16,6 +16,7 @@ import com.mezon.mobile.di.FragmentEntryPoint
 import com.mezon.mobile.home.ChannelFilesController
 import com.mezon.mobile.home.chat.EmojiController
 import com.mezon.mobile.home.clans.ClansFragment
+import com.mezon.mobile.home.clans.ClanEventController
 import com.mezon.mobile.home.clans.ChannelPermissionController
 import com.mezon.mobile.home.clans.PermissionPolicy
 import com.mezon.mobile.home.clans.RoleController
@@ -55,6 +56,8 @@ class MainTabsActivity : ViewPagerActivity() {
     private lateinit var permissionPolicy: PermissionPolicy
     @Suppress("unused")
     private lateinit var channelFilesController: ChannelFilesController
+    @Suppress("unused")
+    private lateinit var clanEventController: ClanEventController
     private lateinit var emojiController: EmojiController
     private lateinit var searchController: com.mezon.mobile.search.SearchController
     private lateinit var accountController: AccountController
@@ -106,6 +109,7 @@ class MainTabsActivity : ViewPagerActivity() {
         pinMessageController = entryPoint.pinMessageController()
         channelFilesController = entryPoint.channelFilesController()
         channelGalleryController = entryPoint.channelGalleryController()
+        clanEventController = entryPoint.clanEventController()
         roleController = entryPoint.roleController()
         channelPermissionController = entryPoint.channelPermissionController()
         permissionPolicy = entryPoint.permissionPolicy()

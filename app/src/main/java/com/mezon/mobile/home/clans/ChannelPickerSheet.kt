@@ -1,4 +1,4 @@
-package com.mezon.mobile.home.clans.settings
+package com.mezon.mobile.home.clans
 
 import android.content.Context
 import android.graphics.PorterDuff
@@ -23,9 +23,6 @@ import com.mezon.mobile.core.BottomSheet
 import com.mezon.mobile.core.LayoutHelper
 import com.mezon.mobile.core.RecyclerListView
 import com.mezon.mobile.core.ThemeColors
-import com.mezon.mobile.home.clans.ChannelItemCell
-import com.mezon.mobile.home.clans.ClanChannelEntity
-import com.mezon.mobile.home.clans.CreateClanRnUiTokens
 import com.mezon.mobile.ui.cells.EditTextBoldCursor
 import com.mezon.mobile.ui.cells.MezonIcon
 import java.util.Locale

@@ -1,5 +1,6 @@
 package com.mezon.mobile.home.clans
 
+import android.util.Log
 import com.mezon.mobile.core.NotificationCenter
 import com.mezon.mobile.di.ApplicationScope
 import com.mezon.mobile.di.IoDispatcher
@@ -32,7 +33,9 @@ class ClanEventController @Inject constructor(
     @param:ApplicationScope private val appScope: CoroutineScope,
 ) {
     private val eventsByClan = ConcurrentHashMap<Long, ArrayList<ClanEventEntity>>()
+    private val loadErrorsByClan = ConcurrentHashMap<Long, String>()
     private val loadingClanIds = ConcurrentHashMap.newKeySet<Long>()
+    private val cacheLock = Any()
 
     init {
         appScope.launch { observeClanEventCreated() }
@@ -47,11 +50,15 @@ class ClanEventController @Inject constructor(
         }
     }
 
-    fun getEvents(clanId: Long): List<ClanEventEntity> =
+    fun getEvents(clanId: Long): List<ClanEventEntity> = synchronized(cacheLock) {
         eventsByClan[clanId]?.toList().orEmpty()
+    }
 
-    fun getEvent(clanId: Long, eventId: Long): ClanEventEntity? =
+    fun getEvent(clanId: Long, eventId: Long): ClanEventEntity? = synchronized(cacheLock) {
         eventsByClan[clanId]?.firstOrNull { it.id == eventId }
+    }
+
+    fun getLoadError(clanId: Long): String? = loadErrorsByClan[clanId]
 
     fun getChannel(clanId: Long, channelId: Long): ClanChannelEntity? {
         if (channelId == 0L) return null
@@ -76,7 +83,7 @@ class ClanEventController @Inject constructor(
         val cacheKey = apiCacheKey("listEvents", clanId)
         appScope.launch(ioDispatcher) {
             if (!force && apiCacheTracker.shouldCall(cacheKey) == ApiCacheTracker.ShouldCall.SKIP) {
-                val cached = eventsByClan[clanId]
+                val cached = synchronized(cacheLock) { eventsByClan[clanId] }
                 if (!cached.isNullOrEmpty()) {
                     notificationCenter.postNotificationOnMainThread(
                         NotificationCenter.clanEventsDidLoad,
@@ -95,10 +102,15 @@ class ClanEventController @Inject constructor(
                     api.listEvents(session.apiUrl, session.token, clanId)
                 }
                 val mapped = ArrayList(list.map { it.toClanEventEntity() })
-                eventsByClan[clanId] = mapped
+                synchronized(cacheLock) {
+                    eventsByClan[clanId] = mapped
+                }
+                loadErrorsByClan.remove(clanId)
                 apiCacheTracker.markCalled(cacheKey)
-            } catch (_: Exception) {
-                
+            } catch (e: Exception) {
+                Log.w(TAG, "loadEvents failed clanId=$clanId", e)
+                loadErrorsByClan[clanId] = e.message?.takeIf { it.isNotBlank() }
+                    ?: "Failed to load events"
             } finally {
                 loadingClanIds.remove(clanId)
                 notificationCenter.postNotificationOnMainThread(
@@ -137,9 +149,13 @@ class ClanEventController @Inject constructor(
                 }
                 apiCacheTracker.invalidate(apiCacheKey("listEvents", clanId))
                 loadEvents(clanId, force = true)
-                onDone(true, null)
+                withContext(Dispatchers.Main.immediate) {
+                    onDone(true, null)
+                }
             } catch (e: Exception) {
-                onDone(false, e.message)
+                withContext(Dispatchers.Main.immediate) {
+                    onDone(false, e.message)
+                }
             }
         }
     }
@@ -160,7 +176,7 @@ class ClanEventController @Inject constructor(
                         clanId = clanId,
                         title = draft.title.trim(),
                         description = draft.description.trim(),
-                        logo = draft.logoUrl,
+                        logo = resolveEventLogoUpdate(draft),
                         channelVoiceId = draft.channelVoiceId,
                         channelId = draft.channelId,
                         channelIdOld = draft.editingChannelIdOld,
@@ -173,9 +189,13 @@ class ClanEventController @Inject constructor(
                 }
                 apiCacheTracker.invalidate(apiCacheKey("listEvents", clanId))
                 loadEvents(clanId, force = true)
-                onDone(true, null)
+                withContext(Dispatchers.Main.immediate) {
+                    onDone(true, null)
+                }
             } catch (e: Exception) {
-                onDone(false, e.message)
+                withContext(Dispatchers.Main.immediate) {
+                    onDone(false, e.message)
+                }
             }
         }
     }
@@ -201,15 +221,21 @@ class ClanEventController @Inject constructor(
                         channelId = channelId,
                     )
                 }
-                eventsByClan[clanId]?.removeAll { it.id == eventId }
+                synchronized(cacheLock) {
+                    eventsByClan[clanId]?.removeAll { it.id == eventId }
+                }
                 apiCacheTracker.invalidate(apiCacheKey("listEvents", clanId))
                 notificationCenter.postNotificationOnMainThread(
                     NotificationCenter.clanEventsDidLoad,
                     clanId,
                 )
-                onDone(true, null)
+                withContext(Dispatchers.Main.immediate) {
+                    onDone(true, null)
+                }
             } catch (e: Exception) {
-                onDone(false, e.message)
+                withContext(Dispatchers.Main.immediate) {
+                    onDone(false, e.message)
+                }
             }
         }
     }
@@ -229,7 +255,7 @@ class ClanEventController @Inject constructor(
                         api.deleteUserEvent(session.apiUrl, session.token, clanId, eventId)
                     }
                 }
-                synchronized(eventsByClan) {
+                synchronized(cacheLock) {
                     val list = eventsByClan[clanId] ?: return@launch
                     val idx = list.indexOfFirst { it.id == eventId }
                     if (idx >= 0) {
@@ -262,8 +288,45 @@ class ClanEventController @Inject constructor(
     fun voiceChannels(clanId: Long): List<ClanChannelEntity> =
         channelController.getChannels(clanId).filter { it.type == CHANNEL_TYPE_VOICE }
 
+    suspend fun uploadEventCoverJpeg(jpegBytes: ByteArray): String {
+        require(jpegBytes.isNotEmpty())
+        if (jpegBytes.size > ClanEventCreateUi.MAX_LOGO_SIZE_BYTES) {
+            throw IllegalStateException("File too large")
+        }
+        return sessionManager.withAutoRefresh { session ->
+            withContext(ioDispatcher) {
+                val filename = "${System.currentTimeMillis()}_event_cover.jpg"
+                com.mezon.mobile.util.AttachmentUploader.uploadAttachmentBytes(
+                    api,
+                    session.apiUrl,
+                    session.token,
+                    filename,
+                    "image/jpeg",
+                    jpegBytes,
+                    1280,
+                    720,
+                    com.mezon.mobile.BuildConfig.MEZON_BASE_IMG_URL,
+                ).cdnUrl
+            }
+        }
+    }
+
     fun textChannels(clanId: Long): List<ClanChannelEntity> =
         channelController.getChannels(clanId).filter {
             it.type == CHANNEL_TYPE_CHANNEL || it.type == CHANNEL_TYPE_THREAD
         }
+
+    private fun resolveEventLogoUpdate(draft: CreateEventDraft): String? {
+        val current = draft.logoUrl.trim()
+        val original = draft.originalLogoUrl?.trim()
+            ?: return current.takeIf { it.isNotEmpty() }
+        return when {
+            current == original -> original.takeIf { it.isNotEmpty() }
+            else -> current
+        }
+    }
+
+    companion object {
+        private const val TAG = "ClanEventController"
+    }
 }

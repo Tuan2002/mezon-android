@@ -2982,7 +2982,7 @@ class MezonApi @Inject constructor(
         clanId: Long,
         title: String,
         description: String,
-        logo: String,
+        logo: String? = null,
         channelVoiceId: Long,
         channelId: Long,
         channelIdOld: Long,
@@ -2997,7 +2997,7 @@ class MezonApi @Inject constructor(
             this.clanId = clanId
             this.title = title
             this.description = description
-            this.logo = logo
+            logo?.let { this.logo = it }
             this.channelVoiceId = channelVoiceId
             this.channelId = channelId
             this.channelIdOld = channelIdOld
