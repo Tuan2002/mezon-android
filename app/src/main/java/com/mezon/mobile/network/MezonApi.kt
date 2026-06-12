@@ -101,7 +101,10 @@ import com.mezon.mezon.api.ListFavoriteChannelResponse
 import com.mezon.mezon.api.AddFavoriteChannelResponse
 import com.mezon.mezon.api.addFavoriteChannelRequest
 import com.mezon.mezon.api.listFavoriteChannelRequest
+import com.mezon.mezon.api.MutedChannelList
+import com.mezon.mezon.api.listMutedChannelRequest
 import com.mezon.mezon.api.removeFavoriteChannelRequest
+import com.mezon.mezon.api.setMuteRequest
 import com.mezon.mezon.api.CreatePollResponse
 import com.mezon.mezon.api.GetPollResponse
 import com.mezon.mezon.api.VotePollResponse
@@ -2607,6 +2610,33 @@ class MezonApi @Inject constructor(
             this.channelId = channelId
         }
         rpc(apiUrl, token, "RemoveChannelFavorite", request.toByteArray())
+    }
+
+    suspend fun setMuteChannel(
+        apiUrl: String,
+        token: String,
+        channelId: Long,
+        clanId: Long,
+        muteTimeSeconds: Int,
+        active: Int = 0,
+    ) {
+        val request = setMuteRequest {
+            id = channelId
+            muteTime = muteTimeSeconds
+            this.active = active
+            this.clanId = clanId
+        }
+        rpc(apiUrl, token, "SetMuteChannel", request.toByteArray())
+    }
+
+    suspend fun listMutedChannels(
+        apiUrl: String,
+        token: String,
+        clanId: Long,
+    ): MutedChannelList {
+        val request = listMutedChannelRequest { this.clanId = clanId }
+        val bytes = rpc(apiUrl, token, "ListMutedChannel", request.toByteArray())
+        return MutedChannelList.parseFrom(bytes)
     }
 
     suspend fun listChannelApps(

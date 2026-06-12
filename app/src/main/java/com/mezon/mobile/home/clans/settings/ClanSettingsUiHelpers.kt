@@ -122,6 +122,45 @@ object ClanSettingsUiHelpers {
         return outer
     }
 
+    fun buildMezonMenuRow(
+        context: Context,
+        theme: ThemeColors,
+        icon: MezonIcon,
+        title: String,
+        textColor: Int? = null,
+        iconTint: Int? = null,
+        onPress: Runnable
+    ): LinearLayout {
+        val row = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(LayoutHelper.dp(14f), LayoutHelper.dp(13f), LayoutHelper.dp(14f), LayoutHelper.dp(13f))
+            setBackgroundColor(theme.border)
+        }
+        val tint = iconTint ?: theme.textStrong
+        val iconIv = ImageView(context).apply {
+            scaleType = ImageView.ScaleType.FIT_CENTER
+            setImageDrawable(icon.getDrawable(context, tint))
+        }
+        row.addView(
+            iconIv,
+            LayoutHelper.createLinear(menuRowLeadingIconDp, menuRowLeadingIconDp, 0f, Gravity.CENTER_VERTICAL, 0f, 0f, 10f, 0f)
+        )
+        row.addView(
+            TextView(context).apply {
+                text = title
+                textSize = 15f
+                typeface = android.graphics.Typeface.create(android.graphics.Typeface.DEFAULT, android.graphics.Typeface.BOLD)
+                setTextColor(textColor ?: theme.colorText)
+            },
+            LayoutHelper.createLinear(0, LayoutHelper.WRAP_CONTENT, 1f, Gravity.CENTER_VERTICAL)
+        )
+        row.contentDescription = title
+        row.setOnClickListener { onPress.run() }
+        row.isClickable = true
+        return row
+    }
+
     fun buildMezonChevronRow(
         context: Context,
         theme: ThemeColors,

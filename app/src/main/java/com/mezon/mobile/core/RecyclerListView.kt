@@ -170,6 +170,29 @@ open class RecyclerListView(
 
     private var lastX = 0f
     private var lastY = 0f
+    private var downX = 0f
+    private var downY = 0f
+    private var longPressBlocked = false
+    private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop
+    private val touchSlopSquared = touchSlop * touchSlop
+
+    private fun abortPendingLongPress() {
+        selectChildRunnable?.let {
+            handler.removeCallbacks(it)
+            selectChildRunnable = null
+        }
+        currentChildView?.let { onChildPressed(it, false) }
+    }
+
+    private fun blockLongPressIfMovedBeyondSlop(x: Float, y: Float) {
+        if (longPressBlocked) return
+        val dx = x - downX
+        val dy = y - downY
+        if (dx * dx + dy * dy > touchSlopSquared) {
+            longPressBlocked = true
+            abortPendingLongPress()
+        }
+    }
 
     private val gestureDetector = GestureDetector(context, object : GestureDetector.SimpleOnGestureListener() {
         override fun onSingleTapUp(e: MotionEvent): Boolean {
@@ -191,6 +214,7 @@ open class RecyclerListView(
         }
 
         override fun onLongPress(e: MotionEvent) {
+            if (longPressBlocked || scrollingByUser) return
             val child = currentChildView ?: return
             val position = getChildAdapterPosition(child)
             if (position == NO_POSITION) return
@@ -409,8 +433,14 @@ open class RecyclerListView(
 
         when (e.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
+                if (scrollState != SCROLL_STATE_IDLE) {
+                    return super.onInterceptTouchEvent(e)
+                }
+                downX = e.x
+                downY = e.y
                 lastX = e.x
                 lastY = e.y
+                longPressBlocked = false
                 val child = findChildViewUnder(e.x, e.y) ?: return super.onInterceptTouchEvent(e)
                 currentChildView = child
                 if (!disableHighlightState) {
@@ -433,6 +463,7 @@ open class RecyclerListView(
                 gestureDetector.onTouchEvent(e)
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                longPressBlocked = false
                 selectChildRunnable?.let {
                     handler.removeCallbacks(it)
                     selectChildRunnable = null
@@ -446,8 +477,12 @@ open class RecyclerListView(
                 }
             }
             MotionEvent.ACTION_MOVE -> {
+                blockLongPressIfMovedBeyondSlop(e.x, e.y)
                 selectorDrawable?.setHotspot(e.x, e.y)
                 onItemLongClickListenerExtended?.onMove(e.x - lastX, e.y - lastY)
+                lastX = e.x
+                lastY = e.y
+                gestureDetector.onTouchEvent(e)
             }
         }
         return super.onInterceptTouchEvent(e)
@@ -457,12 +492,14 @@ open class RecyclerListView(
         if (!scrollEnabled) return false
         if (onItemClickListener != null || onItemLongClickListener != null ||
             onItemClickListenerExtended != null || onItemLongClickListenerExtended != null) {
+            if (e.actionMasked == MotionEvent.ACTION_MOVE) {
+                blockLongPressIfMovedBeyondSlop(e.x, e.y)
+                selectorDrawable?.setHotspot(e.x, e.y)
+            }
             gestureDetector.onTouchEvent(e)
         }
-        if (e.actionMasked == MotionEvent.ACTION_MOVE) {
-            selectorDrawable?.setHotspot(e.x, e.y)
-        }
         if (e.actionMasked == MotionEvent.ACTION_UP || e.actionMasked == MotionEvent.ACTION_CANCEL) {
+            longPressBlocked = false
             selectChildRunnable?.let {
                 handler.removeCallbacks(it)
                 selectChildRunnable = null
@@ -548,6 +585,18 @@ open class RecyclerListView(
         super.onScrollStateChanged(state)
         scrollingByUser = state == SCROLL_STATE_DRAGGING || state == SCROLL_STATE_SETTLING
         isFastScrolling = state == SCROLL_STATE_SETTLING
+        if (state != SCROLL_STATE_IDLE) {
+            longPressBlocked = true
+            if (currentChildView != null) {
+                abortPendingLongPress()
+                val cancelEvent = MotionEvent.obtain(0, 0, MotionEvent.ACTION_CANCEL, 0f, 0f, 0)
+                gestureDetector.onTouchEvent(cancelEvent)
+                cancelEvent.recycle()
+                currentChildView = null
+            } else {
+                abortPendingLongPress()
+            }
+        }
         if (state == SCROLL_STATE_DRAGGING) {
             hideSelector(false)
         }

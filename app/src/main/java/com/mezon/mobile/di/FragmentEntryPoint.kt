@@ -27,6 +27,7 @@ import com.mezon.mobile.home.UserClanController
 import com.mezon.mobile.home.chat.MediaController
 import com.mezon.mobile.home.MessagesController
 import com.mezon.mobile.home.clans.ChannelCategoryExpandStore
+import com.mezon.mobile.home.clans.ShowEmptyCategoryStore
 import com.mezon.mobile.home.clans.ChannelController
 import com.mezon.mobile.home.clans.ChannelPermissionController
 import com.mezon.mobile.home.clans.ClansController
@@ -68,6 +69,7 @@ interface FragmentEntryPoint {
     fun permissionPolicy(): PermissionPolicy
     fun channelAppController(): ChannelAppController
     fun channelCategoryExpandStore(): ChannelCategoryExpandStore
+    fun showEmptyCategoryStore(): ShowEmptyCategoryStore
     fun connectionController(): ConnectionController
     fun dialogsController(): DialogsController
     fun forwardTargetUsageStore(): ForwardTargetUsageStore

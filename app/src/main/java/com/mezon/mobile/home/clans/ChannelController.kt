@@ -53,6 +53,13 @@ private const val MAX_BADGE_CACHE = 500
 const val FAVORITE_CATEGORY_ID = -1L
 const val FAVORITE_CATEGORY_NAME = "Favorites"
 
+const val CHANNEL_MUTE_ACTIVE_INFINITY = -1
+const val CHANNEL_MUTE_DURATION_15M = 15 * 60
+const val CHANNEL_MUTE_DURATION_1H = 3600
+const val CHANNEL_MUTE_DURATION_3H = 3 * 3600
+const val CHANNEL_MUTE_DURATION_8H = 8 * 3600
+const val CHANNEL_MUTE_DURATION_24H = 24 * 3600
+
 @Singleton
 class ChannelController @Inject constructor(
     private val api: MezonApi,
@@ -80,6 +87,7 @@ class ChannelController @Inject constructor(
     private val channelListLoading = ConcurrentHashMap<Long, Boolean>()
     private val channelListNetworkFetchInflight = ConcurrentHashMap.newKeySet<Long>()
     private val favoritesByClan = ConcurrentHashMap<Long, MutableSet<Long>>()
+    private val mutedChannelIdsByClan = ConcurrentHashMap<Long, MutableSet<Long>>()
     private val categoriesByClan = ConcurrentHashMap<Long, List<ClanCategoryItem>>()
     private val sdTopicChannelsById = ConcurrentHashMap<Long, ClanChannelEntity>()
 
@@ -116,6 +124,7 @@ class ChannelController @Inject constructor(
         m.remove(clanId)
         _channelsByClan.value = m
         favoritesByClan.remove(clanId)
+        mutedChannelIdsByClan.remove(clanId)
         categoriesByClan.remove(clanId)
         channelListLoading.remove(clanId)
         channelListNetworkFetchInflight.remove(clanId)
@@ -203,13 +212,27 @@ class ChannelController @Inject constructor(
                         }
                     }
                 }
+                runCatching {
+                    val mutedResponse = api.listMutedChannels(session.apiUrl, session.token, clanId)
+                    mutedChannelIdsByClan[clanId] = LinkedHashSet(mutedResponse.mutedListList)
+                }
+                val mutedIds = mutedChannelIdsByClan[clanId].orEmpty()
                 val entities = result.channeldescList.map { ch ->
                     withClanIdFromContext(
                         clanId,
-                        ch.toClanChannelEntity().copy(categoryOrder = resolvedOrderFor(ch.categoryId))
+                        ch.toClanChannelEntity().copy(
+                            categoryOrder = resolvedOrderFor(ch.categoryId),
+                            isMuted = mutedIds.contains(ch.channelId),
+                        )
                     )
                 }
                 mergeCache(clanId, entities)
+                categoryListResult.onSuccess { categoryList ->
+                    val fromApi = categoryList.categorydescList.mapNotNull { desc ->
+                        normalizeCategoryItem(desc.toClanCategoryItem(), clanId)
+                    }
+                    categoriesByClan[clanId] = mergeAllCategoriesForClan(clanId, fromApi)
+                }
                 runCatching {
                     val badge = api.listChannelBadgeCount(session.apiUrl, session.token, clanId)
                     if (badge.channeldescList.isNotEmpty()) {
@@ -468,18 +491,6 @@ class ChannelController @Inject constructor(
             .toList()
     }
 
-    private fun categoriesFromChannelSections(clanId: Long): List<ClanCategoryItem> =
-        getChannelSections(clanId)
-            .asSequence()
-            .filter { it.categoryId != 0L && it.categoryId != FAVORITE_CATEGORY_ID }
-            .mapNotNull { section ->
-                normalizeCategoryItem(
-                    ClanCategoryItem(section.categoryId, section.categoryName, 0, clanId),
-                    clanId,
-                )
-            }
-            .toList()
-
     private fun mergeAllCategoriesForClan(clanId: Long, fromApi: List<ClanCategoryItem> = emptyList()): List<ClanCategoryItem> {
         val merged = LinkedHashMap<Long, ClanCategoryItem>()
         fun absorb(item: ClanCategoryItem) {
@@ -494,7 +505,6 @@ class ChannelController @Inject constructor(
         }
         fromApi.forEach(::absorb)
         categoriesDerivedFromChannels(clanId).forEach(::absorb)
-        categoriesFromChannelSections(clanId).forEach(::absorb)
         return merged.values
             .sortedWith(compareBy<ClanCategoryItem> { it.categoryOrder }.thenBy { it.categoryName.lowercase() })
     }
@@ -656,6 +666,58 @@ class ChannelController @Inject constructor(
         }
     }
 
+    fun setChannelMuted(clanId: Long, channelId: Long, muteTimeSeconds: Int, active: Int = 0) {
+        val isMuted = active == CHANNEL_MUTE_ACTIVE_INFINITY || muteTimeSeconds > 0
+        patchChannelMuteLocally(clanId, channelId, isMuted)
+        appScope.launch {
+            runCatching {
+                sessionManager.withAutoRefresh { session ->
+                    withContext(ioDispatcher) {
+                        api.setMuteChannel(
+                            session.apiUrl,
+                            session.token,
+                            channelId,
+                            clanId,
+                            muteTimeSeconds,
+                            active,
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    fun unmuteChannel(clanId: Long, channelId: Long) {
+        setChannelMuted(clanId, channelId, muteTimeSeconds = 0, active = 0)
+    }
+
+    fun isChannelMuted(clanId: Long, channelId: Long): Boolean {
+        mutedChannelIdsByClan[clanId]?.let { if (it.contains(channelId)) return true }
+        return findChannelById(channelId, clanId)?.isMuted == true
+    }
+
+    private fun resolveChannelMuted(clanId: Long, channelId: Long, fromApi: Boolean): Boolean {
+        mutedChannelIdsByClan[clanId]?.let { return it.contains(channelId) }
+        return fromApi
+    }
+
+    private fun patchChannelMuteLocally(clanId: Long, channelId: Long, isMuted: Boolean) {
+        val mutedSet = mutedChannelIdsByClan.getOrPut(clanId) { LinkedHashSet() }
+        if (isMuted) mutedSet.add(channelId) else mutedSet.remove(channelId)
+        val existing = _channelsByClan.value[clanId] ?: return
+        var changed = false
+        val updated = existing.map { row ->
+            if (row.channelId != channelId || row.isMuted == isMuted) return@map row
+            changed = true
+            row.copy(isMuted = isMuted)
+        }
+        if (!changed) return
+        updateCache(clanId, updated)
+        val entity = updated.firstOrNull { it.channelId == channelId } ?: return
+        appScope.launch(ioDispatcher) { clanChannelDao.upsert(entity) }
+        notificationCenter.postNotificationOnMainThread(NotificationCenter.channelsDidLoad, clanId)
+    }
+
     fun registerSdTopicChannels(topics: List<SdTopicEntity>) {
         for (topic in topics) {
             registerSdTopicChannel(topic)
@@ -678,7 +740,7 @@ class ChannelController @Inject constructor(
         }
     }
 
-    fun getChannelSections(clanId: Long): List<ChannelSection> {
+    fun getChannelSections(clanId: Long, showEmptyCategories: Boolean = false): List<ChannelSection> {
         val channels = getChannels(clanId)
         val threadsByParent = HashMap<Long, MutableList<ClanChannelEntity>>()
         val nonThreads = ArrayList<ClanChannelEntity>(channels.size)
@@ -696,22 +758,7 @@ class ChannelController @Inject constructor(
         for (ch in nonThreads) {
             grouped.getOrPut(ch.categoryId) { ArrayList() }.add(ch)
         }
-        val categorySections = grouped.entries
-            .sortedWith(compareBy({ it.value.first().categoryOrder }, { it.key }))
-            .map { (categoryId, items) ->
-                val categoryName = items.first().categoryName
-                val channelsWithThreads = ArrayList<ClanChannelEntity>(items.size)
-                for (ch in items) {
-                    channelsWithThreads.add(ch)
-                    val children = threadsByParent[ch.channelId]
-                    if (children != null) channelsWithThreads.addAll(children)
-                }
-                ChannelSection(
-                    categoryId = categoryId,
-                    categoryName = categoryName,
-                    channels = channelsWithThreads
-                )
-            }
+        val categorySections = buildCategorySections(clanId, grouped, threadsByParent, showEmptyCategories)
 
         val favIds = getFavoriteChannelIds(clanId)
         if (favIds.isEmpty()) return categorySections
@@ -726,6 +773,55 @@ class ChannelController @Inject constructor(
             channels = favChannels
         )
         return listOf(favSection) + categorySections
+    }
+
+    private fun buildCategorySections(
+        clanId: Long,
+        grouped: Map<Long, List<ClanChannelEntity>>,
+        threadsByParent: Map<Long, List<ClanChannelEntity>>,
+        showEmptyCategories: Boolean,
+    ): List<ChannelSection> {
+        val categories = mergeAllCategoriesForClan(clanId, getCachedCategories(clanId))
+        val seenCategoryIds = HashSet<Long>()
+        val sections = ArrayList<ChannelSection>()
+
+        fun channelsWithThreads(items: List<ClanChannelEntity>): List<ClanChannelEntity> {
+            val channelsWithThreads = ArrayList<ClanChannelEntity>(items.size)
+            for (ch in items) {
+                channelsWithThreads.add(ch)
+                val children = threadsByParent[ch.channelId]
+                if (children != null) channelsWithThreads.addAll(children)
+            }
+            return channelsWithThreads
+        }
+
+        fun appendSection(categoryId: Long, categoryName: String, items: List<ClanChannelEntity>) {
+            if (categoryId == FAVORITE_CATEGORY_ID) return
+            if (items.isEmpty()) {
+                if (!showEmptyCategories || categoryName.isEmpty()) return
+            }
+            sections.add(
+                ChannelSection(
+                    categoryId = categoryId,
+                    categoryName = categoryName,
+                    channels = channelsWithThreads(items),
+                )
+            )
+            seenCategoryIds.add(categoryId)
+        }
+
+        for (cat in categories) {
+            appendSection(cat.categoryId, cat.categoryName, grouped[cat.categoryId].orEmpty())
+        }
+        grouped.entries
+            .asSequence()
+            .filter { (categoryId, _) -> categoryId !in seenCategoryIds }
+            .sortedWith(compareBy<Map.Entry<Long, List<ClanChannelEntity>>> { it.value.firstOrNull()?.categoryOrder ?: 0 }.thenBy { it.key })
+            .forEach { (categoryId, items) ->
+                val categoryName = items.firstOrNull()?.categoryName.orEmpty()
+                appendSection(categoryId, categoryName, items)
+            }
+        return sections
     }
 
     private fun updateCache(clanId: Long, channels: List<ClanChannelEntity>) {
@@ -818,7 +914,7 @@ class ChannelController @Inject constructor(
             val apiNorm = withClanIdFromContext(clanId, apiCh)
             val cached = existingMap[apiNorm.channelId]
             if (cached == null) {
-                apiNorm
+                apiNorm.copy(isMuted = resolveChannelMuted(clanId, apiNorm.channelId, apiNorm.isMuted))
             } else {
                 apiNorm.copy(
                     clanId = when {
@@ -840,6 +936,7 @@ class ChannelController @Inject constructor(
                     lastSentMessageTs = maxOf(cached.lastSentMessageTs, apiNorm.lastSentMessageTs),
                     unreadCount = mergeUnreadFromChannelList(cached.unreadCount, apiNorm),
                     ageRestricted = apiNorm.ageRestricted,
+                    isMuted = resolveChannelMuted(clanId, apiNorm.channelId, apiNorm.isMuted),
                 )
             }
         }
@@ -850,6 +947,8 @@ class ChannelController @Inject constructor(
                 cached.clanId == clanId &&
                 cached.type != CHANNEL_TYPE_DM &&
                 cached.type != CHANNEL_TYPE_GROUP
+        }.map { ch ->
+            ch.copy(isMuted = resolveChannelMuted(clanId, ch.channelId, ch.isMuted))
         }
         val finalList = if (preservedExtras.isEmpty()) merged else merged + preservedExtras
         updateCache(clanId, sortChannels(finalList))
@@ -1613,6 +1712,15 @@ class ChannelController @Inject constructor(
                 val targetIds = markAsReadTargetIds(event.clanId, event.categoryId, event.channelId)
                 markTargetsAsRead(event.clanId, targetIds)
                 notificationCenter.postNotificationOnMainThread(NotificationCenter.channelsDidLoad, event.clanId)
+            }
+        }
+
+        appScope.launch {
+            dispatcher.unmuteEvents.collect { event ->
+                val clanId = event.clanId
+                val channelId = event.channelId
+                if (clanId == 0L || channelId == 0L) return@collect
+                patchChannelMuteLocally(clanId, channelId, isMuted = false)
             }
         }
     }
