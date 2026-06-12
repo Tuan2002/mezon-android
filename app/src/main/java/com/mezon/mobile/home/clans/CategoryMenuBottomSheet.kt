@@ -8,7 +8,6 @@ import android.view.ViewGroup
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
-import android.widget.Toast
 import com.mezon.mobile.R
 import com.mezon.mobile.core.BottomSheet
 import com.mezon.mobile.core.LayoutHelper
@@ -43,10 +42,6 @@ class CategoryMenuBottomSheet(
         fun dismissAndRun(action: () -> Unit): Runnable = Runnable {
             dismiss()
             action()
-        }
-
-        fun showComingSoon() {
-            Toast.makeText(context, context.getString(R.string.feature_coming_soon), Toast.LENGTH_SHORT).show()
         }
 
         fun buildRow(
@@ -114,46 +109,13 @@ class CategoryMenuBottomSheet(
             )
         )
 
-        val notificationRows = listOf(
-            buildRow(
-                context.getString(R.string.category_menu_mute_category),
-                MezonIcon.bellSlashIcon,
-                onClick = { showComingSoon() },
-            ),
-            buildRow(
-                context.getString(R.string.category_menu_notification_settings),
-                MezonIcon.channelNotificaitionIcon,
-                onClick = { showComingSoon() },
-            ),
-        )
-
         val organizationRows = buildList {
-            if (canManageClan) {
-                add(
-                    buildRow(
-                        context.getString(R.string.category_menu_edit_category),
-                        MezonIcon.settingIcon,
-                        onClick = { showComingSoon() },
-                    )
-                )
-            }
             if (showCreateChannel) {
                 add(
                     buildRow(
                         context.getString(R.string.category_menu_create_channel),
                         MezonIcon.plusLargeIcon,
                         onClick = onCreateChannel,
-                    )
-                )
-            }
-            if (canManageClan) {
-                add(
-                    buildRow(
-                        context.getString(R.string.category_menu_delete_category),
-                        MezonIcon.closeLargeIcon,
-                        labelColor = theme.redStrong,
-                        iconColor = theme.redStrong,
-                        onClick = { showComingSoon() },
                     )
                 )
             }
@@ -165,7 +127,6 @@ class CategoryMenuBottomSheet(
             setPadding(LayoutHelper.dp(20), 0, LayoutHelper.dp(20), LayoutHelper.dp(20))
             addView(header, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT))
             addSection(this, watchRows, topGap = 0f)
-            addSection(this, notificationRows)
             if (organizationRows.isNotEmpty()) {
                 addSection(this, organizationRows)
             }

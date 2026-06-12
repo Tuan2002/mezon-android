@@ -8,7 +8,6 @@ import android.view.ViewGroup
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
-import android.widget.Toast
 import com.mezon.mobile.R
 import com.mezon.mobile.core.BottomSheet
 import com.mezon.mobile.core.LayoutHelper
@@ -31,6 +30,8 @@ class ChannelMenuBottomSheet(
     private val onCopyLink: () -> Unit,
     private val onMuteChannel: () -> Unit,
     private val onOpenThreadList: () -> Unit,
+    private val showLeaveThread: Boolean,
+    private val onLeaveThread: () -> Unit,
     private val onEditChannel: () -> Unit,
     private val onDeleteChannel: () -> Unit,
 ) : BottomSheet(context) {
@@ -179,13 +180,6 @@ class ChannelMenuBottomSheet(
                 muteIcon,
                 onClick = onMuteChannel,
             ),
-            buildRow(
-                context.getString(R.string.channel_menu_notification_settings),
-                com.mezon.mobile.ui.cells.MezonIcon.channelNotificaitionIcon,
-                onClick = {
-                    Toast.makeText(context, context.getString(R.string.feature_coming_soon), Toast.LENGTH_SHORT).show()
-                },
-            ),
         )
 
         val threadRows = if (showThreadList) {
@@ -211,6 +205,17 @@ class ChannelMenuBottomSheet(
             R.string.channel_settings_delete_channel
         }
         val organizationRows = buildList {
+            if (showLeaveThread) {
+                add(
+                    buildRow(
+                        context.getString(R.string.channel_settings_menu_leave_thread),
+                        com.mezon.mobile.ui.cells.MezonIcon.leaveGroupIcon,
+                        labelColor = theme.redStrong,
+                        iconColor = theme.redStrong,
+                        onClick = onLeaveThread,
+                    )
+                )
+            }
             if (showEditChannel) {
                 add(
                     buildRow(

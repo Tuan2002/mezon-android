@@ -666,30 +666,35 @@ class ChannelController @Inject constructor(
         }
     }
 
-    fun setChannelMuted(clanId: Long, channelId: Long, muteTimeSeconds: Int, active: Int = 0) {
+    suspend fun setChannelMuted(
+        clanId: Long,
+        channelId: Long,
+        muteTimeSeconds: Int,
+        active: Int = 0,
+    ): Result<Unit> {
+        val previousMuted = isChannelMuted(clanId, channelId)
         val isMuted = active == CHANNEL_MUTE_ACTIVE_INFINITY || muteTimeSeconds > 0
         patchChannelMuteLocally(clanId, channelId, isMuted)
-        appScope.launch {
-            runCatching {
-                sessionManager.withAutoRefresh { session ->
-                    withContext(ioDispatcher) {
-                        api.setMuteChannel(
-                            session.apiUrl,
-                            session.token,
-                            channelId,
-                            clanId,
-                            muteTimeSeconds,
-                            active,
-                        )
-                    }
+        return runCatching {
+            sessionManager.withAutoRefresh { session ->
+                withContext(ioDispatcher) {
+                    api.setMuteChannel(
+                        session.apiUrl,
+                        session.token,
+                        channelId,
+                        clanId,
+                        muteTimeSeconds,
+                        active,
+                    )
                 }
             }
+        }.onFailure {
+            patchChannelMuteLocally(clanId, channelId, previousMuted)
         }
     }
 
-    fun unmuteChannel(clanId: Long, channelId: Long) {
+    suspend fun unmuteChannel(clanId: Long, channelId: Long): Result<Unit> =
         setChannelMuted(clanId, channelId, muteTimeSeconds = 0, active = 0)
-    }
 
     fun isChannelMuted(clanId: Long, channelId: Long): Boolean {
         mutedChannelIdsByClan[clanId]?.let { if (it.contains(channelId)) return true }

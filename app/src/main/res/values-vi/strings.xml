@@ -1104,6 +1104,10 @@
     <string name="channel_mute_duration_8h">8 giờ</string>
     <string name="channel_mute_duration_24h">24 giờ</string>
     <string name="channel_mute_duration_until_manual">Cho đến khi tôi bật lại</string>
+    <string name="channel_mute_success">Tắt thông báo thành công!</string>
+    <string name="channel_unmute_success">Bật thông báo thành công!</string>
+    <string name="channel_mute_failed">Không thể tắt thông báo!</string>
+    <string name="channel_unmute_failed">Không thể bật thông báo!</string>
     <string name="category_menu_create_channel">Tạo kênh</string>
     <string name="category_menu_create_channel_unavailable">Chưa thể tạo kênh cho danh mục này lúc này.</string>
     <string name="channel_open_no_view_permission">Bạn không có quyền xem kênh này.</string>
