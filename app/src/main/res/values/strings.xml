@@ -1252,6 +1252,10 @@
     <string name="channel_mute_duration_8h">For 8 Hours</string>
     <string name="channel_mute_duration_24h">For 24 Hours</string>
     <string name="channel_mute_duration_until_manual">Until I turn it back on</string>
+    <string name="channel_mute_success">Muted successfully!</string>
+    <string name="channel_unmute_success">Unmuted successfully!</string>
+    <string name="channel_mute_failed">Failed to mute!</string>
+    <string name="channel_unmute_failed">Failed to unmute!</string>
     <string name="category_menu_create_channel">Create channel</string>
     <string name="category_menu_create_channel_unavailable">Create channel isn’t available for this category right now.</string>
     <string name="channel_open_no_view_permission">You don’t have permission to view this channel.</string>

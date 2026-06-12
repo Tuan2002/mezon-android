@@ -32,6 +32,7 @@ import androidx.recyclerview.widget.DefaultItemAnimator
 import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
+import com.mezon.mobile.BuildConfig
 import com.mezon.mobile.R
 import com.mezon.mobile.core.AlertDialog
 import com.mezon.mobile.core.BaseFragment
@@ -348,7 +349,8 @@ class ClansFragment : BaseFragment() {
                     channel.parentId,
                 )
                 val canDelete = permissionPolicy.canDeleteChannelFromMenu(channel, selClan)
-                val menuChannel = channelController.findChannelById(channel.channelId, selClan) ?: channel
+                val menuChannel = (channelController.findChannelById(channel.channelId, selClan) ?: channel)
+                    .copy(isMuted = channelController.isChannelMuted(selClan, channel.channelId))
                 ChannelMenuBottomSheet(
                     context,
                     menuChannel,
@@ -359,6 +361,7 @@ class ClansFragment : BaseFragment() {
                     showThreadList,
                     canEdit,
                     canDelete,
+                    showLeaveThread = channel.isThread,
                     onMarkAsRead = {
                         channelController.requestMarkAsRead(
                             channel.clanId,
@@ -377,6 +380,9 @@ class ClansFragment : BaseFragment() {
                     },
                     onOpenThreadList = {
                         openThreadList(channel, selClan)
+                    },
+                    onLeaveThread = {
+                        confirmLeaveThread(channel, selClan)
                     },
                     onEditChannel = {
                         openChannelSettings(channel, selClan)
@@ -1217,7 +1223,8 @@ class ClansFragment : BaseFragment() {
 
     private fun copyChannelLink(channel: ClanChannelEntity, clanId: Long) {
         val ctx = fragmentView?.context ?: return
-        val link = "https://mezon.ai/chat/clans/$clanId/channels/${channel.channelId}"
+        val baseUrl = BuildConfig.MEZON_REDIRECT_URI.trimEnd('/')
+        val link = "$baseUrl/chat/clans/$clanId/channels/${channel.channelId}"
         val clipboard = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
         clipboard.setPrimaryClip(ClipData.newPlainText("channel_link", link))
         MezonToast.show(this, ToastOverlay.ToastType.INFO, getString(R.string.invite_link_copied))
@@ -1234,13 +1241,83 @@ class ClansFragment : BaseFragment() {
     private fun handleChannelMute(channel: ClanChannelEntity, clanId: Long) {
         val ctx = fragmentView?.context ?: return
         if (channelController.isChannelMuted(clanId, channel.channelId)) {
-            channelController.unmuteChannel(clanId, channel.channelId)
+            fragmentScope.launch {
+                val result = channelController.unmuteChannel(clanId, channel.channelId)
+                withContext(Dispatchers.Main.immediate) {
+                    if (result.isSuccess) {
+                        MezonToast.show(
+                            this@ClansFragment,
+                            ToastOverlay.ToastType.SUCCESS,
+                            getString(R.string.channel_unmute_success),
+                        )
+                    } else {
+                        MezonToast.show(
+                            this@ClansFragment,
+                            ToastOverlay.ToastType.ERROR,
+                            getString(R.string.channel_unmute_failed),
+                        )
+                    }
+                }
+            }
             return
         }
-        val liveChannel = channelController.findChannelById(channel.channelId, clanId) ?: channel
+        val liveChannel = (channelController.findChannelById(channel.channelId, clanId) ?: channel)
+            .copy(isMuted = false)
         ChannelMuteBottomSheet(ctx, liveChannel) { muteTimeSeconds, active ->
-            channelController.setChannelMuted(clanId, channel.channelId, muteTimeSeconds, active)
+            fragmentScope.launch {
+                val result = channelController.setChannelMuted(
+                    clanId,
+                    channel.channelId,
+                    muteTimeSeconds,
+                    active,
+                )
+                withContext(Dispatchers.Main.immediate) {
+                    if (result.isSuccess) {
+                        MezonToast.show(
+                            this@ClansFragment,
+                            ToastOverlay.ToastType.SUCCESS,
+                            getString(R.string.channel_mute_success),
+                        )
+                    } else {
+                        MezonToast.show(
+                            this@ClansFragment,
+                            ToastOverlay.ToastType.ERROR,
+                            getString(R.string.channel_mute_failed),
+                        )
+                    }
+                }
+            }
         }.show()
+    }
+
+    private fun confirmLeaveThread(channel: ClanChannelEntity, clanId: Long) {
+        val act = getParentActivity() ?: return
+        if (!channel.isThread) return
+        AlertDialog.Builder(act)
+            .setTitle(getString(R.string.channel_settings_leave_confirm_title))
+            .setMessage(getString(R.string.channel_settings_leave_confirm_message, channel.channelLabel))
+            .setNegativeButton(getString(R.string.common_cancel), null)
+            .setPositiveButton(getString(R.string.channel_settings_menu_leave_thread)) { _, _ ->
+                performLeaveThread(channel, clanId)
+            }
+            .show()
+    }
+
+    private fun performLeaveThread(channel: ClanChannelEntity, clanId: Long) {
+        fragmentScope.launch {
+            val result = channelController.leaveThread(clanId, channel.channelId, channel.parentId)
+            withContext(Dispatchers.Main.immediate) {
+                if (!result.isSuccess) {
+                    val msg = result.exceptionOrNull()?.message?.takeIf { it.length < 200 }
+                        ?: getString(R.string.common_something_went_wrong)
+                    MezonToast.show(
+                        this@ClansFragment,
+                        ToastOverlay.ToastType.ERROR,
+                        getString(R.string.channel_settings_leave_failed, msg),
+                    )
+                }
+            }
+        }
     }
 
     private fun openChannelSettings(channel: ClanChannelEntity, clanId: Long) {
