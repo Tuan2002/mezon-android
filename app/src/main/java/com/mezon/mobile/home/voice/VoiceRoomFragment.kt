@@ -40,7 +40,9 @@ import com.mezon.mobile.home.clans.ClansController
 import com.mezon.mobile.home.clans.PermissionPolicy
 import com.mezon.mobile.home.profile.UserController
 import com.mezon.mobile.ui.cells.MezonIcon
+import io.livekit.android.AudioOptions
 import io.livekit.android.LiveKit
+import io.livekit.android.LiveKitOverrides
 import io.livekit.android.room.Room
 import io.livekit.android.room.participant.Participant
 import io.livekit.android.room.track.CameraPosition
@@ -581,8 +583,7 @@ class VoiceRoomFragment : BaseFragment() {
         ))
 
         audioManager = VoiceAudioManager(context).also {
-            it.onBluetoothStateChanged = { updateAudioOutputIcon() }
-            it.start()
+            it.onOutputChanged = { updateAudioOutputIcon() }
         }
         updateAudioOutputIcon()
 
@@ -843,7 +844,17 @@ class VoiceRoomFragment : BaseFragment() {
 
             try {
                 val ctx = fragmentView?.context ?: getParentActivity() ?: return@launch
-                room = LiveKit.create(ctx)
+                val voiceAudio = audioManager
+                    ?: VoiceAudioManager(ctx).also { created ->
+                        audioManager = created
+                        created.onOutputChanged = { updateAudioOutputIcon() }
+                    }
+                room = LiveKit.create(
+                    ctx,
+                    overrides = LiveKitOverrides(
+                        audioOptions = AudioOptions(audioHandler = voiceAudio.asLiveKitAudioHandler())
+                    )
+                )
                 Log.d(TAG, "LiveKit room created, connecting...")
 
                 launch { collectRoomEvents() }
@@ -870,6 +881,7 @@ class VoiceRoomFragment : BaseFragment() {
                 }
 
                 doUpdateParticipantList()
+                updateAudioOutputIcon()
                 Log.d(TAG, "Initial participant list: ${participants.size} participants")
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to connect to LiveKit room", e)
@@ -1273,24 +1285,11 @@ class VoiceRoomFragment : BaseFragment() {
     }
 
     private fun cycleAudioOutput() {
-        val am = audioManager ?: return
-        when (am.getCurrentDevice()) {
-            AudioOutputDevice.EARPIECE -> am.setSpeaker()
-            AudioOutputDevice.SPEAKER -> {
-                if (am.isBluetoothAvailable()) am.setBluetooth() else am.setEarpiece()
-            }
-            AudioOutputDevice.BLUETOOTH -> am.setEarpiece()
-        }
-        updateAudioOutputIcon()
+        audioManager?.cycleOutput()
     }
 
     private fun updateAudioOutputIcon() {
-        val am = audioManager ?: return
-        val icon = when (am.getCurrentDevice()) {
-            AudioOutputDevice.EARPIECE -> MezonIcon.voiceWaveIcon
-            AudioOutputDevice.SPEAKER -> MezonIcon.voiceWaveDoubleIcon
-            AudioOutputDevice.BLUETOOTH -> MezonIcon.bluetoothIcon
-        }
+        val icon = audioManager?.currentOutputIcon() ?: MezonIcon.voiceWaveIcon
         headerView.setAudioOutputIcon(icon)
     }
 
@@ -1598,7 +1597,7 @@ class VoiceRoomFragment : BaseFragment() {
         }
         participantModerationSheet?.dismiss()
         participantModerationSheet = null
-        audioManager?.stop()
+        audioManager?.release()
         audioManager = null
         roomScope?.cancel()
         roomScope = null

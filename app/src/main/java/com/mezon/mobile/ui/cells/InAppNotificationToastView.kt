@@ -19,7 +19,6 @@ class InAppNotificationToastView(
 
     init {
         orientation = VERTICAL
-        elevation = LayoutHelper.dpf(8f)
         val bg = GradientDrawable().apply {
             setColor(theme.channelPanelBg)
             cornerRadius = LayoutHelper.dpf(16f)

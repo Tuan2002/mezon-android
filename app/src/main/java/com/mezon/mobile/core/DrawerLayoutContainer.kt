@@ -16,6 +16,7 @@ class DrawerLayoutContainer(context: Context) : FrameLayout(context) {
 
     companion object {
         const val CHILD_TAG_TOP_END_OVERLAY = "mezon_drawer_top_end_overlay"
+        const val CHILD_TAG_TOP_OVERLAY = "mezon_drawer_top_overlay"
     }
 
     var parentActionBarLayout: ActionBarLayout? = null

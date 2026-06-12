@@ -374,10 +374,20 @@ class ChatController @Inject constructor(
             senderAvatar = optAvatar,
             content = content,
             timestampSeconds = System.currentTimeMillis() / 1000,
-            code = MessageEntity.CODE_CHAT,
+            code = MessageEntity.CODE_POLL,
             isMe = true,
             sendState = MessageEntity.SEND_STATE_SENDING
         )
+        synchronized(this) {
+            val last = dialogMessage.get(channelId)
+            if (last == null || messageId >= last.id) {
+                dialogMessage.put(channelId, optimistic)
+            }
+            if (messageId > lastMessageByChannel.get(channelId, 0L)) {
+                lastMessageByChannel.put(channelId, messageId)
+            }
+        }
+        appScope.launch(ioDispatcher) { messageDao.upsert(optimistic) }
         notificationCenter.postNotificationOnMainThread(
             NotificationCenter.didReceiveNewMessages, channelId, optimistic
         )

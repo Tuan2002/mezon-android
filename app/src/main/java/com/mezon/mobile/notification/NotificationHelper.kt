@@ -216,39 +216,50 @@ class NotificationHelper @Inject constructor(
         clanId: Long = 0L,
         dmId: Long = 0L
     ) {
-        val body = truncateBody(body)
+        val truncatedBody = truncateBody(body)
         appScope.launch {
             val dmDialog = if (dmId != 0L) dialogsController.get().getDialog(dmId) else null
-            val channelName = when {
-                dmId != 0L -> dmDialog?.let { dm ->
-                    dm.displayName.ifEmpty { dm.label }
-                } ?: title
-                clanId != 0L && channelId != 0L -> (withTimeoutOrNull(MAX_NOTI_DELAY) {
-                    channelController.findOrFetchChannelLabel(channelId, clanId)
-                } ?: title).ifEmpty { title }
-                else -> title
-            }
             withContext(Dispatchers.Main) {
                 val activity = MainActivity.instance ?: return@withContext
                 val onTap: (() -> Unit)? = when {
-                    dmId != 0L -> { {
+                    dmId != 0L -> {
                         val dmType = dmDialog?.type?.takeIf { it != 0 } ?: CHANNEL_TYPE_DM
-                        activity.openChat(dmId, channelName, 0L, dmType, fromNotification = true)
-                    } }
+                        val dmName = dmDialog?.let { dm ->
+                            dm.displayName.ifEmpty { dm.label }
+                        } ?: title
+                        {
+                            activity.openChat(dmId, dmName, 0L, dmType, fromNotification = true)
+                        }
+                    }
                     clanId != 0L && channelId != 0L -> {
                         {
-                            activity.openChat(channelId, channelName, clanId, CHANNEL_TYPE_CHANNEL, fromNotification = true)
+                            appScope.launch {
+                                val channelName = (withTimeoutOrNull(MAX_NOTI_DELAY) {
+                                    channelController.findOrFetchChannelLabel(channelId, clanId)
+                                } ?: title).ifEmpty { title }
+                                withContext(Dispatchers.Main) {
+                                    activity.openChat(
+                                        channelId,
+                                        channelName,
+                                        clanId,
+                                        CHANNEL_TYPE_CHANNEL,
+                                        fromNotification = true
+                                    )
+                                }
+                            }
                         }
                     }
                     else -> null
                 }
-                ToastOverlay.showInAppNotification(
-                    activity = activity,
-                    parent = activity.drawerLayoutContainer,
-                    title = title,
-                    body = body,
-                    onTap = onTap
-                )
+                activity.drawerLayoutContainer.post {
+                    ToastOverlay.showInAppNotification(
+                        activity = activity,
+                        parent = activity.drawerLayoutContainer,
+                        title = title,
+                        body = truncatedBody,
+                        onTap = onTap
+                    )
+                }
             }
         }
     }

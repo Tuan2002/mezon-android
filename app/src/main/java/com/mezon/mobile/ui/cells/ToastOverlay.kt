@@ -1,7 +1,5 @@
 package com.mezon.mobile.ui.cells
 
-import android.animation.Animator
-import android.animation.AnimatorListenerAdapter
 import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Paint
@@ -14,6 +12,7 @@ import android.text.StaticLayout
 import android.text.TextPaint
 import android.text.TextUtils
 import com.mezon.mobile.MainActivity
+import com.mezon.mobile.core.DrawerLayoutContainer
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
@@ -75,6 +74,20 @@ class ToastOverlay(context: Context, private val theme: ThemeColors) : FrameLayo
         isFocusable = false
         clipChildren = false
         setWillNotDraw(true)
+        importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
+    }
+
+    private var passThroughGesture = false
+
+    override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
+        if (ev.actionMasked == MotionEvent.ACTION_DOWN) {
+            val child = if (childCount > 0) getChildAt(0) else null
+            passThroughGesture = child == null ||
+                ev.x < child.left || ev.x > child.right ||
+                ev.y < child.top || ev.y > child.bottom
+        }
+        if (passThroughGesture) return false
+        return super.dispatchTouchEvent(ev)
     }
 
     fun show(
@@ -118,22 +131,33 @@ class ToastOverlay(context: Context, private val theme: ThemeColors) : FrameLayo
             (this.parent as? ViewGroup)?.removeView(this)
             addSelfToParentWithOverlayLp(parent)
         }
-        parent.bringChildToFront(this)
+        bringSelfToFrontIfNeeded(parent)
         bumpIncomingCallAboveToasts(parent)
         visibleInstance = this
         if (childCount == 0) return
         val toastView = getChildAt(0)
+        toastView.animate().cancel()
+        toastView.translationY = 0f
+        toastView.alpha = 1f
         bindInAppNotificationInteraction(toastView, onTap)
         scheduleInAppDismiss(durationMs)
     }
 
     private fun addSelfToParentWithOverlayLp(parent: ViewGroup) {
+        tag = DrawerLayoutContainer.CHILD_TAG_TOP_OVERLAY
         val overlayLp = LayoutParams(
             LayoutParams.MATCH_PARENT,
             LayoutParams.WRAP_CONTENT,
             Gravity.TOP
         )
         parent.addView(this, overlayLp)
+    }
+
+    private fun bringSelfToFrontIfNeeded(parent: ViewGroup) {
+        val lastIndex = parent.childCount - 1
+        if (lastIndex < 0) return
+        if (parent.getChildAt(lastIndex) === this) return
+        parent.bringChildToFront(this)
     }
 
     private fun scheduleInAppDismiss(durationMs: Long) {
@@ -164,6 +188,8 @@ class ToastOverlay(context: Context, private val theme: ThemeColors) : FrameLayo
 
         if (this.parent == null) {
             addSelfToParentWithOverlayLp(parent)
+        } else {
+            bringSelfToFrontIfNeeded(parent)
         }
         visibleInstance = this
         bindInAppNotificationInteraction(toastView, onTap)
@@ -172,7 +198,12 @@ class ToastOverlay(context: Context, private val theme: ThemeColors) : FrameLayo
         }
         toastView.translationY = -LayoutHelper.dpf(80f)
         toastView.alpha = 0f
-        toastView.animate().translationY(0f).alpha(1f).setDuration(250).start()
+        toastView.animate()
+            .translationY(0f)
+            .alpha(1f)
+            .setDuration(250)
+            .withLayer()
+            .start()
         if (toastView !is InAppNotificationToastView) {
             handler.removeCallbacksAndMessages(null)
             handler.postDelayed({ dismiss() }, durationMs)
@@ -185,8 +216,8 @@ class ToastOverlay(context: Context, private val theme: ThemeColors) : FrameLayo
     }
 
     private fun bindInAppNotificationInteraction(toastView: View, onTap: (() -> Unit)?) {
+        toastView.isClickable = onTap != null
         if (onTap != null) {
-            toastView.isClickable = true
             toastView.setOnClickListener {
                 handler.removeCallbacksAndMessages(null)
                 dismiss()
@@ -194,7 +225,6 @@ class ToastOverlay(context: Context, private val theme: ThemeColors) : FrameLayo
             }
         } else {
             toastView.setOnClickListener(null)
-            toastView.isClickable = true
         }
         var startY = 0f
         toastView.setOnTouchListener { _, ev ->
@@ -214,16 +244,25 @@ class ToastOverlay(context: Context, private val theme: ThemeColors) : FrameLayo
 
     private fun dismiss() {
         val view = if (childCount > 0) getChildAt(0) else null
-        view?.animate()?.translationY(-LayoutHelper.dpf(80f))?.alpha(0f)?.setDuration(250)
-            ?.setListener(object : AnimatorListenerAdapter() {
-                override fun onAnimationEnd(animation: Animator) {
-                    if (visibleInstance === this@ToastOverlay) {
-                        visibleInstance = null
-                    }
-                    removeAllViews()
-                    (this@ToastOverlay.parent as? ViewGroup)?.removeView(this@ToastOverlay)
+        if (view == null) {
+            if (visibleInstance === this) visibleInstance = null
+            (parent as? ViewGroup)?.removeView(this)
+            return
+        }
+        view.animate().cancel()
+        view.animate()
+            .translationY(-LayoutHelper.dpf(80f))
+            .alpha(0f)
+            .setDuration(250)
+            .withLayer()
+            .withEndAction {
+                if (visibleInstance === this) {
+                    visibleInstance = null
                 }
-            })?.start()
+                removeAllViews()
+                (parent as? ViewGroup)?.removeView(this)
+            }
+            .start()
     }
 
     private class ToastView(
