@@ -1,190 +1,82 @@
 package com.mezon.mobile.home.voice
 
-import android.bluetooth.BluetoothAdapter
-import android.bluetooth.BluetoothProfile
-import android.content.BroadcastReceiver
 import android.content.Context
-import android.content.Intent
-import android.content.IntentFilter
-import android.media.AudioDeviceInfo
-import android.media.AudioFocusRequest
 import android.media.AudioManager
-import android.os.Build
-import android.util.Log
-
-private const val TAG = "VoiceAudioManager"
-
-enum class AudioOutputDevice {
-    EARPIECE,
-    SPEAKER,
-    BLUETOOTH
-}
+import com.mezon.mobile.core.AndroidUtilities
+import com.mezon.mobile.ui.cells.MezonIcon
+import com.twilio.audioswitch.AudioDevice
+import com.twilio.audioswitch.AudioDeviceChangeListener
+import io.livekit.android.audio.AudioHandler
+import io.livekit.android.audio.AudioSwitchHandler
 
 class VoiceAudioManager(context: Context) {
 
-    private val context: Context = context.applicationContext
-    private val audioManager = this.context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
-    private var audioFocusRequest: AudioFocusRequest? = null
-    private var currentDevice = AudioOutputDevice.EARPIECE
-    private var bluetoothAvailable = false
-    private var bluetoothReceiver: BroadcastReceiver? = null
+    private val appContext = context.applicationContext
 
-    var onBluetoothStateChanged: ((available: Boolean) -> Unit)? = null
-
-    fun start() {
-        requestAudioFocus()
-        setSpeaker()
-        registerBluetoothReceiver()
+    val audioSwitchHandler: AudioSwitchHandler = AudioSwitchHandler(appContext).apply {
+        preferredDeviceList = PREFERRED_DEVICE_LIST
+        forceHandleAudioRouting = true
+        focusMode = AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK
     }
 
-    fun stop() {
-        abandonAudioFocus()
-        unregisterBluetoothReceiver()
-        audioManager.mode = AudioManager.MODE_NORMAL
-        audioManager.isSpeakerphoneOn = false
+    private val outputChangedRunnable = Runnable {
+        onOutputChanged?.invoke()
     }
 
-    fun setEarpiece() {
-        currentDevice = AudioOutputDevice.EARPIECE
-        audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
-        audioManager.isSpeakerphoneOn = false
-        stopBluetoothSco()
+    private val deviceChangeListener: AudioDeviceChangeListener = { _, _ ->
+        AndroidUtilities.runOnUIThread(outputChangedRunnable)
     }
 
-    fun setSpeaker() {
-        currentDevice = AudioOutputDevice.SPEAKER
-        audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
-        audioManager.isSpeakerphoneOn = true
-        stopBluetoothSco()
+    var onOutputChanged: (() -> Unit)? = null
+
+    init {
+        audioSwitchHandler.registerAudioDeviceChangeListener(deviceChangeListener)
     }
 
-    fun setBluetooth() {
-        if (!bluetoothAvailable) return
-        currentDevice = AudioOutputDevice.BLUETOOTH
-        audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
-        audioManager.isSpeakerphoneOn = false
-        startBluetoothSco()
+    fun release() {
+        AndroidUtilities.cancelRunOnUIThread(outputChangedRunnable)
+        audioSwitchHandler.unregisterAudioDeviceChangeListener(deviceChangeListener)
+        onOutputChanged = null
     }
 
-    fun getCurrentDevice(): AudioOutputDevice = currentDevice
+    fun asLiveKitAudioHandler(): AudioHandler = audioSwitchHandler
 
-    fun isBluetoothAvailable(): Boolean = bluetoothAvailable
-
-    private val audioFocusChangeListener = AudioManager.OnAudioFocusChangeListener { focusChange ->
-        when (focusChange) {
-            AudioManager.AUDIOFOCUS_LOSS,
-            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
-                savedDevice = currentDevice
-                audioManager.isSpeakerphoneOn = false
-                stopBluetoothSco()
-            }
-            AudioManager.AUDIOFOCUS_GAIN -> {
-                val restore = savedDevice ?: return@OnAudioFocusChangeListener
-                savedDevice = null
-                when (restore) {
-                    AudioOutputDevice.SPEAKER -> setSpeaker()
-                    AudioOutputDevice.BLUETOOTH -> if (bluetoothAvailable) setBluetooth() else setSpeaker()
-                    AudioOutputDevice.EARPIECE -> setEarpiece()
+    fun cycleOutput() {
+        val handler = audioSwitchHandler
+        val selected = handler.selectedAudioDevice
+        val available = handler.availableAudioDevices
+        when (selected) {
+            is AudioDevice.Speakerphone -> {
+                val bluetooth = available.filterIsInstance<AudioDevice.BluetoothHeadset>().firstOrNull()
+                if (bluetooth != null) {
+                    handler.selectDevice(bluetooth)
+                } else {
+                    available.filterIsInstance<AudioDevice.Earpiece>().firstOrNull()?.let { handler.selectDevice(it) }
                 }
             }
-        }
-    }
-
-    private var savedDevice: AudioOutputDevice? = null
-
-    private fun requestAudioFocus() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val request = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
-                .setAudioAttributes(
-                    android.media.AudioAttributes.Builder()
-                        .setUsage(android.media.AudioAttributes.USAGE_VOICE_COMMUNICATION)
-                        .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SPEECH)
-                        .build()
-                )
-                .setOnAudioFocusChangeListener(audioFocusChangeListener)
-                .build()
-            audioFocusRequest = request
-            audioManager.requestAudioFocus(request)
-        } else {
-            @Suppress("DEPRECATION")
-            audioManager.requestAudioFocus(
-                audioFocusChangeListener, AudioManager.STREAM_VOICE_CALL, AudioManager.AUDIOFOCUS_GAIN
-            )
-        }
-    }
-
-    private fun abandonAudioFocus() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            audioFocusRequest?.let { audioManager.abandonAudioFocusRequest(it) }
-        } else {
-            @Suppress("DEPRECATION")
-            audioManager.abandonAudioFocus { }
-        }
-        audioFocusRequest = null
-    }
-
-    @Suppress("DEPRECATION")
-    private fun startBluetoothSco() {
-        try {
-            audioManager.startBluetoothSco()
-            audioManager.isBluetoothScoOn = true
-        } catch (e: Exception) {
-            Log.e(TAG, "startBluetoothSco failed", e)
-        }
-    }
-
-    @Suppress("DEPRECATION")
-    private fun stopBluetoothSco() {
-        try {
-            if (audioManager.isBluetoothScoOn) {
-                audioManager.stopBluetoothSco()
-                audioManager.isBluetoothScoOn = false
+            is AudioDevice.BluetoothHeadset -> {
+                available.filterIsInstance<AudioDevice.Earpiece>().firstOrNull()?.let { handler.selectDevice(it) }
             }
-        } catch (e: Exception) {
-            Log.e(TAG, "stopBluetoothSco failed", e)
-        }
-    }
-
-    private fun registerBluetoothReceiver() {
-        bluetoothReceiver = object : BroadcastReceiver() {
-            override fun onReceive(context: Context, intent: Intent) {
-                checkBluetoothAvailability()
+            else -> {
+                available.filterIsInstance<AudioDevice.Speakerphone>().firstOrNull()?.let { handler.selectDevice(it) }
             }
         }
-        val filter = IntentFilter().apply {
-            addAction(BluetoothAdapter.ACTION_CONNECTION_STATE_CHANGED)
-            addAction(AudioManager.ACTION_SCO_AUDIO_STATE_UPDATED)
-        }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            context.registerReceiver(bluetoothReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
-        } else {
-            context.registerReceiver(bluetoothReceiver, filter)
-        }
-        checkBluetoothAvailability()
     }
 
-    private fun unregisterBluetoothReceiver() {
-        bluetoothReceiver?.let {
-            try {
-                context.unregisterReceiver(it)
-            } catch (_: Exception) {}
+    fun currentOutputIcon(): MezonIcon {
+        return when (audioSwitchHandler.selectedAudioDevice) {
+            is AudioDevice.Speakerphone -> MezonIcon.voiceWaveDoubleIcon
+            is AudioDevice.BluetoothHeadset -> MezonIcon.bluetoothIcon
+            else -> MezonIcon.voiceWaveIcon
         }
-        bluetoothReceiver = null
     }
 
-    private fun checkBluetoothAvailability() {
-        val wasAvailable = bluetoothAvailable
-        bluetoothAvailable = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS).any {
-                it.type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP ||
-                    it.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO
-            }
-        } else {
-            @Suppress("DEPRECATION")
-            audioManager.isBluetoothA2dpOn || audioManager.isBluetoothScoOn
-        }
-        if (wasAvailable != bluetoothAvailable) {
-            onBluetoothStateChanged?.invoke(bluetoothAvailable)
-        }
+    companion object {
+        private val PREFERRED_DEVICE_LIST = listOf(
+            AudioDevice.BluetoothHeadset::class.java,
+            AudioDevice.WiredHeadset::class.java,
+            AudioDevice.Speakerphone::class.java,
+            AudioDevice.Earpiece::class.java,
+        )
     }
 }

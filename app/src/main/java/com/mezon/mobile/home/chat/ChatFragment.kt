@@ -685,7 +685,10 @@ open class ChatFragment : BaseFragment() {
                     val existingMaxId = messages.maxOfOrNull { it.id } ?: 0L
                     val hasOverlap = messages.isNotEmpty() &&
                         apiMinId <= existingMaxId && apiMaxId >= existingMinId
-                    val outgoingSending = messages.filter { it.isMe && it.isSending }
+                    val loadedIds = loadedMessages.asSequence().map { it.id }.toHashSet()
+                    val outgoingPending = messages.filter {
+                        it.isMe && (it.isSending || (it.isPollMessage && it.id !in loadedIds))
+                    }
 
                     if (hasOverlap) {
                         for (m in loadedMessages) messagesDict.put(m.id, m)
@@ -693,7 +696,7 @@ open class ChatFragment : BaseFragment() {
                         messagesDict.clear()
                         for (m in loadedMessages) messagesDict.put(m.id, m)
                     }
-                    for (m in outgoingSending) {
+                    for (m in outgoingPending) {
                         if (messagesDict.get(m.id) == null) messagesDict.put(m.id, m)
                     }
                     for (m in chatController.getActivePendingAttachmentMessages(messageListKey)) {
@@ -4664,14 +4667,16 @@ open class ChatFragment : BaseFragment() {
             withContext(mainDispatcher) {
                 chatController.publishCreatedPollMessage(channelId, clanId, channelType, response)
             }
-            var confirmed = chatController.awaitChannelMessage(channelId, response.messageId)
-            if (!confirmed) {
-                confirmed = chatController.reloadChannelMessageIfMissing(
-                    channelId, clanId, response.messageId
-                )
-            }
-            if (!confirmed) {
-                Log.w(TAG, "createPoll: no ChannelMessage yet id=${response.messageId}; optimistic shown")
+            appScope.launch(ioDispatcher) {
+                var confirmed = chatController.awaitChannelMessage(channelId, response.messageId)
+                if (!confirmed) {
+                    confirmed = chatController.reloadChannelMessageIfMissing(
+                        channelId, clanId, response.messageId
+                    )
+                }
+                if (!confirmed) {
+                    Log.w(TAG, "createPoll: no ChannelMessage yet id=${response.messageId}; optimistic shown")
+                }
             }
             true
         } catch (e: Exception) {
