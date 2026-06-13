@@ -161,6 +161,33 @@ object ClanSettingsUiHelpers {
         return row
     }
 
+    fun buildMezonTextMenuRow(
+        context: Context,
+        theme: ThemeColors,
+        title: String,
+        onPress: Runnable,
+    ): LinearLayout {
+        val row = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(LayoutHelper.dp(14f), LayoutHelper.dp(13f), LayoutHelper.dp(14f), LayoutHelper.dp(13f))
+            setBackgroundColor(theme.border)
+        }
+        row.addView(
+            TextView(context).apply {
+                text = title
+                textSize = 15f
+                typeface = android.graphics.Typeface.create(android.graphics.Typeface.DEFAULT, android.graphics.Typeface.BOLD)
+                setTextColor(theme.colorText)
+            },
+            LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT)
+        )
+        row.contentDescription = title
+        row.setOnClickListener { onPress.run() }
+        row.isClickable = true
+        return row
+    }
+
     fun buildMezonChevronRow(
         context: Context,
         theme: ThemeColors,

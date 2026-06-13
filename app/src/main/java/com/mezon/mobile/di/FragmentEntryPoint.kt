@@ -21,6 +21,7 @@ import com.mezon.mobile.home.clans.settings.StickerSettingsController
 import com.mezon.mobile.home.chat.ImageClipboardCoordinator
 import com.mezon.mobile.home.DialogsController
 import com.mezon.mobile.home.ForwardTargetUsageStore
+import com.mezon.mobile.home.messages.DmPinStorage
 import com.mezon.mobile.home.messages.MessageActivitiesController
 import com.mezon.mobile.home.voice.VoiceController
 import com.mezon.mobile.home.UserClanController
@@ -74,6 +75,7 @@ interface FragmentEntryPoint {
     fun dialogsController(): DialogsController
     fun forwardTargetUsageStore(): ForwardTargetUsageStore
     fun messageActivitiesController(): MessageActivitiesController
+    fun dmPinStorage(): DmPinStorage
     fun messagesController(): MessagesController
     fun notificationStore(): NotificationStore
     fun topicBadgeTracker(): TopicBadgeTracker

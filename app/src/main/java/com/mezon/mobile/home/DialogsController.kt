@@ -19,6 +19,7 @@ import com.mezon.mobile.di.IoDispatcher
 import com.mezon.mobile.home.chat.MessageEntity
 import com.mezon.mobile.home.messages.DirectMessage
 import com.mezon.mobile.home.messages.DmParticipant
+import com.mezon.mobile.home.messages.DmPinStorage
 import com.mezon.mobile.home.messages.extractParticipants
 import com.mezon.mobile.home.messages.formatDirectMessagePreview
 import com.mezon.mobile.home.messages.toDirectMessage
@@ -29,6 +30,15 @@ import com.mezon.mobile.network.CHANNEL_TYPE_GROUP
 import com.mezon.mobile.network.sanitizeServerMessageId as sanitizeProvisionalId
 import com.mezon.mobile.network.CODE_CHAT_REMOVE
 import com.mezon.mobile.network.CODE_CHAT_UPDATE
+import com.mezon.mezon.api.NotificationUserChannel
+import com.mezon.mobile.home.clans.CHANNEL_MUTE_ACTIVE_INFINITY
+import com.mezon.mobile.home.clans.NOTIFICATION_ACTIVE_ON
+import com.mezon.mobile.home.clans.NOTIFICATION_DEFAULT_SETTING_ID
+import com.mezon.mobile.home.clans.SET_MUTE_ACTIVE_UNMUTE
+import com.mezon.mobile.home.clans.isDmMutedFromNotificationSetting
+import com.mezon.mobile.home.clans.isMutedFromNotificationUserChannel
+import com.mezon.mobile.home.clans.isMutedFromSetMuteRequest
+import com.mezon.mobile.home.clans.normalizeDmMuteExpirySeconds
 import com.mezon.mobile.network.MezonApi
 import com.mezon.mobile.network.NetworkMonitor
 import com.mezon.mobile.network.STREAM_MODE_DM
@@ -54,6 +64,8 @@ import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.ByteArrayOutputStream
 import javax.inject.Inject
@@ -61,7 +73,12 @@ import javax.inject.Singleton
 import dagger.hilt.android.qualifiers.ApplicationContext
 
 private const val TAG = "DialogsController"
+private const val MUTE_LOG_TAG = "DialogsController:Mute"
 private const val MAX_TRANSCODE_SOURCE_BYTES = 32 * 1024 * 1024
+
+private fun logMute(message: String) {
+    if (BuildConfig.DEBUG) Log.d(MUTE_LOG_TAG, message)
+}
 
 sealed class DmGroupAvatarUploadResult {
     data class Success(val url: String) : DmGroupAvatarUploadResult()
@@ -83,6 +100,7 @@ class DialogsController @Inject constructor(
     private val activeChannelTracker: ActiveChannelTracker,
     private val notificationHelper: NotificationHelper,
     private val badgeCoordinator: Lazy<BadgeCoordinator>,
+    private val dmPinStorage: DmPinStorage,
     @IoDispatcher private val ioDispatcher: CoroutineDispatcher,
     @ApplicationScope private val appScope: CoroutineScope
 ) {
@@ -99,6 +117,39 @@ class DialogsController @Inject constructor(
 
     private val buzzStates = HashMap<Long, Long>()
     private val buzzHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private var mutedDmChannelIds: LinkedHashSet<Long>? = null
+    private val dmNotificationSettings = LongSparseArray<NotificationUserChannel>()
+    private val dbHydrateMutex = Mutex()
+    @Volatile
+    private var dbHydrated = false
+
+    fun resolveDmIsMuted(channelId: Long, apiIsMute: Boolean, existingIsMute: Boolean = false): Boolean {
+        mutedDmChannelIds?.let { if (channelId in it) return true }
+        return apiIsMute || existingIsMute
+    }
+
+    fun isDmMuted(channelId: Long): Boolean {
+        synchronized(this) {
+            dmNotificationSettings.get(channelId)?.let { noti ->
+                return isDmMutedFromNotificationSetting(noti)
+            }
+        }
+        mutedDmChannelIds?.let { if (channelId in it) return true }
+        return false
+    }
+
+    suspend fun refreshDmNotificationSetting(channelId: Long) {
+        if (channelId == 0L) return
+        runCatching {
+            sessionManager.withAutoRefresh { session ->
+                api.getNotificationChannel(session.apiUrl, session.token, channelId)
+            }
+        }.onSuccess { noti ->
+            applyDmNotificationSetting(channelId, noti)
+        }.onFailure { e ->
+            Log.e(TAG, "refreshDmNotificationSetting failed ch=$channelId", e)
+        }
+    }
 
     fun setBuzzState(channelId: Long) {
         synchronized(this) { buzzStates[channelId] = System.currentTimeMillis() }
@@ -114,11 +165,13 @@ class DialogsController @Inject constructor(
     }
 
     init {
-        appScope.launch { loadDialogsFromDb() }
+        appScope.launch { ensureDialogsHydratedFromDb() }
         appScope.launch { observeMarkAsRead() }
         appScope.launch { observeLastSeenMessages() }
         appScope.launch { observeUserChannelAdded() }
         appScope.launch { observeUserChannelRemoved() }
+        appScope.launch { observeDmUnmuteEvents() }
+        appScope.launch { observeNotiUserChannel() }
     }
 
     fun cleanup() {
@@ -129,6 +182,9 @@ class DialogsController @Inject constructor(
             buzzStates.clear()
             dialogsLoaded = false
             currentChannelId = null
+            mutedDmChannelIds = null
+            dmNotificationSettings.clear()
+            dbHydrated = false
         }
         buzzHandler.removeCallbacksAndMessages(null)
     }
@@ -285,19 +341,29 @@ class DialogsController @Inject constructor(
         synchronized(this) { hasCache = participantsByChannel[channelId] != null }
         if (hasCache && !force) return
         appScope.launch(ioDispatcher) {
-            try {
-                sessionManager.withAutoRefresh { session ->
-                    val response = api.listChannelUsersUC(session.apiUrl, session.token, channelId)
-                    val participants = response.toDmParticipants()
-                    if (participants.isEmpty()) return@withAutoRefresh
-                    synchronized(this@DialogsController) {
-                        participantsByChannel.put(channelId, participants)
-                    }
-                    notificationCenter.postNotificationOnMainThread(NotificationCenter.channelMembersDidLoad, channelId)
+            ensureDmParticipantsLoadedInternal(channelId)
+        }
+    }
+
+    suspend fun ensureDmParticipantsLoaded(channelId: Long) {
+        withContext(ioDispatcher) {
+            ensureDmParticipantsLoadedInternal(channelId)
+        }
+    }
+
+    private suspend fun ensureDmParticipantsLoadedInternal(channelId: Long) {
+        try {
+            sessionManager.withAutoRefresh { session ->
+                val response = api.listChannelUsersUC(session.apiUrl, session.token, channelId)
+                val participants = response.toDmParticipants()
+                if (participants.isEmpty()) return@withAutoRefresh
+                synchronized(this@DialogsController) {
+                    participantsByChannel.put(channelId, participants)
                 }
-            } catch (e: Exception) {
-                Log.e(TAG, "loadDmParticipants failed for channel $channelId", e)
+                notificationCenter.postNotificationOnMainThread(NotificationCenter.channelMembersDidLoad, channelId)
             }
+        } catch (e: Exception) {
+            Log.e(TAG, "ensureDmParticipantsLoaded failed for channel $channelId", e)
         }
     }
 
@@ -520,6 +586,7 @@ class DialogsController @Inject constructor(
     fun loadDialogs(page: Int = 1, limit: Int = 500) {
         appScope.launch(ioDispatcher) {
             try {
+                ensureDialogsHydratedFromDb()
                 if (StartupCache.suppressHomeListApiForIncomingCallWake) {
                     return@launch
                 }
@@ -535,7 +602,9 @@ class DialogsController @Inject constructor(
                 }
                 if (hasCache && cacheTracker.shouldCall(cacheKey) == ApiCacheTracker.ShouldCall.SKIP) {
                     if (!dialogsLoaded) dialogsLoaded = true
-                    val badgePatched = sessionManager.withAutoRefresh { session -> syncDmBadgesWithApi(session) }
+                    val badgePatched = sessionManager.withAutoRefresh { session ->
+                        syncDmBadgesWithApi(session) || syncDmMutedStateFromLocalCache()
+                    }
                     if (badgePatched) {
                         notificationCenter.postNotificationOnMainThread(NotificationCenter.dialogsNeedReload)
                     }
@@ -545,9 +614,15 @@ class DialogsController @Inject constructor(
 
                 sessionManager.withAutoRefresh { session ->
                     val currentUserId = session.userId.toLongOrNull() ?: 0L
+                    val mutedIds = mutedDmChannelIdsForMerge()
 
-                    val response = api.listChannelDescs(session.apiUrl, session.token, CHANNEL_TYPE_GROUP, page, limit)
-
+                    val response = api.listChannelDescs(
+                        session.apiUrl,
+                        session.token,
+                        CHANNEL_TYPE_GROUP,
+                        page,
+                        limit,
+                    )
                     val rawList = response.channeldescList
 
                     val activeDescs = rawList.filter { it.active == 1 }
@@ -561,11 +636,27 @@ class DialogsController @Inject constructor(
                     }
 
                     val merged = activeDescs
-                        .map { it.toDirectMessage(currentUserId, appContext) }
+                        .map { desc ->
+                            val dm = desc.toDirectMessage(currentUserId, appContext)
+                            val existing = getDialog(dm.channelId)
+                            dm.copy(
+                                isMute = resolveDmIsMuted(
+                                    dm.channelId,
+                                    dm.isMute || dm.channelId in mutedIds,
+                                    existing?.isMute == true,
+                                ),
+                            )
+                        }
                         .sortedByDescending { it.lastSentMessageTs }
+
+                    logMute(
+                        "loadDialogs full fetch mutedIds=${mutedIds.size} " +
+                            "mergedMuted=${merged.count { it.isMute }}",
+                    )
 
                     putDialogs(merged)
                     cacheTracker.markCalled(cacheKey)
+                    syncDmMutedStateFromLocalCache()
                     syncDmBadgesWithApi(session)
                 }
 
@@ -786,12 +877,11 @@ class DialogsController @Inject constructor(
 
     fun markDialogAsRead(channelId: Long, postEvent: Boolean = true, seenTimestampSeconds: Int = 0, seenMessageId: Long = 0L) {
         var changed = false
-        var newSeenId = 0L
         var updated: DirectMessage? = null
         synchronized(this) {
             val dm = dialogsDict[channelId] ?: return
             if (dm.unreadCount == 0 && seenMessageId <= dm.lastSeenMessageId) return
-            newSeenId = maxOf(dm.lastSeenMessageId, dm.lastSentMessageId, seenMessageId)
+            val newSeenId = maxOf(dm.lastSeenMessageId, dm.lastSentMessageId, seenMessageId)
             val tsLong = seenTimestampSeconds.toLong() and 0xFFFF_FFFFL
             val newSeenTs = maxOf(dm.lastSeenMessageTs, dm.lastSentMessageTs, tsLong)
             val u = dm.copy(
@@ -817,6 +907,124 @@ class DialogsController @Inject constructor(
                 )
             }
         }
+    }
+
+    suspend fun markDialogAsReadFromMenu(channelId: Long): Result<Unit> = withContext(ioDispatcher) {
+        runCatching {
+            sessionManager.withAutoRefresh { session ->
+                api.markAsRead(session.apiUrl, session.token, channelId = channelId)
+            }
+            markDialogAsRead(channelId)
+        }
+    }
+
+    suspend fun closeDirectMessage(channelId: Long): Result<Unit> = withContext(ioDispatcher) {
+        runCatching {
+            sessionManager.withAutoRefresh { session ->
+                api.closeDirectMess(session.apiUrl, session.token, channelId)
+            }
+            dmPinStorage.removeFromPinIfPresent(channelId)
+            removeDialogLocally(channelId, CHANNEL_TYPE_DM)
+        }
+    }
+
+    suspend fun setDialogMuted(channelId: Long, muteTimeSeconds: Int, active: Int): Result<Unit> =
+        withContext(ioDispatcher) {
+            val previousMuted = isDmMuted(channelId)
+            val previousNoti = synchronized(this@DialogsController) { dmNotificationSettings.get(channelId) }
+            val isMuted = isMutedFromSetMuteRequest(muteTimeSeconds, active)
+            patchDmNotificationSettingOptimistic(channelId, muteTimeSeconds, active)
+            patchMutedDmChannelId(channelId, isMuted)
+            updateDialogMuteState(channelId, isMuted)
+            getDialog(channelId)?.let { directMessageDao.upsert(it) }
+            val persisted = directMessageDao.getById(channelId)
+            logMute(
+                "setDialogMuted ch=$channelId muted=$isMuted " +
+                    "mem=${getDialog(channelId)?.isMute} db=${persisted?.isMute} set=${mutedDmChannelIds}",
+            )
+            runCatching {
+                sessionManager.withAutoRefresh { session ->
+                    api.setMuteChannel(
+                        session.apiUrl,
+                        session.token,
+                        channelId,
+                        clanId = 0L,
+                        muteTimeSeconds,
+                        active,
+                    )
+                }
+            }.onFailure {
+                synchronized(this@DialogsController) {
+                    if (previousNoti != null) {
+                        dmNotificationSettings.put(channelId, previousNoti)
+                    } else {
+                        dmNotificationSettings.remove(channelId)
+                    }
+                }
+                patchMutedDmChannelId(channelId, previousMuted)
+                updateDialogMuteState(channelId, previousMuted)
+                getDialog(channelId)?.let { directMessageDao.upsert(it) }
+            }
+        }
+
+    suspend fun leaveDmGroup(
+        channelId: Long,
+        channelType: Int,
+        currentUserId: Long,
+        deleteIfLastMember: Boolean,
+    ): Result<Unit> = withContext(ioDispatcher) {
+        runCatching {
+            sessionManager.withAutoRefresh { session ->
+                if (deleteIfLastMember) {
+                    api.deleteChannelDesc(session.apiUrl, session.token, 0L, channelId)
+                } else {
+                    api.removeChannelUsers(session.apiUrl, session.token, channelId, listOf(currentUserId))
+                }
+            }
+            dmPinStorage.removeFromPinIfPresent(channelId)
+            removeDialogLocally(channelId, channelType)
+        }
+    }
+
+    fun getGroupMemberCount(channelId: Long): Int = getParticipants(channelId).size
+
+    private fun updateDialogMuteState(channelId: Long, isMuted: Boolean) {
+        var updated: DirectMessage? = null
+        synchronized(this) {
+            val dm = dialogsDict[channelId] ?: return
+            if (dm.isMute == isMuted) return
+            val u = dm.copy(isMute = isMuted)
+            dialogsDict.put(channelId, u)
+            val idx = dialogs.indexOfFirst { it.channelId == channelId }
+            if (idx >= 0) dialogs[idx] = u
+            updated = u
+        }
+        updated?.let { row ->
+            appScope.launch(ioDispatcher) { directMessageDao.upsert(row) }
+            notificationCenter.postNotificationOnMainThread(NotificationCenter.dialogsNeedReload)
+        }
+    }
+
+    private fun removeDialogLocally(channelId: Long, channelType: Int) {
+        var removed = false
+        synchronized(this) {
+            val idx = dialogs.indexOfFirst { it.channelId == channelId }
+            if (idx >= 0) dialogs.removeAt(idx)
+            if (dialogsDict[channelId] != null) {
+                dialogsDict.remove(channelId)
+                removed = true
+            }
+            participantsByChannel.remove(channelId)
+            buzzStates.remove(channelId)
+            if (currentChannelId == channelId) currentChannelId = null
+        }
+        if (!removed) return
+        appScope.launch(ioDispatcher) {
+            directMessageDao.delete(channelId)
+            messageDao.deleteByChannel(channelId)
+        }
+        notificationCenter.postNotificationOnMainThread(NotificationCenter.closeChats, channelId, channelType)
+        notificationCenter.postNotificationOnMainThread(NotificationCenter.dialogsNeedReload)
     }
 
     private fun ChannelMessage.isEphemeralControlMessage(): Boolean {
@@ -978,7 +1186,10 @@ class DialogsController @Inject constructor(
             for (dm in list) {
                 val existing = dialogsDict[dm.channelId]
                 if (existing == null) {
-                    dialogsDict.put(dm.channelId, dm)
+                    dialogsDict.put(
+                        dm.channelId,
+                        dm.copy(isMute = resolveDmIsMuted(dm.channelId, dm.isMute)),
+                    )
                 } else {
                     val keepExistingIdentity = existing.otherUserId != 0L && dm.otherUserId == 0L
                     val merged = dm.copy(
@@ -1006,7 +1217,8 @@ class DialogsController @Inject constructor(
                         lastSentMessageId = maxOf(existing.lastSentMessageId, dm.lastSentMessageId),
                         lastSeenMessageTs = maxOf(existing.lastSeenMessageTs, dm.lastSeenMessageTs),
                         lastSentMessageTs = maxOf(existing.lastSentMessageTs, dm.lastSentMessageTs),
-                        unreadCount = mergeDmUnreadFromList(existing.unreadCount, dm)
+                        unreadCount = mergeDmUnreadFromList(existing.unreadCount, dm),
+                        isMute = resolveDmIsMuted(dm.channelId, dm.isMute, existing.isMute),
                     )
                     dialogsDict.put(dm.channelId, merged)
                 }
@@ -1193,6 +1405,122 @@ class DialogsController @Inject constructor(
         return true
     }
 
+    private fun syncDmMutedStateFromLocalCache(): Boolean {
+        val mutedIds = mutedDmChannelIdsForMerge()
+        var changed = false
+        var snapshot: List<DirectMessage>? = null
+        val changes = StringBuilder()
+        synchronized(this) {
+            for (i in 0 until dialogsDict.size()) {
+                val channelId = dialogsDict.keyAt(i)
+                val dm = dialogsDict.valueAt(i)
+                val isMuted = resolveDmIsMuted(channelId, channelId in mutedIds, dm.isMute)
+                if (dm.isMute == isMuted) continue
+                changed = true
+                changes.append("$channelId:$isMuted ")
+                val updated = dm.copy(isMute = isMuted)
+                dialogsDict.put(channelId, updated)
+                val idx = dialogs.indexOfFirst { it.channelId == channelId }
+                if (idx >= 0) dialogs[idx] = updated
+            }
+            if (changed) snapshot = ArrayList(dialogs)
+        }
+        if (changed) {
+            logMute("syncDmMutedState changed=[$changes] localIds=$mutedIds")
+        }
+        if (changed && snapshot != null) {
+            appScope.launch(ioDispatcher) { directMessageDao.upsertAll(snapshot) }
+        }
+        return changed
+    }
+
+    private fun mutedDmChannelIdsForMerge(): LinkedHashSet<Long> {
+        synchronized(this) {
+            mutedDmChannelIds?.let { return LinkedHashSet(it) }
+            return buildMutedSetFromDialogsLocked()
+        }
+    }
+
+    private fun buildMutedSetFromDialogsLocked(): LinkedHashSet<Long> {
+        val set = LinkedHashSet<Long>()
+        for (i in 0 until dialogsDict.size()) {
+            if (dialogsDict.valueAt(i).isMute) {
+                set.add(dialogsDict.keyAt(i))
+            }
+        }
+        if (set.isNotEmpty()) mutedDmChannelIds = set
+        return set
+    }
+
+    private fun seedMutedDmChannelIdsFromDialogs() {
+        synchronized(this) {
+            if (mutedDmChannelIds != null) return
+            buildMutedSetFromDialogsLocked()
+        }
+    }
+
+    private suspend fun ensureDialogsHydratedFromDb() {
+        dbHydrateMutex.withLock {
+            if (dbHydrated) return
+            val cached = withContext(ioDispatcher) { directMessageDao.getAll() }
+            if (cached.isNotEmpty()) {
+                synchronized(this@DialogsController) {
+                    if (dialogs.isEmpty()) {
+                        val sorted = cached.sortedByDescending { it.lastSentMessageTs }
+                        dialogs.addAll(sorted)
+                        for (dm in sorted) {
+                            dialogsDict.put(dm.channelId, dm)
+                        }
+                    } else {
+                        mergeDbRowsIntoMemory(cached)
+                    }
+                }
+                seedMutedDmChannelIdsFromDialogs()
+                logMute(
+                    "dbHydrate dialogs=${cached.size} dbMuted=${cached.count { it.isMute }} " +
+                        "ids=${cached.filter { it.isMute }.map { it.channelId }} " +
+                        "mutedSet=$mutedDmChannelIds",
+                )
+                dialogsLoaded = true
+                notificationCenter.postNotificationOnMainThread(NotificationCenter.dialogsNeedReload)
+            }
+            dbHydrated = true
+        }
+    }
+
+    private fun mergeDbRowsIntoMemory(cached: List<DirectMessage>) {
+        var added = false
+        for (dbRow in cached) {
+            val existing = dialogsDict[dbRow.channelId]
+            if (existing == null) {
+                val row = dbRow.copy(isMute = resolveDmIsMuted(dbRow.channelId, dbRow.isMute))
+                dialogsDict.put(dbRow.channelId, row)
+                dialogs.add(row)
+                added = true
+                continue
+            }
+            if (!dbRow.isMute || existing.isMute) continue
+            val updated = existing.copy(isMute = true)
+            dialogsDict.put(dbRow.channelId, updated)
+            val idx = dialogs.indexOfFirst { it.channelId == dbRow.channelId }
+            if (idx >= 0) dialogs[idx] = updated
+        }
+        if (added) {
+            dialogs.sortByDescending { it.lastSentMessageTs }
+        }
+    }
+
+    private fun patchMutedDmChannelId(channelId: Long, isMuted: Boolean) {
+        synchronized(this) {
+            var set = mutedDmChannelIds
+            if (set == null) {
+                set = LinkedHashSet()
+                mutedDmChannelIds = set
+            }
+            if (isMuted) set.add(channelId) else set.remove(channelId)
+        }
+    }
+
     private suspend fun syncDmBadgesWithApi(session: StoredSession): Boolean {
         val currentUserId = session.userId.toLongOrNull() ?: 0L
         return runCatching {
@@ -1201,23 +1529,6 @@ class DialogsController @Inject constructor(
         }.getOrElse { e ->
             Log.e(TAG, "syncDmBadgesWithApi failed", e)
             false
-        }
-    }
-
-    private suspend fun loadDialogsFromDb() {
-        val cached = withContext(ioDispatcher) { directMessageDao.getAll() }
-        if (cached.isNotEmpty()) {
-            synchronized(this) {
-                dialogs.clear()
-                dialogsDict.clear()
-                val sorted = cached.sortedByDescending { it.lastSentMessageTs }
-                dialogs.addAll(sorted)
-                for (dm in sorted) {
-                    dialogsDict.put(dm.channelId, dm)
-                }
-            }
-            dialogsLoaded = true
-            notificationCenter.postNotificationOnMainThread(NotificationCenter.dialogsNeedReload)
         }
     }
 
@@ -1242,6 +1553,68 @@ class DialogsController @Inject constructor(
             ?.toLongOrNull() ?: 0L
         socketEventDispatcher.userChannelAddedEvents.collect { event ->
             applyUserChannelAdded(event, currentUserId)
+        }
+    }
+
+    private suspend fun observeDmUnmuteEvents() {
+        socketEventDispatcher.unmuteEvents.collect { event ->
+            if (event.clanId != 0L) return@collect
+            if (event.channelId == 0L) return@collect
+            val channelId = event.channelId
+            patchDmNotificationSettingOptimistic(channelId, muteTimeSeconds = 0, active = SET_MUTE_ACTIVE_UNMUTE)
+            patchMutedDmChannelId(channelId, isMuted = false)
+            updateDialogMuteState(channelId, isMuted = false)
+        }
+    }
+
+    private suspend fun observeNotiUserChannel() {
+        socketEventDispatcher.notiUserChannelEvents.collect { noti ->
+            val channelId = noti.channelId
+            if (channelId == 0L) return@collect
+            applyDmNotificationSetting(channelId, noti)
+            logMute(
+                "notiUserChannel ch=$channelId muted=${isDmMutedFromNotificationSetting(noti)} " +
+                    "id=${noti.id} time=${noti.timeMuteSeconds} active=${noti.active}",
+            )
+        }
+    }
+
+    private fun applyDmNotificationSetting(channelId: Long, noti: NotificationUserChannel) {
+        val normalized = noti.toBuilder()
+            .setTimeMuteSeconds(normalizeDmMuteExpirySeconds(noti.timeMuteSeconds))
+            .build()
+        synchronized(this) {
+            dmNotificationSettings.put(channelId, normalized)
+        }
+        val isMuted = isDmMutedFromNotificationSetting(normalized)
+        patchMutedDmChannelId(channelId, isMuted)
+        if (getDialog(channelId) != null) {
+            updateDialogMuteState(channelId, isMuted)
+        }
+    }
+
+    private fun patchDmNotificationSettingOptimistic(channelId: Long, muteTimeSeconds: Int, active: Int) {
+        val isMuted = isMutedFromSetMuteRequest(muteTimeSeconds, active)
+        val storedMuteTime = when {
+            !isMuted -> 0
+            muteTimeSeconds == CHANNEL_MUTE_ACTIVE_INFINITY -> CHANNEL_MUTE_ACTIVE_INFINITY
+            muteTimeSeconds > 0 -> normalizeDmMuteExpirySeconds(muteTimeSeconds)
+            active == CHANNEL_MUTE_ACTIVE_INFINITY -> CHANNEL_MUTE_ACTIVE_INFINITY
+            else -> 0
+        }
+        val builder = synchronized(this) {
+            dmNotificationSettings.get(channelId)?.toBuilder()
+                ?: NotificationUserChannel.newBuilder().setChannelId(channelId)
+        }
+        builder.setActive(if (isMuted) SET_MUTE_ACTIVE_UNMUTE else NOTIFICATION_ACTIVE_ON)
+        builder.setTimeMuteSeconds(storedMuteTime)
+        if (isMuted) {
+            builder.setId(channelId)
+        } else {
+            builder.setId(NOTIFICATION_DEFAULT_SETTING_ID)
+        }
+        synchronized(this) {
+            dmNotificationSettings.put(channelId, builder.build())
         }
     }
 
@@ -1333,31 +1706,16 @@ class DialogsController @Inject constructor(
         val removedIds = event.userIdsList.toHashSet()
         if (removedIds.isEmpty()) return
         val removedSelf = currentUserId in removedIds
-        var changed = false
-        synchronized(this) {
-            if (removedSelf) {
-                val idx = dialogs.indexOfFirst { it.channelId == channelId }
-                if (idx >= 0) dialogs.removeAt(idx)
-                if (dialogsDict[channelId] != null) {
-                    dialogsDict.remove(channelId)
-                }
-                participantsByChannel.remove(channelId)
-                buzzStates.remove(channelId)
-                if (currentChannelId == channelId) currentChannelId = null
-                changed = true
-            } else {
-                changed = removeParticipants(channelId, removedIds)
-            }
+        if (removedSelf) {
+            dmPinStorage.removeFromPinIfPresent(channelId)
+            removeDialogLocally(channelId, event.channelType)
+            notificationCenter.postNotificationOnMainThread(NotificationCenter.navigateToMessagesTab)
+            return
+        }
+        val changed = synchronized(this) {
+            removeParticipants(channelId, removedIds)
         }
         if (!changed) return
-        if (removedSelf) {
-            appScope.launch(ioDispatcher) {
-                directMessageDao.delete(channelId)
-                messageDao.deleteByChannel(channelId)
-            }
-            notificationCenter.postNotificationOnMainThread(NotificationCenter.closeChats, channelId, event.channelType)
-            notificationCenter.postNotificationOnMainThread(NotificationCenter.navigateToMessagesTab)
-        }
         notificationCenter.postNotificationOnMainThread(NotificationCenter.dialogsNeedReload)
         notificationCenter.postNotificationOnMainThread(NotificationCenter.channelMembersDidLoad, channelId)
     }
