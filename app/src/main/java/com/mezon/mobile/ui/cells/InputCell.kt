@@ -157,6 +157,10 @@ class InputCell(context: Context, private val theme: ThemeColors) : LinearLayout
             editText.maxLines = 6
             editText.inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE
             editText.minHeight = LayoutHelper.dp(80)
+            editText.gravity = Gravity.TOP or LayoutHelper.getAbsoluteGravityStart()
+            (editText.layoutParams as FrameLayout.LayoutParams).gravity =
+                Gravity.TOP or LayoutHelper.getAbsoluteGravityStart()
+            inputContainer.minimumHeight = LayoutHelper.dp(80)
             charCountView.visibility = View.VISIBLE
             charCountView.text = "0/$maxChars"
         }

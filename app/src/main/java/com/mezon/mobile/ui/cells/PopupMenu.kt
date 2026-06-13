@@ -4,13 +4,15 @@ import android.content.Context
 import android.graphics.Canvas
 import android.graphics.PorterDuff
 import android.graphics.PorterDuffColorFilter
+import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.Drawable
+import android.graphics.drawable.GradientDrawable
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
+import android.view.ViewOutlineProvider
 import android.widget.FrameLayout
 import android.widget.LinearLayout
-import android.graphics.drawable.ColorDrawable
 import android.widget.PopupWindow
 import android.widget.ScrollView
 import androidx.annotation.DrawableRes
@@ -51,8 +53,7 @@ class PopupMenu(private val context: Context, private val theme: ThemeColors) {
     fun show(anchorView: View) {
         val container = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(theme.surface)
-            elevation = LayoutHelper.dpf(8f)
+            clipChildren = true
         }
 
         items.forEachIndexed { index, item ->
@@ -68,20 +69,38 @@ class PopupMenu(private val context: Context, private val theme: ThemeColors) {
         }
 
         val scrollView = ScrollView(context).apply {
+            isVerticalScrollBarEnabled = false
+            overScrollMode = View.OVER_SCROLL_NEVER
             addView(container, FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
             ))
         }
 
-        val menuWidth = LayoutHelper.dp(200)
-        popupWindow = PopupWindow(scrollView, menuWidth, ViewGroup.LayoutParams.WRAP_CONTENT, false).apply {
+        val root = FrameLayout(context).apply {
+            background = createMenuBackground()
+            clipToOutline = true
+            outlineProvider = ViewOutlineProvider.BACKGROUND
             elevation = LayoutHelper.dpf(8f)
+            addView(scrollView, FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ))
+        }
+
+        val menuWidth = LayoutHelper.dp(200)
+        popupWindow = PopupWindow(root, menuWidth, ViewGroup.LayoutParams.WRAP_CONTENT, false).apply {
             isOutsideTouchable = true
             isFocusable = false
             setBackgroundDrawable(ColorDrawable(0))
             showAsDropDown(anchorView, 0, 0, Gravity.END or Gravity.TOP)
         }
+    }
+
+    private fun createMenuBackground(): GradientDrawable = GradientDrawable().apply {
+        cornerRadius = MENU_CORNER_RADIUS
+        setColor(theme.surface)
+        setStroke(LayoutHelper.dp(1), theme.borderDim)
     }
 
     fun dismiss() {
@@ -94,7 +113,8 @@ class PopupMenu(private val context: Context, private val theme: ThemeColors) {
         private var menuItem: MenuItem? = null
         private var needDivider = false
         private val cellHeight = LayoutHelper.dp(44)
-        private val iconSize = LayoutHelper.dp(20)
+        private val iconSize = LayoutHelper.dp(16)
+        private val iconTextGap = LayoutHelper.dp(12)
 
         init {
             minimumHeight = cellHeight
@@ -141,7 +161,7 @@ class PopupMenu(private val context: Context, private val theme: ThemeColors) {
                 d.draw(canvas)
             }
 
-            val textX = if (item.icon != null) LayoutHelper.dp(16 + 20 + 12) else leftPad
+            val textX = if (item.icon != null) leftPad + iconSize + iconTextGap else leftPad
             val textY = cellHeight / 2f - (textPaint.descent() + textPaint.ascent()) / 2
             canvas.drawText(item.text, textX.toFloat(), textY, textPaint)
 
@@ -155,5 +175,9 @@ class PopupMenu(private val context: Context, private val theme: ThemeColors) {
                 )
             }
         }
+    }
+
+    companion object {
+        private val MENU_CORNER_RADIUS = LayoutHelper.dp(10f).toFloat()
     }
 }

@@ -80,6 +80,7 @@ class NotificationCenter(val currentAccount: Int) {
         val channelAppsDidLoad = nextId()
         val clanInfoUpdated = nextId()
         val clanBannerCropped = nextId()
+        val eventCoverCropped = nextId()
         val accountInfoLoaded = nextId()
         val blockedUsersLoaded = nextId()
         val friendsLoaded = nextId()
@@ -145,6 +146,7 @@ class NotificationCenter(val currentAccount: Int) {
         val topicsNeedReload = nextId()
         val attachmentUploadProgress = nextId()
         val attachmentUploadFinished = nextId()
+        val clanEventsDidLoad = nextId()
 
         const val UPDATE_MASK_NAME = 1
         const val UPDATE_MASK_AVATAR = 2

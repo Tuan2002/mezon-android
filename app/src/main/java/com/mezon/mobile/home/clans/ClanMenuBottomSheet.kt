@@ -36,6 +36,7 @@ class ClanMenuBottomSheet(
     private val onOpenInvite: Runnable,
     private val onMarkAsRead: Runnable,
     private val onCreateCategory: Runnable,
+    private val onCreateEvent: Runnable,
     private val onLeaveClan: Runnable,
     private val onDeleteClan: Runnable,
 ) : BottomSheet(context) {
@@ -205,7 +206,7 @@ class ClanMenuBottomSheet(
                         theme,
                         context.getString(R.string.clan_menu_create_event),
                         null,
-                        Runnable { showComingSoon() }
+                        onCreateEvent,
                     )
                 )
             ),

@@ -68,6 +68,12 @@ import com.mezon.mezon.api.banClanUsersRequest
 import com.mezon.mezon.api.leaveThreadRequest
 import com.mezon.mezon.api.createCategoryDescRequest
 import com.mezon.mezon.api.createClanDescRequest
+import com.mezon.mezon.api.createEventRequest
+import com.mezon.mezon.api.deleteEventRequest
+import com.mezon.mezon.api.EventManagement
+import com.mezon.mezon.api.listEventsRequest
+import com.mezon.mezon.api.updateEventRequest
+import com.mezon.mezon.api.userEventRequest
 import com.mezon.mezon.api.deleteClanDescRequest
 import com.mezon.mezon.api.getSystemMessage
 import com.mezon.mezon.api.notificationClan
@@ -2981,6 +2987,131 @@ class MezonApi @Inject constructor(
             ?.trim('"')
             ?.takeIf { it.isNotEmpty() }
             ?: throw RuntimeException("File part upload missing ETag")
+    }
+
+    suspend fun listEvents(
+        apiUrl: String,
+        token: String,
+        clanId: Long,
+    ): List<EventManagement> {
+        val request = listEventsRequest {
+            this.clanId = clanId
+        }
+        val bytes = rpc(apiUrl, token, "ListEvents", request.toByteArray())
+        return com.mezon.mezon.api.EventList.parseFrom(bytes).eventsList
+    }
+
+    suspend fun createEvent(
+        apiUrl: String,
+        token: String,
+        clanId: Long,
+        title: String,
+        description: String,
+        logo: String,
+        channelVoiceId: Long,
+        channelId: Long,
+        address: String,
+        startTimeSeconds: Int,
+        endTimeSeconds: Int,
+        repeatType: Int,
+        isPrivate: Boolean,
+        creatorId: Long,
+    ) {
+        val request = createEventRequest {
+            this.clanId = clanId
+            this.title = title
+            this.description = description
+            this.logo = logo
+            this.channelVoiceId = channelVoiceId
+            this.channelId = channelId
+            this.address = address
+            this.startTimeSeconds = startTimeSeconds
+            this.endTimeSeconds = endTimeSeconds
+            this.repeatType = repeatType
+            this.isPrivate = isPrivate
+            this.creatorId = creatorId
+        }
+        rpc(apiUrl, token, "CreateEvent", request.toByteArray())
+    }
+
+    suspend fun updateEvent(
+        apiUrl: String,
+        token: String,
+        eventId: Long,
+        clanId: Long,
+        title: String,
+        description: String,
+        logo: String? = null,
+        channelVoiceId: Long,
+        channelId: Long,
+        channelIdOld: Long,
+        address: String,
+        startTimeSeconds: Int,
+        endTimeSeconds: Int,
+        repeatType: Int,
+        creatorId: Long,
+    ) {
+        val request = updateEventRequest {
+            this.eventId = eventId
+            this.clanId = clanId
+            this.title = title
+            this.description = description
+            logo?.let { this.logo = it }
+            this.channelVoiceId = channelVoiceId
+            this.channelId = channelId
+            this.channelIdOld = channelIdOld
+            this.address = address
+            this.startTimeSeconds = startTimeSeconds
+            this.endTimeSeconds = endTimeSeconds
+            this.repeatType = repeatType
+            this.creatorId = creatorId
+        }
+        rpc(apiUrl, token, "UpdateEvent", request.toByteArray())
+    }
+
+    suspend fun deleteEvent(
+        apiUrl: String,
+        token: String,
+        eventId: Long,
+        clanId: Long,
+        creatorId: Long,
+        eventLabel: String,
+        channelId: Long,
+    ) {
+        val request = deleteEventRequest {
+            this.eventId = eventId
+            this.clanId = clanId
+            this.creatorId = creatorId
+            this.eventLabel = eventLabel
+            this.channelId = channelId
+        }
+        rpc(apiUrl, token, "DeleteEvent", request.toByteArray())
+    }
+
+    suspend fun addUserEvent(
+        apiUrl: String,
+        token: String,
+        clanId: Long,
+        eventId: Long,
+    ) {
+        val request = userEventRequest {
+            this.clanId = clanId
+            this.eventId = eventId
+        }
+        rpc(apiUrl, token, "AddUserEvent", request.toByteArray())
+    }
+
+    suspend fun deleteUserEvent(
+        apiUrl: String,
+        token: String,
+        clanId: Long,
+        eventId: Long,
+    ) {
+        val request = userEventRequest {
+            this.clanId = clanId
+            this.eventId = eventId
+        }
+        rpc(apiUrl, token, "DeleteUserEvent", request.toByteArray())
     }
 
 }
