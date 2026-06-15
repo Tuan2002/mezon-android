@@ -99,6 +99,7 @@ class CallController @Inject constructor(
     @Volatile private var suppressDuplicateOfferUntilElapsed: Long = 0L
     private var remoteVideoRevealRunnable: Runnable? = null
     @Volatile private var remoteCameraEverSignaled: Boolean = false
+    @Volatile private var connectedCancelCallPushed = false
 
     @Volatile private var activeCallLogMessageId: Long = 0L
     private var activeCallClanId: Long = 0L
@@ -142,6 +143,7 @@ class CallController @Inject constructor(
         activeCallChannelType = channelType
         activeCallIsPrivate = isChannelPrivate
         activeCallLogMessageId = 0L
+        connectedCancelCallPushed = false
 
         val callInfo = CallInfo(
             peerId = peerId,
@@ -692,6 +694,7 @@ class CallController @Inject constructor(
         }
 
         val prevInfo = snapInfo
+        connectedCancelCallPushed = false
 
         peerConnection?.dispose()
         peerConnection = null
@@ -1020,16 +1023,7 @@ class CallController @Inject constructor(
     private fun handleSdpInit() {
         val state = callState
         if (state is CallState.Connecting) {
-            val connectedTime = SystemClock.elapsedRealtime()
-            callState = CallState.Connected(state.callInfo, connectedTime)
-            callAudioManager?.stopTone()
-            sendMediaStatus()
-            scheduleRemoteVideoRevealRefreshIfNeeded()
-            notificationCenter.postNotificationOnMainThread(NotificationCenter.callStateChanged, callState)
-            try {
-                CallForegroundService.startConnected(appContext, state.callInfo.peerName, connectedTime)
-            } catch (_: Exception) {
-            }
+            transitionToConnected(state.callInfo)
         }
     }
 
@@ -1069,19 +1063,24 @@ class CallController @Inject constructor(
         val state = callState
         if (state is CallState.Connecting || state is CallState.Outgoing) {
             val callInfo = currentCallInfo() ?: return
-            val connectedTime = SystemClock.elapsedRealtime()
-            callState = CallState.Connected(callInfo, connectedTime)
-            cancelTimeout()
-            callAudioManager?.stopTone()
-
+            transitionToConnected(callInfo)
             sendSignaling(callInfo.peerId, callInfo.channelId, WebrtcSignalingType.SDP_INIT, "")
-            sendMediaStatus()
-            scheduleRemoteVideoRevealRefreshIfNeeded()
-            notificationCenter.postNotificationOnMainThread(NotificationCenter.callStateChanged, callState)
-            try {
-                CallForegroundService.startConnected(appContext, callInfo.peerName, connectedTime)
-            } catch (_: Exception) {
-            }
+        }
+    }
+
+    private fun transitionToConnected(callInfo: CallInfo) {
+        if (callState is CallState.Connected) return
+        val connectedTime = SystemClock.elapsedRealtime()
+        callState = CallState.Connected(callInfo, connectedTime)
+        cancelTimeout()
+        callAudioManager?.stopTone()
+        sendMediaStatus()
+        scheduleRemoteVideoRevealRefreshIfNeeded()
+        pushCancelCallOnConnected(callInfo)
+        notificationCenter.postNotificationOnMainThread(NotificationCenter.callStateChanged, callState)
+        try {
+            CallForegroundService.startConnected(appContext, callInfo.peerName, connectedTime)
+        } catch (_: Exception) {
         }
     }
 
@@ -1169,37 +1168,70 @@ class CallController @Inject constructor(
         timeoutJob = null
     }
 
-    private fun pushCancelCallToCallee(callInfo: CallInfo) {
-        val callerName = userController.displayName.ifEmpty { userController.username }
-        val callerAvatar = userController.avatarUrl.orEmpty()
-        val fcmPayload = JSONObject().apply {
+    private fun originalCallerId(callInfo: CallInfo): Long =
+        if (callInfo.isInitiator) userController.userId else callInfo.peerId
+
+    private fun buildCancelCallPayload(callInfo: CallInfo, isConnected: Boolean): String {
+        val callerId = originalCallerId(callInfo)
+        val callerName: String
+        val callerAvatar: String
+        if (callInfo.isInitiator) {
+            callerName = userController.displayName.ifEmpty { userController.username }
+            callerAvatar = userController.avatarUrl.orEmpty()
+        } else {
+            callerName = callInfo.peerName
+            callerAvatar = callInfo.peerAvatar.orEmpty()
+        }
+        return JSONObject().apply {
             put("offer", "CANCEL_CALL")
-            put("isConnected", false)
+            put("isConnected", isConnected)
             put("isVideo", callInfo.isVideo)
             put("callerName", callerName)
             put("callerAvatar", callerAvatar)
-            put("callerId", userController.userIdStr)
+            put("callerId", callerId.toString())
             put("channelId", callInfo.channelId.toString())
             put("sentAt", System.currentTimeMillis().toString())
         }.toString()
+    }
+
+    private fun pushCancelCallFcm(callInfo: CallInfo, isConnected: Boolean, receiverId: Long) {
+        if (receiverId == 0L) return
+        val fcmPayload = buildCancelCallPayload(callInfo, isConnected)
+        val protoCallerId = originalCallerId(callInfo)
         appScope.launch(ioDispatcher) {
             try {
                 if (socket.connectionState.value != ConnectionState.CONNECTED) {
                     val connected = socket.awaitConnected(15_000L)
                     if (!connected) {
-                        Log.w(TAG, "pushCancelCallToCallee: socket not connected")
+                        Log.w(TAG, "pushCancelCallFcm: socket not connected")
                         return@launch
                     }
                 }
                 socket.makeCallPush(
-                    receiverId = callInfo.peerId,
+                    receiverId = receiverId,
                     jsonData = fcmPayload,
                     channelId = callInfo.channelId,
-                    callerId = userController.userId
+                    callerId = protoCallerId
                 )
             } catch (e: Exception) {
-                Log.e(TAG, "pushCancelCallToCallee failed", e)
+                Log.e(TAG, "pushCancelCallFcm failed", e)
             }
+        }
+    }
+
+    private fun pushCancelCallToCallee(callInfo: CallInfo) {
+        pushCancelCallFcm(callInfo, isConnected = false, receiverId = callInfo.peerId)
+    }
+
+    private fun pushCancelCallOnConnected(callInfo: CallInfo) {
+        if (connectedCancelCallPushed) return
+        connectedCancelCallPushed = true
+        val selfId = userController.userId
+        if (selfId != 0L) {
+            pushCancelCallFcm(callInfo, isConnected = true, receiverId = selfId)
+        }
+        if (callInfo.peerId != 0L && callInfo.peerId != selfId) {
+            pushCancelCallFcm(callInfo, isConnected = true, receiverId = callInfo.peerId)
         }
     }
 
