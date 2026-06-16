@@ -109,6 +109,14 @@ import kotlin.math.max
 class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCell(context) {
     private val embedMessage = EmbedMessageRenderer(this, { theme }).also {
         it.onAfterDraw = { scheduleEmbedInteractiveSync() }
+        it.onLayoutsRebuilt = {
+            messageEntity?.let { m ->
+                measuredCellHeight = computeHeight(m)
+                requestLayout()
+                invalidate()
+                scheduleEmbedInteractiveSync()
+            }
+        }
     }
     private val embedInputSlots = mutableListOf<EmbedInputSlot>()
     private val embedSelectSlots = mutableListOf<EmbedSelectSlot>()
@@ -627,9 +635,8 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
 
         if ((mask and NotificationCenter.UPDATE_MASK_MESSAGE_TEXT) != 0) {
             val prevRaw = messageEntity?.content
-            val newParsed = parseContentText(msg.content)
-            if (newParsed != parsedContent || msg.content != prevRaw) {
-                parsedContent = newParsed
+            if (msg.content != prevRaw) {
+                parsedContent = parseContentText(msg.content)
                 hasExplicitTextBody = messageHasExplicitTextBody(msg.content)
                 rebuildLayout = true
             }
@@ -1326,6 +1333,14 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
         return yOff + callLogCardHeight
     }
 
+    private fun applyEmbedLayouts(textWidth: Int) {
+        if (embedMessage.isEmbedAnimationRunning()) {
+            embedMessage.scheduleRebuildLayoutsAfterAnimation(textWidth, context)
+        } else {
+            embedMessage.rebuildLayouts(textWidth, context)
+        }
+    }
+
     private fun buildLayouts(msg: MessageEntity) {
         buildLayouts(msg, currentWidth())
     }
@@ -1490,15 +1505,25 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
                 .setEllipsize(TextUtils.TruncateAt.END)
                 .build()
             val truncDesc = if (ogp.description.length > OGP_MAX_CHARS) ogp.description.substring(0, OGP_MAX_CHARS) else ogp.description
-            ogpDescLayout = StaticLayout.Builder.obtain(truncDesc, 0, truncDesc.length, ogpDescPaint, ogpTextW)
-                .setMaxLines(2)
-                .setEllipsize(TextUtils.TruncateAt.END)
-                .build()
-            ogpImageW = ogpTextW
-            ogpImageH = min((ogpImageW * 0.6f).toInt(), OGP_IMAGE_MAX_H).coerceAtLeast(1)
-            ogpImage.setRoundRadius(0)
-            val proxiedImg = createImgproxyUrl(ogp.image, ogpImageW, ogpImageH, "fill")
-            ogpImage.setImage(proxiedImg, null, context)
+            ogpDescLayout = if (truncDesc.isBlank()) {
+                null
+            } else {
+                StaticLayout.Builder.obtain(truncDesc, 0, truncDesc.length, ogpDescPaint, ogpTextW)
+                    .setMaxLines(2)
+                    .setEllipsize(TextUtils.TruncateAt.END)
+                    .build()
+            }
+            if (ogp.image.isBlank()) {
+                ogpImageW = 0
+                ogpImageH = 0
+                ogpImage.setImage(null, null, context)
+            } else {
+                ogpImageW = ogpTextW
+                ogpImageH = min((ogpImageW * 0.6f).toInt(), OGP_IMAGE_MAX_H).coerceAtLeast(1)
+                ogpImage.setRoundRadius(0)
+                val proxiedImg = createImgproxyUrl(ogp.image, ogpImageW, ogpImageH, "fill")
+                ogpImage.setImage(proxiedImg, null, context)
+            }
         } else {
             ogpTitleLayout = null
             ogpDescLayout = null
@@ -1511,7 +1536,7 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
             hasEmbedContent = embedMessage.setDataFromContent(msg.content)
             if (hasEmbedContent) {
                 resetEmbedInteractiveSync()
-                embedMessage.rebuildLayouts(textWidth, context)
+                applyEmbedLayouts(textWidth)
             } else {
                 hideEmbedInteractiveViews()
             }

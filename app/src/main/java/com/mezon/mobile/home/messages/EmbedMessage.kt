@@ -164,6 +164,7 @@ class EmbedMessageRenderer(
     private val httpClient: OkHttpClient = EmbedAnimationHttp.client(),
 ) {
     var onAfterDraw: (() -> Unit)? = null
+    var onLayoutsRebuilt: (() -> Unit)? = null
     private var embedSourceList: List<EmbedData> = emptyList()
     private var laidOutCards: List<LaidOutEmbedCard> = emptyList()
     private var actionRows: List<EmbedActionRow> = emptyList()
@@ -204,6 +205,45 @@ class EmbedMessageRenderer(
     val lastEmbedInteractiveGeometries: List<EmbedInteractiveGeometry> get() = embedInteractiveGeometries
 
     private var animationRuntimeGrid: List<List<EmbedAnimationRuntime>> = emptyList()
+    private var deferredRebuildTextWidth = 0
+    private var deferredRebuildPending = false
+
+    fun isEmbedAnimationRunning(): Boolean =
+        animationRuntimeGrid.any { row -> row.any { it.isAnimating() } }
+
+    fun scheduleRebuildLayoutsAfterAnimation(textWidth: Int, context: Context) {
+        deferredRebuildTextWidth = textWidth
+        if (deferredRebuildPending) return
+        if (!isEmbedAnimationRunning()) {
+            rebuildLayouts(textWidth, context)
+            return
+        }
+        deferredRebuildPending = true
+        for (row in animationRuntimeGrid) {
+            for (runtime in row) {
+                if (!runtime.isAnimating()) continue
+                runtime.onAnimationFinished = {
+                    tryApplyDeferredRebuild(context)
+                }
+            }
+        }
+    }
+
+    private fun tryApplyDeferredRebuild(context: Context) {
+        if (!deferredRebuildPending || isEmbedAnimationRunning()) return
+        deferredRebuildPending = false
+        rebuildLayouts(deferredRebuildTextWidth, context)
+    }
+
+    private fun clearDeferredRebuild() {
+        deferredRebuildPending = false
+        deferredRebuildTextWidth = 0
+        for (row in animationRuntimeGrid) {
+            for (runtime in row) {
+                runtime.onAnimationFinished = null
+            }
+        }
+    }
 
     private val radioOptionHeightCache = HashMap<Long, Int>()
 
@@ -280,6 +320,7 @@ class EmbedMessageRenderer(
         embedSourceList = emptyList()
         laidOutCards = emptyList()
         actionRows = emptyList()
+        clearDeferredRebuild()
         disposeAnimationGrid()
         radioOptionHeightCache.clear()
         syncCardImageBundles(0)
@@ -303,6 +344,7 @@ class EmbedMessageRenderer(
     }
 
     private fun disposeAnimationGrid() {
+        clearDeferredRebuild()
         for (row in animationRuntimeGrid) {
             for (r in row) r.dispose()
         }
@@ -626,6 +668,7 @@ class EmbedMessageRenderer(
     }
 
     fun rebuildLayouts(textWidth: Int, context: Context) {
+        clearDeferredRebuild()
         disposeAnimationGrid()
         radioOptionHeightCache.clear()
         laidOutCards = emptyList()
@@ -643,6 +686,7 @@ class EmbedMessageRenderer(
         BUTTON_LABEL_PAINT.textSize = LayoutHelper.dpf(14f)
         BUTTON_LABEL_PAINT.color = 0xFFFFFFFF.toInt()
         rebuildButtonLayouts(textWidth)
+        onLayoutsRebuilt?.invoke()
     }
 
     private fun rebuildAnimationGrid(context: Context) {

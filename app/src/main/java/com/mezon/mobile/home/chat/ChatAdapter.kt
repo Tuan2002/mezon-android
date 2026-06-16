@@ -137,6 +137,15 @@ class ChatAdapter(
     }
 
     fun notifyMessageInsertedAt(modelIndex: Int) {
+        if (modelIndex in messages.indices) {
+            combinedCache.remove(messages[modelIndex].id)
+        }
+        if (modelIndex + 1 in messages.indices) {
+            combinedCache.remove(messages[modelIndex + 1].id)
+        }
+        if (modelIndex - 1 in messages.indices) {
+            combinedCache.remove(messages[modelIndex - 1].id)
+        }
         val prevMessagesStartRow = messagesStartRow
         val prevRowCount = rowCount
         updateRowsInternal()
@@ -147,6 +156,9 @@ class ChatAdapter(
             notifyDataSetChanged()
         } else {
             notifyItemInserted(messagesStartRow + modelIndex)
+            if (modelIndex - 1 in messages.indices) {
+                notifyItemChanged(messagesStartRow + modelIndex - 1)
+            }
         }
     }
 
@@ -174,7 +186,18 @@ class ChatAdapter(
         if (modelIndex - 1 in messages.indices) {
             combinedCache.remove(messages[modelIndex - 1].id)
         }
+        if (modelIndex + 1 in messages.indices) {
+            combinedCache.remove(messages[modelIndex + 1].id)
+        }
         notifyItemChanged(messagesStartRow + modelIndex)
+        if (modelIndex - 1 in messages.indices) {
+            notifyItemChanged(messagesStartRow + modelIndex - 1)
+        }
+    }
+
+    fun isCombinedAt(modelIndex: Int): Boolean {
+        if (modelIndex !in messages.indices) return false
+        return cachedIsCombined(modelIndex)
     }
 
     fun notifyWelcomeCellChanged() {
@@ -388,8 +411,8 @@ class ChatAdapter(
         if (prev.isPollMessage) return false
         if (current.senderId != prev.senderId) return false
         if (prev.isSystemMessage || current.isSystemMessage) return false
-        val diff = current.timestampSeconds - prev.timestampSeconds
-        return diff in 0..ChatMessageCell.COMBINE_TIME_THRESHOLD
+        val diff = kotlin.math.abs(current.timestampSeconds - prev.timestampSeconds)
+        return diff <= ChatMessageCell.COMBINE_TIME_THRESHOLD
     }
 
     var channelType = 0
