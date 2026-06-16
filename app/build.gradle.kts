@@ -4,6 +4,7 @@ import org.gradle.api.GradleException
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.serialization)
+    alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.kotlin.ksp)
     alias(libs.plugins.hilt.android)
     alias(libs.plugins.google.services)
@@ -163,6 +164,7 @@ android {
     }
     buildFeatures {
         buildConfig = true
+        compose = true
     }
     packaging {
         resources {
@@ -257,6 +259,15 @@ dependencies {
     implementation(libs.firebase.messaging)
 
     implementation(libs.sentry.android)
+
+    implementation(platform(libs.androidx.compose.bom))
+    implementation(libs.androidx.compose.ui)
+    implementation("androidx.compose.foundation:foundation")
+    implementation(libs.androidx.compose.material3)
+    implementation(libs.androidx.activity.compose)
+    implementation(libs.androidx.lifecycle.runtime.compose)
+    implementation(libs.composequill)
+    implementation(libs.richeditor.compose)
 
     // Test
     testImplementation(libs.junit)

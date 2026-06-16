@@ -160,6 +160,9 @@ class PermissionPolicy @Inject constructor(
             checkPermission(MANAGE_CHANNEL, channelId, clanId)
     }
 
+    fun canCreateCanvas(channelId: Long, clanId: Long): Boolean =
+        canCreateThreadFromThreadList(channelId, clanId)
+
     fun canOpenChannelSettings(channelId: Long, clanId: Long, channelType: Int, parentId: Long = 0L): Boolean {
         if (channelId == 0L || clanId == 0L) return false
         val selected = clansController.selectedClanId.value

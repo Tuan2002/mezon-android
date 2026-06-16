@@ -42,6 +42,13 @@ import com.mezon.mezon.api.FriendList
 import com.mezon.mezon.api.NotificationList
 import com.mezon.mezon.api.SearchMessageResponse
 import com.mezon.mezon.api.ChannelAttachmentList
+import com.mezon.mezon.api.ChannelCanvasDetailResponse
+import com.mezon.mezon.api.ChannelCanvasListResponse
+import com.mezon.mezon.api.EditChannelCanvasResponse
+import com.mezon.mezon.api.channelCanvasDetailRequest
+import com.mezon.mezon.api.channelCanvasListRequest
+import com.mezon.mezon.api.deleteChannelCanvasRequest
+import com.mezon.mezon.api.editChannelCanvasRequest
 import com.mezon.mezon.api.UploadAttachment
 import com.mezon.mezon.api.MultipartUploadAttachment
 import com.mezon.mezon.api.listChannelAttachmentRequest
@@ -2018,6 +2025,79 @@ class MezonApi @Inject constructor(
         }
         val bytes = rpc(apiUrl, token, "ListChannelAttachment", request.toByteArray())
         return ChannelAttachmentList.parseFrom(bytes)
+    }
+
+    suspend fun getChannelCanvasList(
+        apiUrl: String,
+        token: String,
+        clanId: Long,
+        channelId: Long,
+        limit: Int = 50,
+        page: Int = 0
+    ): ChannelCanvasListResponse {
+        val request = channelCanvasListRequest {
+            this.clanId = clanId
+            this.channelId = channelId
+            this.limit = limit.coerceIn(1, 100)
+            this.page = page
+        }
+        val bytes = rpc(apiUrl, token, "GetChannelCanvasList", request.toByteArray())
+        return ChannelCanvasListResponse.parseFrom(bytes)
+    }
+
+    suspend fun getChannelCanvasDetail(
+        apiUrl: String,
+        token: String,
+        canvasId: Long,
+        clanId: Long,
+        channelId: Long
+    ): ChannelCanvasDetailResponse {
+        val request = channelCanvasDetailRequest {
+            this.id = canvasId
+            this.clanId = clanId
+            this.channelId = channelId
+        }
+        val bytes = rpc(apiUrl, token, "GetChannelCanvasDetail", request.toByteArray())
+        return ChannelCanvasDetailResponse.parseFrom(bytes)
+    }
+
+    suspend fun editChannelCanvas(
+        apiUrl: String,
+        token: String,
+        id: Long,
+        channelId: Long,
+        clanId: Long,
+        title: String,
+        content: String,
+        isDefault: Boolean = false,
+        status: Int = 2
+    ): EditChannelCanvasResponse {
+        val request = editChannelCanvasRequest {
+            if (id != 0L) this.id = id
+            this.channelId = channelId
+            this.clanId = clanId
+            this.title = title
+            this.content = content
+            this.isDefault = isDefault
+            this.status = status
+        }
+        val bytes = rpc(apiUrl, token, "EditChannelCanvases", request.toByteArray())
+        return EditChannelCanvasResponse.parseFrom(bytes)
+    }
+
+    suspend fun deleteChannelCanvas(
+        apiUrl: String,
+        token: String,
+        clanId: Long,
+        channelId: Long,
+        canvasId: Long
+    ) {
+        val request = deleteChannelCanvasRequest {
+            this.clanId = clanId
+            this.channelId = channelId
+            this.canvasId = canvasId
+        }
+        rpc(apiUrl, token, "DeleteChannelCanvas", request.toByteArray())
     }
 
     suspend fun listUserClansByUserId(
