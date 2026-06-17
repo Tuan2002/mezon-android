@@ -69,6 +69,7 @@ class ChannelCanvasFragment : BaseFragment() {
     private var lastRenderedContent: String? = null
     private var documentShell: String? = null
     private var documentBodyOffset = 0
+    private var cachedDocumentThemeKey = 0
 
     override fun onFragmentCreate(): Boolean {
         super.onFragmentCreate()
@@ -79,11 +80,13 @@ class ChannelCanvasFragment : BaseFragment() {
         initialTitle = arguments?.getString(ARG_INITIAL_TITLE).orEmpty()
 
         observe(NotificationCenter.channelCanvasDetailDidLoad) { _, _, args ->
+            if (isPaused) return@observe
             val ch = args.firstOrNull() as? Long ?: return@observe
             val id = args.getOrNull(1) as? Long ?: return@observe
             if (ch == channelId && id == canvasId) applyLoadedCanvas()
         }
         observe(NotificationCenter.channelCanvasDetailLoadError) { _, _, args ->
+            if (isPaused) return@observe
             val ch = args.firstOrNull() as? Long ?: return@observe
             val id = args.getOrNull(1) as? Long ?: return@observe
             if (ch == channelId && id == canvasId) showLoadError()
@@ -168,6 +171,7 @@ class ChannelCanvasFragment : BaseFragment() {
         renderJob?.cancel()
         renderJob = null
         documentShell = null
+        cachedDocumentThemeKey = 0
         webView?.apply {
             stopLoading()
             (parent as? ViewGroup)?.removeView(this)
@@ -256,7 +260,8 @@ class ChannelCanvasFragment : BaseFragment() {
         linkColor: String,
         codeBackground: String,
     ): String {
-        val shell = documentShell ?: buildDocumentShell(
+        val themeKey = documentThemeKey(textColor, backgroundColor, linkColor, codeBackground)
+        val shell = documentShell?.takeIf { cachedDocumentThemeKey == themeKey } ?: buildDocumentShell(
             textColor = textColor,
             backgroundColor = backgroundColor,
             linkColor = linkColor,
@@ -264,12 +269,25 @@ class ChannelCanvasFragment : BaseFragment() {
         ).also {
             documentShell = it
             documentBodyOffset = it.indexOf(BODY_MARKER)
+            cachedDocumentThemeKey = themeKey
         }
         return buildString(shell.length + bodyHtml.length) {
             append(shell, 0, documentBodyOffset)
             append(bodyHtml)
             append(shell, documentBodyOffset + BODY_MARKER.length, shell.length)
         }
+    }
+
+    private fun documentThemeKey(
+        textColor: String,
+        backgroundColor: String,
+        linkColor: String,
+        codeBackground: String,
+    ): Int {
+        return textColor.hashCode() xor
+            backgroundColor.hashCode() xor
+            linkColor.hashCode() xor
+            codeBackground.hashCode()
     }
 
     private fun buildDocumentShell(

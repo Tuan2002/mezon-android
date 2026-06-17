@@ -246,7 +246,7 @@ class ChannelInfoFragment : BaseFragment() {
         observe(NotificationCenter.channelCanvasesLoadError) { _, _, args ->
             if (isPaused) return@observe
             val ch = args.firstOrNull() as? Long ?: return@observe
-            if (ch == channelId) canvasTab?.onRemoteCanvasesLoaded(ch)
+            if (ch == channelId) canvasTab?.onRemoteCanvasesLoadError(ch)
         }
 
         triggerMemberLoad()

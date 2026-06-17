@@ -200,25 +200,50 @@ private object CanvasHtmlSanitizer {
         """\s(on\w+)\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)""",
         RegexOption.IGNORE_CASE
     )
+    private val URL_ATTR = Regex(
+        """(?i)\s(href|src)\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)"""
+    )
 
     private const val MAX_SANITIZE_PASSES = 3
 
     fun sanitizeBody(html: String): String {
         if (!html.contains('<', ignoreCase = true)) return html
-        if (!DANGEROUS_VOID_TAG.containsMatchIn(html) &&
-            !DANGEROUS_BLOCK_TAG.containsMatchIn(html) &&
-            !EVENT_ATTR.containsMatchIn(html)
-        ) {
-            return html
-        }
         var result = html
-        repeat(MAX_SANITIZE_PASSES) {
-            val stripped = DANGEROUS_VOID_TAG.replace(DANGEROUS_BLOCK_TAG.replace(result, ""), "")
-            val next = EVENT_ATTR.replace(stripped, "")
-            if (next == result) return result
-            result = next
+        if (DANGEROUS_VOID_TAG.containsMatchIn(html) ||
+            DANGEROUS_BLOCK_TAG.containsMatchIn(html) ||
+            EVENT_ATTR.containsMatchIn(html)
+        ) {
+            for (pass in 0 until MAX_SANITIZE_PASSES) {
+                val stripped = DANGEROUS_VOID_TAG.replace(DANGEROUS_BLOCK_TAG.replace(result, ""), "")
+                val next = EVENT_ATTR.replace(stripped, "")
+                if (next == result) break
+                result = next
+            }
+        }
+        if (result.contains("href", ignoreCase = true) || result.contains("src", ignoreCase = true)) {
+            result = sanitizeUrlAttributes(result)
         }
         return result
+    }
+
+    private fun sanitizeUrlAttributes(html: String): String {
+        return URL_ATTR.replace(html) { match ->
+            val attrName = match.groupValues[1].lowercase()
+            val rawValue = unquoteAttrValue(match.groupValues[2])
+            val safe = safeUrl(rawValue)
+            if (safe != null) " $attrName=\"$safe\"" else ""
+        }
+    }
+
+    private fun unquoteAttrValue(value: String): String {
+        val trimmed = value.trim()
+        if (trimmed.length >= 2) {
+            val quote = trimmed.first()
+            if ((quote == '"' || quote == '\'') && trimmed.last() == quote) {
+                return trimmed.substring(1, trimmed.length - 1)
+            }
+        }
+        return trimmed
     }
 
     fun isAllowedUrl(url: String): Boolean {

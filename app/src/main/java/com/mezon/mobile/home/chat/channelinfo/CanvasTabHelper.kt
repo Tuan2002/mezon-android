@@ -21,6 +21,7 @@ import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.TextView
 import androidx.recyclerview.widget.LinearLayoutManager
+import androidx.recyclerview.widget.RecyclerView
 import com.mezon.mobile.BuildConfig
 import com.mezon.mobile.R
 import com.mezon.mobile.core.BaseFragment
@@ -61,6 +62,9 @@ class CanvasTabHelper(
     private var lastRefreshRevision = -1
     private var lastRefreshSearch = ""
     private var lastRefreshFetching = false
+    private var lastRefreshFailed = false
+    private var lastRefreshPaging = false
+    private var emptyLabel: TextView? = null
 
     override fun buildView(context: Context): View {
         val root = FrameLayout(context)
@@ -174,6 +178,24 @@ class CanvasTabHelper(
             adapter = this@CanvasTabHelper.adapter
             clipToPadding = false
             setPadding(0, 0, 0, LayoutHelper.dp(65f))
+            addOnScrollListener(object : RecyclerView.OnScrollListener() {
+                override fun onScrollStateChanged(recyclerView: RecyclerView, newState: Int) {
+                    if (newState == RecyclerView.SCROLL_STATE_IDLE) {
+                        tryLoadMore()
+                    }
+                }
+
+                override fun onScrolled(recyclerView: RecyclerView, dx: Int, dy: Int) {
+                    if (dy <= 0) return
+                    val lm = recyclerView.layoutManager as? LinearLayoutManager ?: return
+                    val total = recyclerView.adapter?.itemCount ?: return
+                    if (total == 0) return
+                    val last = lm.findLastVisibleItemPosition()
+                    if (last >= total - 3) {
+                        tryLoadMore()
+                    }
+                }
+            })
         }
         root.addView(
             recyclerView,
@@ -200,6 +222,13 @@ class CanvasTabHelper(
 
     fun onRemoteCanvasesLoaded(ch: Long) {
         if (ch != channelId) return
+        lastRefreshRevision = -1
+        refreshListUi()
+    }
+
+    fun onRemoteCanvasesLoadError(ch: Long) {
+        if (ch != channelId) return
+        lastRefreshRevision = -1
         refreshListUi()
     }
 
@@ -212,20 +241,31 @@ class CanvasTabHelper(
 
     private fun refreshListUi() {
         val revision = channelCanvasController.getCanvasesRevision(channelId)
-        val fetching = channelCanvasController.isFetching(channelId)
+        val initialLoading = channelCanvasController.isInitialLoading(channelId)
+        val fetching = channelCanvasController.isFetching(channelId) || initialLoading
+        val paging = channelCanvasController.isPagingLoading(channelId)
+        val failed = channelCanvasController.hasLoadFailed(channelId)
         if (revision == lastRefreshRevision &&
             searchText == lastRefreshSearch &&
-            fetching == lastRefreshFetching
+            fetching == lastRefreshFetching &&
+            failed == lastRefreshFailed &&
+            paging == lastRefreshPaging
         ) {
             return
         }
         lastRefreshRevision = revision
         lastRefreshSearch = searchText
         lastRefreshFetching = fetching
+        lastRefreshFailed = failed
+        lastRefreshPaging = paging
 
         val canvases = channelCanvasController.getCanvases(channelId)
         val filtered = filterCanvases(canvases, searchText)
-        adapter?.setItems(filtered)
+        val showFooter = paging &&
+            searchText.isEmpty() &&
+            channelCanvasController.hasMoreCanvases(channelId) &&
+            filtered.isNotEmpty()
+        adapter?.setItems(filtered, showLoadingFooter = showFooter)
         val showLoading = fetching && filtered.isEmpty()
         loadingView?.visibility = if (showLoading) View.VISIBLE else View.GONE
         if (filtered.isNotEmpty()) {
@@ -234,7 +274,25 @@ class CanvasTabHelper(
             return
         }
         recyclerView?.visibility = View.GONE
-        emptyView?.visibility = if (!fetching) View.VISIBLE else View.GONE
+        if (!fetching) {
+            emptyLabel?.text = if (failed) {
+                getString(R.string.channel_canvas_load_error)
+            } else {
+                getString(R.string.channel_canvas_empty)
+            }
+            emptyView?.visibility = View.VISIBLE
+        } else {
+            emptyView?.visibility = View.GONE
+        }
+    }
+
+    private fun tryLoadMore() {
+        if (searchText.isNotEmpty()) return
+        if (!channelCanvasController.hasMoreCanvases(channelId)) return
+        if (channelCanvasController.isPagingLoading(channelId)) return
+        if (channelCanvasController.isInitialLoading(channelId)) return
+        if (channelCanvasController.isFetching(channelId)) return
+        channelCanvasController.loadMoreChannelCanvases(channelId)
     }
 
     private fun filterCanvases(items: List<ChannelCanvasData>, query: String): List<ChannelCanvasData> {
@@ -285,6 +343,7 @@ class CanvasTabHelper(
             setTextSize(TypedValue.COMPLEX_UNIT_DIP, 15f)
             gravity = Gravity.CENTER
         }
+        emptyLabel = label
         container.addView(
             label,
             LayoutHelper.createLinear(
