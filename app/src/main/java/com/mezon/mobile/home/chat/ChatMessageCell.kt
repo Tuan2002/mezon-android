@@ -356,6 +356,7 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
     private var reactionChipBoundsCount: Int = 0
     private var reactionIsMyFlags: BooleanArray = BooleanArray(0)
     private var reactionRowHeight = 0
+    private var reactionRowContentWidth = 0f
     private val reactionChipRect = RectF()
     private var reactionEmojiBitmaps: Array<android.graphics.Bitmap?> = emptyArray()
     private var reactionEmojiCancellables: Array<MezonImageLoader.Cancellable?> = emptyArray()
@@ -733,8 +734,14 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
             val m = newMsg ?: messageEntity ?: return false
             if (newMsg != null) messageEntity = newMsg
             val oldReactionH = reactionRowHeight
-            buildReactionLayouts(m, cachedInnerWidth)
-            if (oldReactionH != reactionRowHeight) {
+            val oldInnerW = cachedInnerWidth
+            val reactionMaxW = if (drawPhotoImage) photoWidth else maxBubbleWidth()
+            buildReactionLayouts(m, reactionMaxW)
+            if (reactionRowContentWidth > 0f) {
+                cachedInnerWidth = maxOf(cachedInnerWidth, reactionRowContentWidth.toInt())
+                    .coerceAtMost(reactionMaxW)
+            }
+            if (oldReactionH != reactionRowHeight || oldInnerW != cachedInnerWidth) {
                 measuredCellHeight = computeHeight(m)
                 requestLayout()
             }
@@ -1590,7 +1597,8 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
             maxLineWidth(it) + EphemeralMessageUi.indicatorIconSize() + EphemeralMessageUi.INDICATOR_ICON_GAP
         } ?: 0f
 
-        buildReactionLayouts(msg, textWidth)
+        val reactionLayoutMaxW = if (drawPhotoImage) photoWidth else maxBubbleWidth(width)
+        buildReactionLayouts(msg, reactionLayoutMaxW)
 
         if (msg.isPollMessage && pollParsed != null) {
             val st = pollBridge?.getLocalState(msg.id) ?: PollLocalState()
@@ -1610,7 +1618,10 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
         } else if (hasCodeFence) {
             bubbleMaxW
         } else {
-            val allW = maxOf(cachedSenderW, cachedContentW, cachedTimeW, replyW, ogpW, cachedForwardW, fileW, audioW, cachedEphW, embedW, inviteW, shareContactW)
+            val allW = maxOf(
+                cachedSenderW, cachedContentW, cachedTimeW, replyW, ogpW, cachedForwardW,
+                fileW, audioW, cachedEphW, embedW, inviteW, shareContactW, reactionRowContentWidth,
+            )
             var w = allW.toInt().coerceAtMost(bubbleMaxW)
             if (msg.isPollMessage && pollParsed != null) {
                 w = maxOf(w, pollLayoutHelper.cardWidth)
@@ -3663,6 +3674,7 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
             reactionEmojiBitmaps = emptyArray()
             reactionEmojiCancellables = emptyArray()
             reactionRowHeight = 0
+            reactionRowContentWidth = 0f
             return
         }
 
@@ -3675,6 +3687,7 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
             reactionEmojiBitmaps = emptyArray()
             reactionEmojiCancellables = emptyArray()
             reactionRowHeight = 0
+            reactionRowContentWidth = 0f
             return
         }
 
@@ -3769,6 +3782,7 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
         reactionAddBounds.set(x, y, x + addChipW, y + REACTION_CHIP_H)
 
         reactionRowHeight = (y + REACTION_CHIP_H).toInt()
+        reactionRowContentWidth = reactionAddBounds.right
     }
 
     private fun drawReactionRow(canvas: Canvas, startX: Float, startY: Float) {

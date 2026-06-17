@@ -37,11 +37,13 @@ class MessageActionBottomSheet(
     private val showEditMessage: Boolean = false,
     private val showTopicDiscussion: Boolean = false,
     private val showPinActions: Boolean = true,
+    private val showResend: Boolean = false,
     private val listener: MessageActionListener
 ) : BottomSheet(context) {
 
     enum class ActionType {
         Reply,
+        ResendMessage,
         ForwardMessage,
         ForwardAllNearby,
         EditMessage,
@@ -275,6 +277,14 @@ class MessageActionBottomSheet(
 
     private fun buildFrequentActions(): List<ActionItem> {
         val actions = mutableListOf<ActionItem>()
+
+        if (showResend) {
+            actions.add(ActionItem(
+                ActionType.ResendMessage,
+                context.getString(R.string.action_resend_message),
+                R.drawable.ic_chat_icon
+            ))
+        }
 
         if (!isMyMessage) {
             actions.add(ActionItem(

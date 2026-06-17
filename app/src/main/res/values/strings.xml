@@ -290,6 +290,7 @@
     <!-- message action aliases (used by MessageActionBottomSheet) -->
     
     <string name="action_reply">Reply</string>
+    <string name="action_resend_message">Resend message</string>
     <string name="action_forward">Forward</string>
     <string name="action_forward_all_nearby">Forward All Nearby</string>
     <string name="forward_screen_title">Forward to</string>

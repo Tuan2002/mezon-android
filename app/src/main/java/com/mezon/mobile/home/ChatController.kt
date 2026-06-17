@@ -85,6 +85,7 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -234,7 +235,7 @@ class ChatController @Inject constructor(
         return mergeIncomingAttachmentEntity(existing, incoming).copy(
             id = incoming.id,
             sendState = MessageEntity.SEND_STATE_SENT,
-            isError = existing.isError || incoming.isError,
+            isError = incoming.isError,
             timestampSeconds = if (incoming.timestampSeconds > 0L) incoming.timestampSeconds else existing.timestampSeconds,
         )
     }
@@ -823,25 +824,46 @@ class ChatController @Inject constructor(
         token: String,
         request: ChannelMessageSend
     ): com.mezon.mezon.rtapi.ChannelMessageAck {
-        try {
-            return withContext(ioDispatcher) {
-                api.sendChannelMessage(apiUrl, token, request)
+        if (mezonSocket.connectionState.value == ConnectionState.CONNECTED) {
+            try {
+                return sendChannelMessageViaSocket(request)
+            } catch (e: Exception) {
+                if (!shouldFallbackChannelSendToHttp(e)) throw e
+                Log.w(TAG, "Channel message send via socket unavailable, using HTTP", e)
+                sentryReporter.logSocketWarning(
+                    "channelMessageSend",
+                    "fallback HTTP channelId=${request.channelId} clanId=${request.clanId} err=${e.message}"
+                )
             }
-        } catch (e: Exception) {
-            Log.w(TAG, "Channel message send via REST failed, using socket", e)
-            sentryReporter.logSocketWarning(
-                "channelMessageSend",
-                "fallback socket channelId=${request.channelId} clanId=${request.clanId} err=${e.message}"
-            )
-            if (mezonSocket.connectionState.value != ConnectionState.CONNECTED) throw e
         }
         return withContext(ioDispatcher) {
-            val env = mezonSocket.send { channelMessageSend = request }
-            if (env.messageCase != Envelope.MessageCase.CHANNEL_MESSAGE_ACK) {
-                throw IllegalStateException("unexpected envelope ${env.messageCase}")
-            }
-            env.channelMessageAck
+            api.sendChannelMessage(apiUrl, token, request)
         }
+    }
+
+    private suspend fun sendChannelMessageViaSocket(
+        request: ChannelMessageSend
+    ): com.mezon.mezon.rtapi.ChannelMessageAck {
+        val env = mezonSocket.send { channelMessageSend = request }
+        if (env.messageCase != Envelope.MessageCase.CHANNEL_MESSAGE_ACK) {
+            throw IllegalStateException("unexpected envelope ${env.messageCase}")
+        }
+        return env.channelMessageAck
+    }
+
+    /**
+     * HTTP fallback only when the socket path could not enqueue the message.
+     * Timeouts and ambiguous failures are not retried over HTTP to avoid duplicate sends.
+     */
+    private fun shouldFallbackChannelSendToHttp(e: Exception): Boolean {
+        if (e is TimeoutCancellationException) return false
+        if (e is IllegalStateException) {
+            val msg = e.message.orEmpty()
+            return msg == "WebSocket not connected" ||
+                msg == "Failed to enqueue WebSocket message"
+        }
+        if (e is RuntimeException && e.message?.startsWith("Request timed out:") == true) return false
+        return false
     }
 
     private suspend fun channelUpdate(
@@ -984,6 +1006,66 @@ class ChatController @Inject constructor(
                 }
             } catch (e: Exception) {
                 sentryReporter.logChatFailure("sendMessage", cacheKey, clanId, e)
+                notificationCenter.postNotificationOnMainThread(
+                    NotificationCenter.pendingMessageError, cacheKey, tempId
+                )
+            }
+        }
+    }
+
+    fun resendFailedMessage(
+        channelId: Long,
+        clanId: Long,
+        channelType: Int,
+        isChannelPrivate: Boolean,
+        failed: MessageEntity,
+    ) {
+        if (!failed.isMe || failed.sendState != MessageEntity.SEND_STATE_ERROR) return
+        val topicId = failed.effectiveTopicId
+        val cacheKey = messageCacheKey(channelId, topicId)
+        if (failed.channelId != cacheKey) return
+
+        val tempId = failed.id
+        val mode = channelTypeToStreamMode(channelType)
+        val isPublic = !isChannelPrivate
+        val wire = failed.content
+
+        appScope.launch {
+            try {
+                sessionManager.withAutoRefresh { session ->
+                    ensureActiveArchivedThreadIfNeeded(session.apiUrl, session.token, channelId, clanId, channelType)
+                    val mentionsProto = mentionsFromForwardContent(wire).takeUnless { it.isEmpty() }
+                    val mentionsData = messageMentionsToData(mentionsProto)
+                    ensureMentionedUsersInThread(
+                        session.apiUrl,
+                        session.token,
+                        channelId,
+                        clanId,
+                        channelType,
+                        mentionsData
+                    )
+                    val attProtos = attachmentsFromEntity(failed)
+                    val request = channelMessageSend {
+                        this.clanId = clanId
+                        this.channelId = channelId
+                        this.mode = mode
+                        this.isPublic = isPublic
+                        this.content = wire
+                        this.code = failed.code
+                        mentionsProto?.let { if (it.isNotEmpty()) mentions.addAll(it) }
+                        if (attProtos.isNotEmpty()) attachments.addAll(attProtos)
+                        this.mentionEveryone = extractMentionEveryoneFromForwardContent(wire)
+                        if (isAnonymousSend(clanId)) this.anonymousMessage = true
+                        if (topicId != 0L) this.topicId = topicId
+                    }
+                    val ack = channelSend(session.apiUrl, session.token, request)
+                    markForwardTargetUsed(channelId, channelType)
+                    notificationCenter.postNotificationOnMainThread(
+                        NotificationCenter.pendingMessageSent, cacheKey, tempId, ack.messageId
+                    )
+                }
+            } catch (e: Exception) {
+                sentryReporter.logChatFailure("resendFailedMessage", cacheKey, clanId, e)
                 notificationCenter.postNotificationOnMainThread(
                     NotificationCenter.pendingMessageError, cacheKey, tempId
                 )

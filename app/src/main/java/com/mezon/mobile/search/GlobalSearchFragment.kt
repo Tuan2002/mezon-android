@@ -438,6 +438,12 @@ class GlobalSearchFragment : BaseFragment() {
             recyclerView.visibility = View.GONE
         }
 
+        whenFullyVisible {
+            if (!isChannelPickerMode) {
+                searchCell.focusInput()
+            }
+        }
+
         fragmentView = root
         return root
     }
@@ -703,8 +709,7 @@ class GlobalSearchFragment : BaseFragment() {
         searchCell.editText.text?.clear()
         searchRunnable?.let { handler.removeCallbacks(it) }
         searchCell.setPlaceholder("Search channels...")
-        searchCell.editText.requestFocus()
-        AndroidUtilities.showKeyboard(searchCell.editText)
+        searchCell.focusInput()
     }
 
     private fun exitChannelPicker() {

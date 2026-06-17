@@ -913,9 +913,7 @@ open class ChatFragment : BaseFragment() {
             }
 
             if (entity.isMe) {
-                val pendingIdx = messages.indexOfFirst {
-                    it.isSending && it.isMe && it.senderId == entity.senderId
-                }
+                val pendingIdx = findPendingSelfEchoIndex(entity)
                 if (pendingIdx >= 0) {
                     val pending = messages[pendingIdx]
                     applyRealId(pending.id, entity.id, entity)
@@ -2005,6 +2003,13 @@ open class ChatFragment : BaseFragment() {
             override fun didClickHashtag(cell: ChatMessageCell, channelId: String?) {
                 navigateToChannelFromHashtag(channelId)
             }
+            override fun didClickMention(cell: ChatMessageCell, userId: String?, roleId: String?) {
+                if (!roleId.isNullOrBlank() && roleId != "0") return
+                val uidStr = userId ?: return
+                if (uidStr == ChatController.ID_MENTION_HERE) return
+                val uid = uidStr.toLongOrNull() ?: return
+                showUserProfileFromMentionUserId(uid)
+            }
             override fun didTapAudio(cell: ChatMessageCell, msg: MessageEntity) {
                 val url = msg.attachmentUrl
                 if (url.isBlank()) return
@@ -2889,6 +2894,22 @@ open class ChatFragment : BaseFragment() {
             }
         }
         finishFragment()
+    }
+
+    private fun selfMessageEchoKey(entity: MessageEntity): String =
+        "${entity.code}:${parseContentText(entity.content).trim()}"
+
+    private fun findPendingSelfEchoIndex(entity: MessageEntity): Int {
+        if (!entity.isMe) return -1
+        val echoKey = selfMessageEchoKey(entity)
+        val contentMatch = messages.indexOfFirst { pending ->
+            pending.isMe &&
+                pending.senderId == entity.senderId &&
+                (pending.isSending || pending.sendState == MessageEntity.SEND_STATE_ERROR) &&
+                selfMessageEchoKey(pending) == echoKey
+        }
+        if (contentMatch >= 0) return contentMatch
+        return messages.indexOfFirst { it.isSending && it.isMe && it.senderId == entity.senderId }
     }
 
     private fun insertSendingOptimisticMessage(entity: MessageEntity): Int {
@@ -5860,6 +5881,7 @@ open class ChatFragment : BaseFragment() {
             showEditMessage = showEditMessage,
             showTopicDiscussion = canShowTopicDiscussionInMessageMenu(msg),
             showPinActions = !isTopicMode,
+            showResend = msg.sendState == MessageEntity.SEND_STATE_ERROR && isMyMessage,
             listener = object : MessageActionBottomSheet.MessageActionListener {
                 override fun onActionSelected(action: MessageActionBottomSheet.ActionType, message: MessageEntity) {
                     handleMessageAction(action, message)
@@ -6202,6 +6224,9 @@ open class ChatFragment : BaseFragment() {
 
     private fun handleMessageAction(action: MessageActionBottomSheet.ActionType, msg: MessageEntity) {
         when (action) {
+            MessageActionBottomSheet.ActionType.ResendMessage -> {
+                resendFailedMessage(msg)
+            }
             MessageActionBottomSheet.ActionType.Reply -> {
                 setReplyState(msg)
             }
@@ -6669,6 +6694,25 @@ open class ChatFragment : BaseFragment() {
                 break
             }
         }
+    }
+
+    private fun resendFailedMessage(msg: MessageEntity) {
+        if (msg.sendState != MessageEntity.SEND_STATE_ERROR || !msg.isMe) return
+        val idx = messages.indexOfFirst { it.id == msg.id }
+        if (idx < 0) return
+        val updated = msg.copy(sendState = MessageEntity.SEND_STATE_SENDING, isError = false)
+        messages[idx] = updated
+        messagesDict.put(updated.id, updated)
+        if (fragmentView != null) {
+            updateVisibleRows(NotificationCenter.UPDATE_MASK_SEND_STATE)
+        }
+        chatController.resendFailedMessage(
+            channelId,
+            clanId,
+            channelType,
+            resolveChannelPrivate(),
+            msg,
+        )
     }
 
     private fun markMessageSent(tempId: Long) {
