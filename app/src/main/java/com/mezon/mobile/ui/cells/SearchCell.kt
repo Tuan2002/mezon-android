@@ -165,4 +165,11 @@ class SearchCell(context: Context, private val theme: ThemeColors) : LinearLayou
     }
 
     fun hasBadge(): Boolean = badgeView.visibility == View.VISIBLE
+
+    fun focusInput() {
+        editText.post {
+            editText.requestFocus()
+            AndroidUtilities.showKeyboard(editText)
+        }
+    }
 }

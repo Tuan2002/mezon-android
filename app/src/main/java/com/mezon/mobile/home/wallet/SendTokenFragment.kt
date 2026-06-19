@@ -19,6 +19,7 @@ import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.widget.EditText
+import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
@@ -49,6 +50,7 @@ import com.mezon.mobile.wallet.WalletController
 import androidx.core.view.ViewCompat
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
+import com.mezon.mobile.core.RecyclerListView
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.first
@@ -967,7 +969,6 @@ class SendTokenFragment : BaseFragment() {
         val sheetHeightPx = (AndroidUtilities.displaySize.y * 0.88f).toInt()
             .coerceAtLeast(LayoutHelper.dp(320f))
         val sheet = BottomSheet(act, needFocusable = true).apply {
-            setSnapPoints(0.88f)
             setContainerHeightPx(sheetHeightPx)
         }
         val content = LinearLayout(act).apply {
@@ -1000,11 +1001,20 @@ class SendTokenFragment : BaseFragment() {
             visibility = View.GONE
             setPadding(0, LayoutHelper.dp(16f), 0, LayoutHelper.dp(8f))
         }
-        val recycler = RecyclerView(act).apply {
+        val listContainer = FrameLayout(act)
+        val recycler = RecyclerListView(act).apply {
             layoutManager = LinearLayoutManager(act)
             overScrollMode = View.OVER_SCROLL_NEVER
             isNestedScrollingEnabled = true
+            clipToPadding = false
         }
+        listContainer.addView(
+            recycler,
+            FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+            )
+        )
         val adapter = RecipientPickerAdapter(themeColors) { selected ->
             applyRecipientSelection(selected)
             sheet.dismiss()
@@ -1041,7 +1051,7 @@ class SendTokenFragment : BaseFragment() {
         )
         content.addView(emptyTv)
         content.addView(
-            recycler,
+            listContainer,
             LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 0,
@@ -1132,6 +1142,10 @@ class SendTokenFragment : BaseFragment() {
             val row = LinearLayout(ctx).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
+                layoutParams = RecyclerView.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT
+                )
                 setPadding(LayoutHelper.dp(8f), LayoutHelper.dp(8f), LayoutHelper.dp(8f), LayoutHelper.dp(8f))
                 setBackgroundColor(themeColors.background)
             }
@@ -1141,7 +1155,6 @@ class SendTokenFragment : BaseFragment() {
             }
             val textWrap = LinearLayout(ctx).apply {
                 orientation = LinearLayout.VERTICAL
-                setPadding(LayoutHelper.dp(10f), 0, LayoutHelper.dp(10f), 0)
             }
             val nameTv = TextView(ctx).apply {
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
@@ -1158,10 +1171,24 @@ class SendTokenFragment : BaseFragment() {
             }
             row.addView(
                 avatar,
-                LinearLayout.LayoutParams(LayoutHelper.dp(36f), LayoutHelper.dp(36f))
+                LinearLayout.LayoutParams(LayoutHelper.dp(36f), LayoutHelper.dp(36f)).apply {
+                    marginEnd = LayoutHelper.dp(10f)
+                }
             )
-            textWrap.addView(nameTv)
-            textWrap.addView(userTv)
+            textWrap.addView(
+                nameTv,
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT
+                )
+            )
+            textWrap.addView(
+                userTv,
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT
+                )
+            )
             row.addView(
                 textWrap,
                 LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)

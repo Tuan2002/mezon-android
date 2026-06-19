@@ -109,6 +109,14 @@ import kotlin.math.max
 class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCell(context) {
     private val embedMessage = EmbedMessageRenderer(this, { theme }).also {
         it.onAfterDraw = { scheduleEmbedInteractiveSync() }
+        it.onLayoutsRebuilt = {
+            messageEntity?.let { m ->
+                measuredCellHeight = computeHeight(m)
+                requestLayout()
+                invalidate()
+                scheduleEmbedInteractiveSync()
+            }
+        }
     }
     private val embedInputSlots = mutableListOf<EmbedInputSlot>()
     private val embedSelectSlots = mutableListOf<EmbedSelectSlot>()
@@ -348,6 +356,7 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
     private var reactionChipBoundsCount: Int = 0
     private var reactionIsMyFlags: BooleanArray = BooleanArray(0)
     private var reactionRowHeight = 0
+    private var reactionRowContentWidth = 0f
     private val reactionChipRect = RectF()
     private var reactionEmojiBitmaps: Array<android.graphics.Bitmap?> = emptyArray()
     private var reactionEmojiCancellables: Array<MezonImageLoader.Cancellable?> = emptyArray()
@@ -627,9 +636,8 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
 
         if ((mask and NotificationCenter.UPDATE_MASK_MESSAGE_TEXT) != 0) {
             val prevRaw = messageEntity?.content
-            val newParsed = parseContentText(msg.content)
-            if (newParsed != parsedContent || msg.content != prevRaw) {
-                parsedContent = newParsed
+            if (msg.content != prevRaw) {
+                parsedContent = parseContentText(msg.content)
                 hasExplicitTextBody = messageHasExplicitTextBody(msg.content)
                 rebuildLayout = true
             }
@@ -726,8 +734,14 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
             val m = newMsg ?: messageEntity ?: return false
             if (newMsg != null) messageEntity = newMsg
             val oldReactionH = reactionRowHeight
-            buildReactionLayouts(m, cachedInnerWidth)
-            if (oldReactionH != reactionRowHeight) {
+            val oldInnerW = cachedInnerWidth
+            val reactionMaxW = if (drawPhotoImage) photoWidth else maxBubbleWidth()
+            buildReactionLayouts(m, reactionMaxW)
+            if (reactionRowContentWidth > 0f) {
+                cachedInnerWidth = maxOf(cachedInnerWidth, reactionRowContentWidth.toInt())
+                    .coerceAtMost(reactionMaxW)
+            }
+            if (oldReactionH != reactionRowHeight || oldInnerW != cachedInnerWidth) {
                 measuredCellHeight = computeHeight(m)
                 requestLayout()
             }
@@ -1326,6 +1340,14 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
         return yOff + callLogCardHeight
     }
 
+    private fun applyEmbedLayouts(textWidth: Int) {
+        if (embedMessage.isEmbedAnimationRunning()) {
+            embedMessage.scheduleRebuildLayoutsAfterAnimation(textWidth, context)
+        } else {
+            embedMessage.rebuildLayouts(textWidth, context)
+        }
+    }
+
     private fun buildLayouts(msg: MessageEntity) {
         buildLayouts(msg, currentWidth())
     }
@@ -1490,15 +1512,25 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
                 .setEllipsize(TextUtils.TruncateAt.END)
                 .build()
             val truncDesc = if (ogp.description.length > OGP_MAX_CHARS) ogp.description.substring(0, OGP_MAX_CHARS) else ogp.description
-            ogpDescLayout = StaticLayout.Builder.obtain(truncDesc, 0, truncDesc.length, ogpDescPaint, ogpTextW)
-                .setMaxLines(2)
-                .setEllipsize(TextUtils.TruncateAt.END)
-                .build()
-            ogpImageW = ogpTextW
-            ogpImageH = min((ogpImageW * 0.6f).toInt(), OGP_IMAGE_MAX_H).coerceAtLeast(1)
-            ogpImage.setRoundRadius(0)
-            val proxiedImg = createImgproxyUrl(ogp.image, ogpImageW, ogpImageH, "fill")
-            ogpImage.setImage(proxiedImg, null, context)
+            ogpDescLayout = if (truncDesc.isBlank()) {
+                null
+            } else {
+                StaticLayout.Builder.obtain(truncDesc, 0, truncDesc.length, ogpDescPaint, ogpTextW)
+                    .setMaxLines(2)
+                    .setEllipsize(TextUtils.TruncateAt.END)
+                    .build()
+            }
+            if (ogp.image.isBlank()) {
+                ogpImageW = 0
+                ogpImageH = 0
+                ogpImage.setImage(null, null, context)
+            } else {
+                ogpImageW = ogpTextW
+                ogpImageH = min((ogpImageW * 0.6f).toInt(), OGP_IMAGE_MAX_H).coerceAtLeast(1)
+                ogpImage.setRoundRadius(0)
+                val proxiedImg = createImgproxyUrl(ogp.image, ogpImageW, ogpImageH, "fill")
+                ogpImage.setImage(proxiedImg, null, context)
+            }
         } else {
             ogpTitleLayout = null
             ogpDescLayout = null
@@ -1511,7 +1543,7 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
             hasEmbedContent = embedMessage.setDataFromContent(msg.content)
             if (hasEmbedContent) {
                 resetEmbedInteractiveSync()
-                embedMessage.rebuildLayouts(textWidth, context)
+                applyEmbedLayouts(textWidth)
             } else {
                 hideEmbedInteractiveViews()
             }
@@ -1565,7 +1597,8 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
             maxLineWidth(it) + EphemeralMessageUi.indicatorIconSize() + EphemeralMessageUi.INDICATOR_ICON_GAP
         } ?: 0f
 
-        buildReactionLayouts(msg, textWidth)
+        val reactionLayoutMaxW = if (drawPhotoImage) photoWidth else maxBubbleWidth(width)
+        buildReactionLayouts(msg, reactionLayoutMaxW)
 
         if (msg.isPollMessage && pollParsed != null) {
             val st = pollBridge?.getLocalState(msg.id) ?: PollLocalState()
@@ -1585,7 +1618,10 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
         } else if (hasCodeFence) {
             bubbleMaxW
         } else {
-            val allW = maxOf(cachedSenderW, cachedContentW, cachedTimeW, replyW, ogpW, cachedForwardW, fileW, audioW, cachedEphW, embedW, inviteW, shareContactW)
+            val allW = maxOf(
+                cachedSenderW, cachedContentW, cachedTimeW, replyW, ogpW, cachedForwardW,
+                fileW, audioW, cachedEphW, embedW, inviteW, shareContactW, reactionRowContentWidth,
+            )
             var w = allW.toInt().coerceAtMost(bubbleMaxW)
             if (msg.isPollMessage && pollParsed != null) {
                 w = maxOf(w, pollLayoutHelper.cardWidth)
@@ -3638,6 +3674,7 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
             reactionEmojiBitmaps = emptyArray()
             reactionEmojiCancellables = emptyArray()
             reactionRowHeight = 0
+            reactionRowContentWidth = 0f
             return
         }
 
@@ -3650,6 +3687,7 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
             reactionEmojiBitmaps = emptyArray()
             reactionEmojiCancellables = emptyArray()
             reactionRowHeight = 0
+            reactionRowContentWidth = 0f
             return
         }
 
@@ -3744,6 +3782,7 @@ class ChatMessageCell(context: Context, private val theme: ThemeColors) : BaseCe
         reactionAddBounds.set(x, y, x + addChipW, y + REACTION_CHIP_H)
 
         reactionRowHeight = (y + REACTION_CHIP_H).toInt()
+        reactionRowContentWidth = reactionAddBounds.right
     }
 
     private fun drawReactionRow(canvas: Canvas, startX: Float, startY: Float) {

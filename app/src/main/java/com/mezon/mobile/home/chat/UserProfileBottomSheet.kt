@@ -405,7 +405,7 @@ class UserProfileBottomSheet(
             ))
         }
 
-        if (!isOwnProfile && voiceParticipantExtras == null) {
+        if (voiceParticipantExtras == null && userId != 0L) {
             val actionsRow = LinearLayout(context).apply {
                 orientation = LinearLayout.HORIZONTAL
             }
@@ -424,32 +424,32 @@ class UserProfileBottomSheet(
                 LinearLayout.LayoutParams.WRAP_CONTENT
             ).apply { rightMargin = LayoutHelper.dp(14) })
 
-            // Voice Call button
-            actionsRow.addView(buildActionButton(
-                context.getString(R.string.user_profile_voice_call),
-                R.drawable.ic_phone_call_icon,
-                textColor
-            ) {
-                dismiss()
-                val l = listener
-                if (l != null) l.onVoiceCall(userId)
-                else Toast.makeText(context, R.string.feature_coming_soon, Toast.LENGTH_SHORT).show()
-            }, LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { rightMargin = LayoutHelper.dp(14) })
+            if (!isOwnProfile) {
+                actionsRow.addView(buildActionButton(
+                    context.getString(R.string.user_profile_voice_call),
+                    R.drawable.ic_phone_call_icon,
+                    textColor
+                ) {
+                    dismiss()
+                    val l = listener
+                    if (l != null) l.onVoiceCall(userId)
+                    else Toast.makeText(context, R.string.feature_coming_soon, Toast.LENGTH_SHORT).show()
+                }, LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                ).apply { rightMargin = LayoutHelper.dp(14) })
 
-            // Add Friend button
-            actionsRow.addView(buildActionButton(
-                context.getString(R.string.user_profile_add_friend),
-                R.drawable.ic_user_plus_icon,
-                0xFF42A869.toInt()  // baseColor.green
-            ) {
-                dismiss()
-                val l = listener
-                if (l != null) l.onAddFriend(userId)
-                else Toast.makeText(context, R.string.feature_coming_soon, Toast.LENGTH_SHORT).show()
-            })
+                actionsRow.addView(buildActionButton(
+                    context.getString(R.string.user_profile_add_friend),
+                    R.drawable.ic_user_plus_icon,
+                    0xFF42A869.toInt()  // baseColor.green
+                ) {
+                    dismiss()
+                    val l = listener
+                    if (l != null) l.onAddFriend(userId)
+                    else Toast.makeText(context, R.string.feature_coming_soon, Toast.LENGTH_SHORT).show()
+                })
+            }
 
             card.addView(actionsRow, LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,

@@ -774,8 +774,9 @@ fun parseOgpData(content: String): OgpData? {
             val url = extractOgpUrl(text, if (index >= 0) index else null) ?: continue
             if (isGoogleMapLink(url)) continue
             val title = j.optString("title").takeIf { it.isNotEmpty() } ?: continue
-            val description = j.optString("description").takeIf { it.isNotEmpty() } ?: continue
-            val image = j.optString("image").takeIf { it.isNotEmpty() } ?: continue
+            val description = j.optString("description")
+            val image = j.optString("image")
+            if (description.isEmpty() && image.isEmpty()) continue
             return OgpData(title, description, image, url)
         }
         null

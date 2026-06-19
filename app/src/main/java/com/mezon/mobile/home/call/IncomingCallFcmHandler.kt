@@ -62,26 +62,7 @@ class IncomingCallFcmHandler @Inject constructor(
             return
         }
         if (innerOffer == "CANCEL_CALL") {
-            val answeredElsewhere = parsed.optBoolean("isConnected", false)
-            val ctrl = CallController.instance
-            CallNotificationManager(appContext).dismissIncomingNotification()
-            if (answeredElsewhere && ctrl?.shouldIgnoreCancelCallFcmAnsweredElsewhere() == true) {
-                return
-            }
-            MezonCallConnection.activeConnection?.let {
-                it.setDisconnected(DisconnectCause(DisconnectCause.CANCELED))
-                it.destroy()
-                MezonCallConnection.activeConnection = null
-            }
-            if (answeredElsewhere) {
-                if (ctrl?.callState is CallState.Idle) {
-                    ctrl.clearIdleIncomingArtifactsAfterAnsweredElsewhere()
-                } else {
-                    ctrl?.endCall(CallEndReason.CLEAR_CALL)
-                }
-            } else {
-                ctrl?.endCall(CallEndReason.CANCELLED)
-            }
+            handleCancelCallFcm(parsed)
             return
         }
         if (callController.callState !is CallState.Idle) return
@@ -136,6 +117,29 @@ class IncomingCallFcmHandler @Inject constructor(
                     useFullScreenIntent = useFsi
                 )
             }
+        }
+    }
+
+    private fun handleCancelCallFcm(parsed: JSONObject) {
+        val answeredElsewhere = parsed.optBoolean("isConnected", false)
+        val ctrl = CallController.instance
+        CallNotificationManager(appContext).dismissIncomingNotification()
+        if (answeredElsewhere && ctrl?.shouldIgnoreCancelCallFcmAnsweredElsewhere() == true) {
+            return
+        }
+        MezonCallConnection.activeConnection?.let {
+            it.setDisconnected(DisconnectCause(DisconnectCause.CANCELED))
+            it.destroy()
+            MezonCallConnection.activeConnection = null
+        }
+        if (answeredElsewhere) {
+            if (ctrl?.callState is CallState.Idle) {
+                ctrl.clearIdleIncomingArtifactsAfterAnsweredElsewhere()
+            } else {
+                ctrl?.endCall(CallEndReason.CLEAR_CALL)
+            }
+        } else {
+            ctrl?.endCall(CallEndReason.CANCELLED)
         }
     }
 

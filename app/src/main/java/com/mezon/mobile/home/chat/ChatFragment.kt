@@ -17,7 +17,6 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.text.Editable
-import android.text.Html
 import android.text.SpannableString
 import android.text.Spanned
 import android.text.TextWatcher
@@ -124,6 +123,8 @@ import com.mezon.mobile.util.restoreInputFromContent
 import com.mezon.mobile.util.resolveStickerSourceUrl
 import com.mezon.mobile.util.firstReferenceMessageId
 import com.mezon.mobile.util.createImgproxyUrl
+import com.mezon.mobile.util.InputOgpFetcher
+import com.mezon.mobile.util.InputOgpPreview
 import com.mezon.mobile.util.OgpMarker
 import com.mezon.mobile.util.PresignFinishContent
 import com.mezon.mobile.core.SharedConfig
@@ -153,13 +154,12 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import com.mezon.mobile.core.SizeNotifierFrameLayout
 import com.mezon.mobile.home.chat.emoji.EmojiView
 import com.mezon.mobile.util.EmbedFormUtil
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
-import java.net.HttpURLConnection
-import java.net.URL
 
 private const val TAG = "ChatFragment"
 private const val FORWARD_NEARBY_WINDOW_SECONDS = 10 * 60L
@@ -208,7 +208,12 @@ open class ChatFragment : BaseFragment() {
         private val INPUT_OGP_IMAGE_SIZE = LayoutHelper.dp(40f)
         private val INPUT_OGP_BAR_CORNER = LayoutHelper.dp(12f).toFloat()
         private val INPUT_OGP_URL_REGEX = Regex("""https?://[^\s]+""", RegexOption.IGNORE_CASE)
-        private val INPUT_OGP_META_TAG_REGEX = Regex("""<meta\s+[^>]*>""", RegexOption.IGNORE_CASE)
+        private const val INPUT_OGP_DEBOUNCE_MS = 80L
+        private const val INPUT_OGP_CACHE_MAX = 32
+        private const val INPUT_OGP_SEND_WAIT_MS = 400L
+        private val inputOgpCache = object : LinkedHashMap<String, InputOgpPreview>(16, 0.75f, true) {
+            override fun removeEldestEntry(eldest: Map.Entry<String, InputOgpPreview>): Boolean = size > INPUT_OGP_CACHE_MAX
+        }
 
         fun newInstance(
             channelId: Long,
@@ -376,6 +381,8 @@ open class ChatFragment : BaseFragment() {
     private var failedInputOgpUrl: String? = null
     private var inputOgpFetchJob: Job? = null
     private var inputOgpImageLoad: MezonImageLoader.Cancellable = MezonImageLoader.Cancellable.EMPTY
+    private var inputOgpThumbnailUrl: String? = null
+    private var awaitingOgpForSend = false
 
     private lateinit var userClanController: UserClanController
     private lateinit var userController: com.mezon.mobile.home.profile.UserController
@@ -906,9 +913,7 @@ open class ChatFragment : BaseFragment() {
             }
 
             if (entity.isMe) {
-                val pendingIdx = messages.indexOfFirst {
-                    it.isSending && it.isMe && it.senderId == entity.senderId
-                }
+                val pendingIdx = findPendingSelfEchoIndex(entity)
                 if (pendingIdx >= 0) {
                     val pending = messages[pendingIdx]
                     applyRealId(pending.id, entity.id, entity)
@@ -1034,15 +1039,21 @@ open class ChatFragment : BaseFragment() {
         }
 
         observe(NotificationCenter.messageDidUpdate) { _, _, args ->
-            if (args.size < 2 || args[0] != messageListKey) return@observe
+            if (args.size < 2) return@observe
+            val eventKey = args[0] as? Long ?: return@observe
             val updateEntity = args[1] as? MessageEntity ?: return@observe
             val idx = messages.indexOfFirst { it.id == updateEntity.id }
+            if (idx < 0) {
+                if (eventKey != messageListKey) return@observe
+                return@observe
+            }
             if (idx >= 0) {
                 val existing = messages[idx]
+                val newContent = updateEntity.content.takeIf { it.isNotBlank() } ?: existing.content
                 val mask = if (args.size >= 3) args[2] as? Int ?: NotificationCenter.UPDATE_MASK_MESSAGE_TEXT else NotificationCenter.UPDATE_MASK_MESSAGE_TEXT
                 val merged = when {
                     (mask and NotificationCenter.UPDATE_MASK_TOPIC) != 0 -> existing.copy(
-                        content = updateEntity.content,
+                        content = newContent,
                         updateTimeSeconds = updateEntity.updateTimeSeconds,
                         hideEditted = updateEntity.hideEditted,
                         code = updateEntity.code,
@@ -1052,7 +1063,7 @@ open class ChatFragment : BaseFragment() {
                         lastSentSeconds = updateEntity.lastSentSeconds
                     )
                     (mask and NotificationCenter.UPDATE_MASK_ATTACHMENTS) != 0 -> existing.copy(
-                        content = updateEntity.content.ifBlank { existing.content },
+                        content = newContent,
                         updateTimeSeconds = updateEntity.updateTimeSeconds,
                         hideEditted = updateEntity.hideEditted,
                         code = updateEntity.code,
@@ -1074,7 +1085,7 @@ open class ChatFragment : BaseFragment() {
                         },
                     )
                     else -> existing.copy(
-                        content = updateEntity.content,
+                        content = newContent,
                         updateTimeSeconds = updateEntity.updateTimeSeconds,
                         hideEditted = updateEntity.hideEditted,
                         code = updateEntity.code
@@ -1089,7 +1100,9 @@ open class ChatFragment : BaseFragment() {
                         displayMergedPoll = null
                     )
                 }
-                if (fragmentView != null) updateVisibleRows(mask)
+                if (fragmentView != null) {
+                    adapter.notifyMessageChangedAt(idx)
+                }
             }
         }
 
@@ -1990,6 +2003,13 @@ open class ChatFragment : BaseFragment() {
             override fun didClickHashtag(cell: ChatMessageCell, channelId: String?) {
                 navigateToChannelFromHashtag(channelId)
             }
+            override fun didClickMention(cell: ChatMessageCell, userId: String?, roleId: String?) {
+                if (!roleId.isNullOrBlank() && roleId != "0") return
+                val uidStr = userId ?: return
+                if (uidStr == ChatController.ID_MENTION_HERE) return
+                val uid = uidStr.toLongOrNull() ?: return
+                showUserProfileFromMentionUserId(uid)
+            }
             override fun didTapAudio(cell: ChatMessageCell, msg: MessageEntity) {
                 val url = msg.attachmentUrl
                 if (url.isBlank()) return
@@ -2756,6 +2776,7 @@ open class ChatFragment : BaseFragment() {
         hashtagTrackers.clear()
         inputOgpFetchJob?.cancel()
         inputOgpFetchJob = null
+        InputOgpFetcher.cancelInFlight()
         inputOgpImageLoad.cancel()
         inputOgpImageLoad = MezonImageLoader.Cancellable.EMPTY
         inputOgpBar = null
@@ -2765,6 +2786,7 @@ open class ChatFragment : BaseFragment() {
         inputOgpClose = null
         inputOgpUrl = null
         inputOgpPreviewData = null
+        inputOgpThumbnailUrl = null
         dismissedInputOgpUrl = null
         failedInputOgpUrl = null
         suggestionsPopup = null
@@ -2872,6 +2894,22 @@ open class ChatFragment : BaseFragment() {
             }
         }
         finishFragment()
+    }
+
+    private fun selfMessageEchoKey(entity: MessageEntity): String =
+        "${entity.code}:${parseContentText(entity.content).trim()}"
+
+    private fun findPendingSelfEchoIndex(entity: MessageEntity): Int {
+        if (!entity.isMe) return -1
+        val echoKey = selfMessageEchoKey(entity)
+        val contentMatch = messages.indexOfFirst { pending ->
+            pending.isMe &&
+                pending.senderId == entity.senderId &&
+                (pending.isSending || pending.sendState == MessageEntity.SEND_STATE_ERROR) &&
+                selfMessageEchoKey(pending) == echoKey
+        }
+        if (contentMatch >= 0) return contentMatch
+        return messages.indexOfFirst { it.isSending && it.isMe && it.senderId == entity.senderId }
     }
 
     private fun insertSendingOptimisticMessage(entity: MessageEntity): Int {
@@ -3696,6 +3734,10 @@ open class ChatFragment : BaseFragment() {
                 is ChatMessageCell -> {
                     val msg = child.messageEntity ?: continue
                     val updated = messagesDict.get(msg.id) ?: continue
+                    val modelIdx = messages.indexOfFirst { it.id == msg.id }
+                    if (modelIdx >= 0) {
+                        child.isCombined = adapter.isCombinedAt(modelIdx)
+                    }
                     if (mask == 0) {
                         if (updated !== msg) child.update(0, updated)
                     } else {
@@ -3704,8 +3746,8 @@ open class ChatFragment : BaseFragment() {
                                 NotificationCenter.UPDATE_MASK_BADGE or
                                 NotificationCenter.UPDATE_MASK_READ_DIALOG_MESSAGE
                             ).inv() == 0
-                        if (entityDerivedOnly && updated === msg) continue
-                        child.update(mask, if (updated !== msg) updated else null)
+                        if (entityDerivedOnly && updated === msg && updated.content == msg.content) continue
+                        child.update(mask, updated)
                     }
                 }
                 is SystemMessageCell -> {
@@ -4324,13 +4366,39 @@ open class ChatFragment : BaseFragment() {
             return
         }
 
+        if (editMsg == null && !awaitingOgpForSend && inputOgpPreviewData == null) {
+            val pendingUrl = extractFirstInputUrl(text)
+            val fetchInFlight = inputOgpFetchJob?.isActive == true
+            if (pendingUrl != null && fetchInFlight && inputOgpUrl == pendingUrl &&
+                dismissedInputOgpUrl != pendingUrl && failedInputOgpUrl != pendingUrl &&
+                inputOgpCache[pendingUrl] == null
+            ) {
+                awaitingOgpForSend = true
+                fragmentScope.launch(mainDispatcher) {
+                    try {
+                        val finished = withTimeoutOrNull(INPUT_OGP_SEND_WAIT_MS) {
+                            inputOgpFetchJob?.join()
+                            true
+                        }
+                        if (finished == null) inputOgpFetchJob?.cancel()
+                    } finally {
+                        awaitingOgpForSend = false
+                        sendMessage()
+                    }
+                }
+                return
+            }
+        }
+
         val isPrivate = resolveChannelPrivate()
         val references = buildReplyReferences()
 
         val mdResult = parseMarkdownAndStrip(text)
         val cleanedText = mdResult.cleanedText
         val mdMarkers = mdResult.markers.ifEmpty { null }
-        val ogpMarker = buildInputOgpMarker(cleanedText, inputOgpPreviewData)
+        val ogpPreview = inputOgpPreviewData
+            ?: extractFirstInputUrl(cleanedText)?.let { inputOgpCache[it] }
+        val ogpMarker = buildInputOgpMarker(cleanedText, ogpPreview)
         val filteredMdMarkers = if (ogpMarker == null) mdMarkers else {
             mdMarkers
                 ?.filterNot {
@@ -4946,13 +5014,6 @@ open class ChatFragment : BaseFragment() {
         }
     }
 
-    private data class InputOgpPreview(
-        val url: String,
-        val title: String,
-        val description: String,
-        val imageUrl: String
-    )
-
     private fun updateInputOgpPreview(rawText: String) {
         val candidate = extractFirstInputUrl(rawText)
         if (candidate == null) {
@@ -4968,23 +5029,53 @@ open class ChatFragment : BaseFragment() {
         if (failedInputOgpUrl != null && failedInputOgpUrl == candidate) {
             return
         }
-        if (candidate == inputOgpUrl && inputOgpBar?.visibility == View.VISIBLE) {
+        if (candidate == inputOgpUrl && (inputOgpPreviewData != null || inputOgpFetchJob?.isActive == true)) {
             return
         }
         inputOgpUrl = candidate
+        val cached = inputOgpCache[candidate]
+        if (cached != null) {
+            inputOgpFetchJob?.cancel()
+            inputOgpFetchJob = null
+            commitInputOgpForSend(cached)
+            return
+        }
         showInputOgpLoading(candidate)
         inputOgpFetchJob?.cancel()
-        inputOgpFetchJob = fragmentScope.launch(mainDispatcher) {
-            delay(320)
-            val preview = withContext(ioDispatcher) { fetchInputOgpPreview(candidate) }
-            if (!isActive) return@launch
-            if (inputOgpUrl != candidate) return@launch
+        InputOgpFetcher.cancelInFlight()
+        val debounceMs = if (rawText.trim() == candidate) 0L else INPUT_OGP_DEBOUNCE_MS
+        inputOgpFetchJob = fragmentScope.launch(ioDispatcher) {
+            if (debounceMs > 0L) delay(debounceMs)
+            if (!isActive || inputOgpUrl != candidate) return@launch
+            val preview = InputOgpFetcher.fetch(
+                candidate,
+                onTextReady = { partial -> runInputOgpOnMain(candidate) { showInputOgpText(partial) } },
+                onSendReady = { ready -> runInputOgpOnMain(candidate) { commitInputOgpForSend(ready) } }
+            )
+            if (!isActive || inputOgpUrl != candidate) return@launch
             if (preview == null) {
-                failedInputOgpUrl = candidate
-                clearInputOgpPreview()
+                withContext(mainDispatcher) {
+                    if (inputOgpUrl != candidate) return@withContext
+                    failedInputOgpUrl = candidate
+                    clearInputOgpPreview()
+                }
                 return@launch
             }
-            renderInputOgpPreview(preview)
+            inputOgpCache[candidate] = preview
+            withContext(mainDispatcher) {
+                if (inputOgpUrl != candidate) return@withContext
+                val current = inputOgpPreviewData
+                if (current == null || (current.imageUrl.isBlank() && preview.imageUrl.isNotBlank())) {
+                    commitInputOgpForSend(preview)
+                }
+            }
+        }
+    }
+
+    private fun runInputOgpOnMain(url: String, block: () -> Unit) {
+        fragmentScope.launch(mainDispatcher) {
+            if (inputOgpUrl != url) return@launch
+            block()
         }
     }
 
@@ -5001,7 +5092,9 @@ open class ChatFragment : BaseFragment() {
     private fun clearInputOgpPreview() {
         inputOgpFetchJob?.cancel()
         inputOgpFetchJob = null
+        InputOgpFetcher.cancelInFlight()
         inputOgpPreviewData = null
+        inputOgpThumbnailUrl = null
         inputOgpImageLoad.cancel()
         inputOgpImageLoad = MezonImageLoader.Cancellable.EMPTY
         inputOgpImage?.setImageDrawable(null)
@@ -5011,111 +5104,43 @@ open class ChatFragment : BaseFragment() {
         inputOgpBar?.visibility = View.GONE
     }
 
-    private fun renderInputOgpPreview(preview: InputOgpPreview) {
+    private fun commitInputOgpForSend(preview: InputOgpPreview) {
         inputOgpPreviewData = preview
+        inputOgpCache[preview.url] = preview
+        showInputOgpText(preview)
+        loadInputOgpThumbnail(preview.imageUrl)
+    }
+
+    private fun showInputOgpText(preview: InputOgpPreview) {
         inputOgpBar?.visibility = View.VISIBLE
         inputOgpTitle?.text = preview.title.ifBlank { preview.url }
         inputOgpDesc?.text = preview.description.ifBlank { preview.url }
+    }
+
+    private fun loadInputOgpThumbnail(imageUrl: String) {
+        if (imageUrl.isBlank() || imageUrl == inputOgpThumbnailUrl) return
+        val imgView = inputOgpImage ?: return
+        inputOgpThumbnailUrl = imageUrl
+        val requestUrl = createImgproxyUrl(imageUrl, INPUT_OGP_IMAGE_SIZE, INPUT_OGP_IMAGE_SIZE, "fill")
+        val targetUrl = requestUrl.ifBlank { imageUrl }
         inputOgpImageLoad.cancel()
         inputOgpImageLoad = MezonImageLoader.Cancellable.EMPTY
-        if (preview.imageUrl.isBlank()) {
-            inputOgpImage?.setImageDrawable(null)
-            inputOgpImage?.visibility = View.GONE
-            return
-        }
-        val imgView = inputOgpImage ?: return
-        imgView.visibility = View.VISIBLE
-        val requestUrl = createImgproxyUrl(preview.imageUrl, INPUT_OGP_IMAGE_SIZE, INPUT_OGP_IMAGE_SIZE, "fill")
-        val targetUrl = requestUrl.ifBlank { preview.imageUrl }
         val loader = MezonImageLoader.getInstance(imgView.context)
         inputOgpImageLoad = loader.load(
             targetUrl,
             INPUT_OGP_IMAGE_SIZE,
             INPUT_OGP_IMAGE_SIZE,
             onSuccess = { bmp ->
-                if (inputOgpUrl != preview.url) return@load
+                if (inputOgpThumbnailUrl != imageUrl) return@load
                 imgView.setImageBitmap(bmp)
                 imgView.visibility = View.VISIBLE
             },
             onError = {
-                if (inputOgpUrl != preview.url) return@load
+                if (inputOgpThumbnailUrl != imageUrl) return@load
                 imgView.setImageDrawable(null)
                 imgView.visibility = View.GONE
             }
         )
-    }
-
-    private fun fetchInputOgpPreview(url: String): InputOgpPreview? {
-        return try {
-            val conn = (URL(url).openConnection() as? HttpURLConnection) ?: return null
-            conn.instanceFollowRedirects = true
-            conn.connectTimeout = 5000
-            conn.readTimeout = 6000
-            conn.requestMethod = "GET"
-            conn.setRequestProperty("User-Agent", "Mozilla/5.0")
-            conn.connect()
-            val contentType = conn.contentType
-            if (contentType != null && !contentType.contains("html", ignoreCase = true)) {
-                conn.disconnect()
-                return null
-            }
-            val html = conn.inputStream.bufferedReader().use { reader ->
-                val sb = StringBuilder()
-                val buffer = CharArray(4096)
-                var total = 0
-                val maxChars = 200_000
-                while (true) {
-                    val read = reader.read(buffer)
-                    if (read <= 0) break
-                    sb.append(buffer, 0, read)
-                    total += read
-                    if (total >= maxChars) break
-                }
-                sb.toString()
-            }
-            conn.disconnect()
-            if (html.isBlank()) return null
-            val ogTitle = findMetaContent(html, "og:title")
-            val ogDesc = findMetaContent(html, "og:description")
-            val ogImage = findMetaContent(html, "og:image")
-            val titleTag = Regex("""<title[^>]*>(.*?)</title>""", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
-                .find(html)
-                ?.groupValues
-                ?.getOrNull(1)
-                ?.let(::decodeHtml)
-                .orEmpty()
-                .trim()
-            val title = ogTitle.ifBlank { titleTag }
-            val desc = ogDesc.trim()
-            val image = ogImage.trim()
-            if (title.isBlank() || desc.isBlank() || image.isBlank()) return null
-            InputOgpPreview(url = url, title = title, description = desc, imageUrl = image)
-        } catch (_: Exception) {
-            null
-        }
-    }
-
-    private fun findMetaContent(html: String, key: String): String {
-        for (match in INPUT_OGP_META_TAG_REGEX.findAll(html)) {
-            val tag = match.value
-            val property = extractMetaAttr(tag, "property")
-            val name = extractMetaAttr(tag, "name")
-            val content = extractMetaAttr(tag, "content")
-            if (content.isBlank()) continue
-            if (property.equals(key, ignoreCase = true) || name.equals(key, ignoreCase = true)) {
-                return decodeHtml(content).trim()
-            }
-        }
-        return ""
-    }
-
-    private fun extractMetaAttr(tag: String, attr: String): String {
-        val re = Regex("""$attr\s*=\s*(['"])(.*?)\1""", RegexOption.IGNORE_CASE)
-        return re.find(tag)?.groupValues?.getOrNull(2).orEmpty()
-    }
-
-    private fun decodeHtml(raw: String): String {
-        return Html.fromHtml(raw, Html.FROM_HTML_MODE_LEGACY).toString()
     }
 
     private fun extractFirstInputUrl(rawText: String): String? {
@@ -5153,7 +5178,7 @@ open class ChatFragment : BaseFragment() {
         val title = p.title.trim()
         val description = p.description.trim()
         val image = p.imageUrl.trim()
-        if (title.isEmpty() || description.isEmpty() || image.isEmpty()) return null
+        if (title.isEmpty() || (description.isEmpty() && image.isEmpty())) return null
         return OgpMarker(
             s = start,
             e = end,
@@ -5856,6 +5881,7 @@ open class ChatFragment : BaseFragment() {
             showEditMessage = showEditMessage,
             showTopicDiscussion = canShowTopicDiscussionInMessageMenu(msg),
             showPinActions = !isTopicMode,
+            showResend = msg.sendState == MessageEntity.SEND_STATE_ERROR && isMyMessage,
             listener = object : MessageActionBottomSheet.MessageActionListener {
                 override fun onActionSelected(action: MessageActionBottomSheet.ActionType, message: MessageEntity) {
                     handleMessageAction(action, message)
@@ -6198,6 +6224,9 @@ open class ChatFragment : BaseFragment() {
 
     private fun handleMessageAction(action: MessageActionBottomSheet.ActionType, msg: MessageEntity) {
         when (action) {
+            MessageActionBottomSheet.ActionType.ResendMessage -> {
+                resendFailedMessage(msg)
+            }
             MessageActionBottomSheet.ActionType.Reply -> {
                 setReplyState(msg)
             }
@@ -6665,6 +6694,25 @@ open class ChatFragment : BaseFragment() {
                 break
             }
         }
+    }
+
+    private fun resendFailedMessage(msg: MessageEntity) {
+        if (msg.sendState != MessageEntity.SEND_STATE_ERROR || !msg.isMe) return
+        val idx = messages.indexOfFirst { it.id == msg.id }
+        if (idx < 0) return
+        val updated = msg.copy(sendState = MessageEntity.SEND_STATE_SENDING, isError = false)
+        messages[idx] = updated
+        messagesDict.put(updated.id, updated)
+        if (fragmentView != null) {
+            updateVisibleRows(NotificationCenter.UPDATE_MASK_SEND_STATE)
+        }
+        chatController.resendFailedMessage(
+            channelId,
+            clanId,
+            channelType,
+            resolveChannelPrivate(),
+            msg,
+        )
     }
 
     private fun markMessageSent(tempId: Long) {

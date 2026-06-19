@@ -85,6 +85,7 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -234,7 +235,7 @@ class ChatController @Inject constructor(
         return mergeIncomingAttachmentEntity(existing, incoming).copy(
             id = incoming.id,
             sendState = MessageEntity.SEND_STATE_SENT,
-            isError = existing.isError || incoming.isError,
+            isError = incoming.isError,
             timestampSeconds = if (incoming.timestampSeconds > 0L) incoming.timestampSeconds else existing.timestampSeconds,
         )
     }
@@ -823,25 +824,46 @@ class ChatController @Inject constructor(
         token: String,
         request: ChannelMessageSend
     ): com.mezon.mezon.rtapi.ChannelMessageAck {
-        try {
-            return withContext(ioDispatcher) {
-                api.sendChannelMessage(apiUrl, token, request)
+        if (mezonSocket.connectionState.value == ConnectionState.CONNECTED) {
+            try {
+                return sendChannelMessageViaSocket(request)
+            } catch (e: Exception) {
+                if (!shouldFallbackChannelSendToHttp(e)) throw e
+                Log.w(TAG, "Channel message send via socket unavailable, using HTTP", e)
+                sentryReporter.logSocketWarning(
+                    "channelMessageSend",
+                    "fallback HTTP channelId=${request.channelId} clanId=${request.clanId} err=${e.message}"
+                )
             }
-        } catch (e: Exception) {
-            Log.w(TAG, "Channel message send via REST failed, using socket", e)
-            sentryReporter.logSocketWarning(
-                "channelMessageSend",
-                "fallback socket channelId=${request.channelId} clanId=${request.clanId} err=${e.message}"
-            )
-            if (mezonSocket.connectionState.value != ConnectionState.CONNECTED) throw e
         }
         return withContext(ioDispatcher) {
-            val env = mezonSocket.send { channelMessageSend = request }
-            if (env.messageCase != Envelope.MessageCase.CHANNEL_MESSAGE_ACK) {
-                throw IllegalStateException("unexpected envelope ${env.messageCase}")
-            }
-            env.channelMessageAck
+            api.sendChannelMessage(apiUrl, token, request)
         }
+    }
+
+    private suspend fun sendChannelMessageViaSocket(
+        request: ChannelMessageSend
+    ): com.mezon.mezon.rtapi.ChannelMessageAck {
+        val env = mezonSocket.send { channelMessageSend = request }
+        if (env.messageCase != Envelope.MessageCase.CHANNEL_MESSAGE_ACK) {
+            throw IllegalStateException("unexpected envelope ${env.messageCase}")
+        }
+        return env.channelMessageAck
+    }
+
+    /**
+     * HTTP fallback only when the socket path could not enqueue the message.
+     * Timeouts and ambiguous failures are not retried over HTTP to avoid duplicate sends.
+     */
+    private fun shouldFallbackChannelSendToHttp(e: Exception): Boolean {
+        if (e is TimeoutCancellationException) return false
+        if (e is IllegalStateException) {
+            val msg = e.message.orEmpty()
+            return msg == "WebSocket not connected" ||
+                msg == "Failed to enqueue WebSocket message"
+        }
+        if (e is RuntimeException && e.message?.startsWith("Request timed out:") == true) return false
+        return false
     }
 
     private suspend fun channelUpdate(
@@ -984,6 +1006,66 @@ class ChatController @Inject constructor(
                 }
             } catch (e: Exception) {
                 sentryReporter.logChatFailure("sendMessage", cacheKey, clanId, e)
+                notificationCenter.postNotificationOnMainThread(
+                    NotificationCenter.pendingMessageError, cacheKey, tempId
+                )
+            }
+        }
+    }
+
+    fun resendFailedMessage(
+        channelId: Long,
+        clanId: Long,
+        channelType: Int,
+        isChannelPrivate: Boolean,
+        failed: MessageEntity,
+    ) {
+        if (!failed.isMe || failed.sendState != MessageEntity.SEND_STATE_ERROR) return
+        val topicId = failed.effectiveTopicId
+        val cacheKey = messageCacheKey(channelId, topicId)
+        if (failed.channelId != cacheKey) return
+
+        val tempId = failed.id
+        val mode = channelTypeToStreamMode(channelType)
+        val isPublic = !isChannelPrivate
+        val wire = failed.content
+
+        appScope.launch {
+            try {
+                sessionManager.withAutoRefresh { session ->
+                    ensureActiveArchivedThreadIfNeeded(session.apiUrl, session.token, channelId, clanId, channelType)
+                    val mentionsProto = mentionsFromForwardContent(wire).takeUnless { it.isEmpty() }
+                    val mentionsData = messageMentionsToData(mentionsProto)
+                    ensureMentionedUsersInThread(
+                        session.apiUrl,
+                        session.token,
+                        channelId,
+                        clanId,
+                        channelType,
+                        mentionsData
+                    )
+                    val attProtos = attachmentsFromEntity(failed)
+                    val request = channelMessageSend {
+                        this.clanId = clanId
+                        this.channelId = channelId
+                        this.mode = mode
+                        this.isPublic = isPublic
+                        this.content = wire
+                        this.code = failed.code
+                        mentionsProto?.let { if (it.isNotEmpty()) mentions.addAll(it) }
+                        if (attProtos.isNotEmpty()) attachments.addAll(attProtos)
+                        this.mentionEveryone = extractMentionEveryoneFromForwardContent(wire)
+                        if (isAnonymousSend(clanId)) this.anonymousMessage = true
+                        if (topicId != 0L) this.topicId = topicId
+                    }
+                    val ack = channelSend(session.apiUrl, session.token, request)
+                    markForwardTargetUsed(channelId, channelType)
+                    notificationCenter.postNotificationOnMainThread(
+                        NotificationCenter.pendingMessageSent, cacheKey, tempId, ack.messageId
+                    )
+                }
+            } catch (e: Exception) {
+                sentryReporter.logChatFailure("resendFailedMessage", cacheKey, clanId, e)
                 notificationCenter.postNotificationOnMainThread(
                     NotificationCenter.pendingMessageError, cacheKey, tempId
                 )
@@ -2463,7 +2545,11 @@ class ChatController @Inject constructor(
         return incoming
     }
 
-    private fun mergeIncomingAttachmentEntity(existing: MessageEntity?, incoming: MessageEntity): MessageEntity {
+    private fun mergeIncomingAttachmentEntity(
+        existing: MessageEntity?,
+        incoming: MessageEntity,
+        forceContentReplace: Boolean = false,
+    ): MessageEntity {
         val base = existing ?: incoming
         val job = synchronized(this) { attachmentJobsByRealId.get(incoming.id) }
         val incomingCount = incoming.allAttachmentsInfo.size
@@ -2477,15 +2563,23 @@ class ChatController @Inject constructor(
         )
         val mergedContent = PresignFinishContent.mergePresignFinishContent(base.content, incoming.content)
         val presignOnly = PresignFinishContent.isPresignFinishOnlyChange(mergedContent, base.content)
+        val resolvedContent = when {
+            forceContentReplace && incoming.content.isNotBlank() -> mergedContent
+            else -> resolveEchoContent(mergedContent, base.content)
+        }
         if (!preserveLocalAttachments) {
             return incoming.copy(
-                content = resolveEchoContent(mergedContent, base.content),
+                content = resolvedContent,
                 updateTimeSeconds = if (presignOnly) base.updateTimeSeconds else incoming.updateTimeSeconds,
                 hideEditted = incoming.hideEditted || presignOnly,
             )
         }
+        val preservedContent = when {
+            forceContentReplace && incoming.content.isNotBlank() -> mergedContent
+            else -> resolveEchoContent(base.content, mergedContent)
+        }
         return base.copy(
-            content = resolveEchoContent(base.content, mergedContent),
+            content = preservedContent,
             updateTimeSeconds = if (presignOnly) base.updateTimeSeconds else incoming.updateTimeSeconds,
             hideEditted = incoming.hideEditted || presignOnly,
             code = incoming.code,
@@ -2729,54 +2823,10 @@ class ChatController @Inject constructor(
 
             when (msg.code) {
                 CODE_CHAT_UPDATE -> {
-                    if (synchronized(this) { attachmentJobsByRealId.get(entity.id) } != null) {
-                        appScope.launch(ioDispatcher) {
-                            val existing = messageDao.getById(entity.channelId, entity.id)
-                            val merged = mergeIncomingAttachmentEntity(existing, entity)
-                            messageDao.upsert(merged)
-                            notificationCenter.postNotificationOnMainThread(
-                                NotificationCenter.messageDidUpdate, merged.channelId, merged,
-                                NotificationCenter.UPDATE_MASK_MESSAGE_TEXT,
-                            )
-                        }
-                        return@collect
-                    }
-                    if (msg.topicId != 0L) {
-                        appScope.launch(ioDispatcher) {
-                            val topicEntity = remapForCache(entity, msg.topicId)
-                            val existing = messageDao.getById(topicEntity.channelId, topicEntity.id)
-                            val merged = mergeIncomingAttachmentEntity(existing, topicEntity)
-                            messageDao.upsert(merged)
-                            val mask = if (topicEntity.allAttachmentsInfo.isNotEmpty()) {
-                                NotificationCenter.UPDATE_MASK_ATTACHMENTS or NotificationCenter.UPDATE_MASK_MESSAGE_TEXT
-                            } else {
-                                NotificationCenter.UPDATE_MASK_MESSAGE_TEXT
-                            }
-                            notificationCenter.postNotificationOnMainThread(
-                                NotificationCenter.messageDidUpdate, topicEntity.channelId, merged, mask
-                            )
-                        }
-                        return@collect
-                    }
                     appScope.launch(ioDispatcher) {
-                        val existing = messageDao.getById(entity.channelId, entity.id)
-                        val merged = mergeIncomingAttachmentEntity(existing, entity)
-                        messageDao.upsert(merged)
-                        synchronized(this@ChatController) {
-                            val last = dialogMessage.get(merged.channelId)
-                            if (last != null && last.id == merged.id) {
-                                dialogMessage.put(merged.channelId, merged)
-                            }
-                        }
-                        val mask = if (entity.allAttachmentsInfo.isNotEmpty()) {
-                            NotificationCenter.UPDATE_MASK_ATTACHMENTS or NotificationCenter.UPDATE_MASK_MESSAGE_TEXT
-                        } else {
-                            NotificationCenter.UPDATE_MASK_MESSAGE_TEXT
-                        }
-                        notificationCenter.postNotificationOnMainThread(
-                            NotificationCenter.messageDidUpdate, merged.channelId, merged, mask
-                        )
+                        publishIncomingMessageEdit(entity, msg.topicId)
                     }
+                    return@collect
                 }
                 MessageEntity.CODE_UPDATE_EPHEMERAL -> {
                     val codeToStore = MessageEntity.CODE_EPHEMERAL
@@ -2920,46 +2970,112 @@ class ChatController @Inject constructor(
             val mergedContent = mergeChannelContentMentionsAndRefs(update.content, mentionsBytes, ByteString.EMPTY)
             val updateTime = System.currentTimeMillis() / 1000L
             appScope.launch(ioDispatcher) {
-                val existing = messageDao.getById(update.channelId, update.messageId) ?: return@launch
-                var updated = existing.copy(
-                    content = mergedContent,
-                    updateTimeSeconds = updateTime,
-                    hideEditted = update.hideEditted,
-                    code = CODE_CHAT_UPDATE
-                )
-                if (update.attachmentsCount > 0) {
-                    val fields = entityAttachmentFieldsFromProto(update.attachmentsList)
-                    updated = updated.copy(
-                        attachmentUrl = fields.attachmentUrl,
-                        attachmentThumb = fields.attachmentThumb,
-                        attachmentWidth = fields.attachmentWidth,
-                        attachmentHeight = fields.attachmentHeight,
-                        attachmentFilename = fields.attachmentFilename,
-                        attachmentFiletype = fields.attachmentFiletype,
-                        attachmentSize = fields.attachmentSize,
-                        attachmentDuration = fields.attachmentDuration,
-                        extraAttachmentsJson = fields.extraAttachmentsJson,
-                        messageType = fields.messageType,
-                    )
-                }
-                updated = mergeIncomingAttachmentEntity(existing, updated)
-                messageDao.upsert(updated)
-                synchronized(this@ChatController) {
-                    val last = dialogMessage.get(updated.channelId)
-                    if (last != null && last.id == updated.id) {
-                        dialogMessage.put(updated.channelId, updated)
-                    }
-                }
-                val mask = if (update.attachmentsCount > 0) {
-                    NotificationCenter.UPDATE_MASK_ATTACHMENTS or NotificationCenter.UPDATE_MASK_MESSAGE_TEXT
-                } else {
-                    NotificationCenter.UPDATE_MASK_MESSAGE_TEXT
-                }
-                notificationCenter.postNotificationOnMainThread(
-                    NotificationCenter.messageDidUpdate, updated.channelId, updated, mask
-                )
+                publishChannelMessageUpdate(update, mergedContent, updateTime)
             }
         }
+    }
+
+    private suspend fun lookupMessageForSocketEdit(
+        cacheKey: Long,
+        messageId: Long,
+        parentChannelId: Long,
+    ): MessageEntity? {
+        suspend fun lookupOnce(): MessageEntity? =
+            messageDao.getById(cacheKey, messageId)
+                ?: if (cacheKey != parentChannelId) messageDao.getById(parentChannelId, messageId) else null
+        return lookupOnce() ?: run {
+            delay(200)
+            lookupOnce()
+        }
+    }
+
+    private suspend fun publishIncomingMessageEdit(incoming: MessageEntity, topicId: Long) {
+        val cacheKey = messageCacheKey(incoming.channelId, topicId)
+        val incomingForStore = if (topicId != 0L) remapForCache(incoming, topicId) else incoming
+        val existing = lookupMessageForSocketEdit(cacheKey, incomingForStore.id, incoming.channelId)
+        val merged = mergeIncomingAttachmentEntity(
+            existing,
+            incomingForStore,
+            forceContentReplace = true,
+        )
+        val stored = if (topicId != 0L) merged.copy(channelId = cacheKey) else merged
+        if (existing != null) {
+            messageDao.upsert(stored)
+        }
+        synchronized(this@ChatController) {
+            val last = dialogMessage.get(cacheKey)
+            if (last != null && last.id == stored.id) {
+                dialogMessage.put(cacheKey, stored)
+            }
+        }
+        val mask = if (incomingForStore.allAttachmentsInfo.isNotEmpty()) {
+            NotificationCenter.UPDATE_MASK_ATTACHMENTS or NotificationCenter.UPDATE_MASK_MESSAGE_TEXT
+        } else {
+            NotificationCenter.UPDATE_MASK_MESSAGE_TEXT
+        }
+        notificationCenter.postNotificationOnMainThread(
+            NotificationCenter.messageDidUpdate, cacheKey, stored, mask
+        )
+    }
+
+    private suspend fun publishChannelMessageUpdate(
+        update: com.mezon.mezon.rtapi.ChannelMessageUpdate,
+        mergedContent: String,
+        updateTime: Long,
+    ) {
+        val cacheKey = messageCacheKey(update.channelId, update.topicId)
+        val existing = lookupMessageForSocketEdit(cacheKey, update.messageId, update.channelId)
+        var incoming = existing?.copy(
+            content = mergedContent,
+            updateTimeSeconds = updateTime,
+            hideEditted = update.hideEditted,
+            code = CODE_CHAT_UPDATE,
+        ) ?: MessageEntity(
+            id = update.messageId,
+            channelId = cacheKey,
+            senderId = 0L,
+            senderName = "",
+            senderAvatar = "",
+            content = mergedContent,
+            timestampSeconds = update.createTimeSeconds.toLong().coerceAtLeast(0L),
+            code = CODE_CHAT_UPDATE,
+            updateTimeSeconds = updateTime,
+            hideEditted = update.hideEditted,
+        )
+        if (update.attachmentsCount > 0) {
+            val fields = entityAttachmentFieldsFromProto(update.attachmentsList)
+            incoming = incoming.copy(
+                attachmentUrl = fields.attachmentUrl,
+                attachmentThumb = fields.attachmentThumb,
+                attachmentWidth = fields.attachmentWidth,
+                attachmentHeight = fields.attachmentHeight,
+                attachmentFilename = fields.attachmentFilename,
+                attachmentFiletype = fields.attachmentFiletype,
+                attachmentSize = fields.attachmentSize,
+                attachmentDuration = fields.attachmentDuration,
+                extraAttachmentsJson = fields.extraAttachmentsJson,
+                messageType = fields.messageType,
+            )
+        }
+        val merged = mergeIncomingAttachmentEntity(existing, incoming, forceContentReplace = true)
+        val stored = if (update.topicId != 0L) merged.copy(channelId = cacheKey) else merged
+        if (existing != null) {
+            messageDao.upsert(stored)
+        }
+        synchronized(this@ChatController) {
+            val last = dialogMessage.get(cacheKey)
+            if (last != null && last.id == stored.id) {
+                dialogMessage.put(cacheKey, stored)
+            }
+        }
+        val mask = if (update.attachmentsCount > 0) {
+            NotificationCenter.UPDATE_MASK_ATTACHMENTS or NotificationCenter.UPDATE_MASK_MESSAGE_TEXT
+        } else {
+            NotificationCenter.UPDATE_MASK_MESSAGE_TEXT
+        }
+        notificationCenter.postNotificationOnMainThread(
+            NotificationCenter.messageDidUpdate, cacheKey, stored, mask
+        )
     }
 
     private fun resolveEphemeralSender(msg: ChannelMessage, currentUserId: Long): ChannelMessage {

@@ -4,7 +4,13 @@ import android.Manifest
 import android.app.Activity
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.Matrix
 import android.graphics.drawable.GradientDrawable
+import android.media.ExifInterface
+import android.os.Build
+import android.graphics.ImageDecoder
 import android.net.Uri
 import android.provider.Settings
 import android.util.Log
@@ -41,6 +47,8 @@ import com.mezon.mobile.home.wallet.SendTokenFragment
 import com.mezon.mobile.ui.cells.ToastOverlay
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import java.io.ByteArrayInputStream
+import java.nio.ByteBuffer
 import java.util.concurrent.Executors
 
 class QrScanFragment : BaseFragment() {
@@ -50,7 +58,7 @@ class QrScanFragment : BaseFragment() {
         private const val REQUEST_CAMERA = 7001
         private const val REQUEST_GALLERY = 7002
         private const val SCAN_THROTTLE_MS = 5000L
-        private const val GALLERY_QR_MAX_EDGE = 2048
+        private const val GALLERY_QR_MAX_EDGE = 4096
 
         private fun extractLuminance(image: ImageProxy): ByteArray? {
             val plane = image.planes.firstOrNull() ?: return null
@@ -438,12 +446,18 @@ class QrScanFragment : BaseFragment() {
 
 
     private fun openGallery() {
-        val activity = getParentActivity() ?: return
-        val intent = Intent(Intent.ACTION_PICK).apply { type = "image/*" }
-        activity.startActivityForResult(intent, REQUEST_GALLERY)
+        val intent = Intent(Intent.ACTION_GET_CONTENT).apply {
+            type = "image/*"
+            addCategory(Intent.CATEGORY_OPENABLE)
+        }
+        startActivityForResult(
+            Intent.createChooser(intent, getString(R.string.qr_select_photo_with_qr)),
+            REQUEST_GALLERY
+        )
     }
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
         if (requestCode == REQUEST_GALLERY && resultCode == Activity.RESULT_OK) {
             val uri = data?.data ?: return
             decodeFromGallery(uri)
@@ -453,32 +467,137 @@ class QrScanFragment : BaseFragment() {
     private fun decodeFromGallery(uri: Uri) {
         val ctx = requireContext()
         fragmentScope.launch(Dispatchers.IO) {
-            val bitmap = runCatching { decodeGalleryBitmapSampled(ctx.contentResolver, uri) }.getOrNull()
-            val value = bitmap?.let { QrCodeUtils.decodeFromBitmap(it) }
+            val bytes = runCatching {
+                ctx.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+            }.getOrNull()
+            val value = bytes?.takeIf { it.isNotEmpty() }?.let { decodeGalleryQrValue(it) }
             launch(Dispatchers.Main) {
-                if (value == null) {
+                if (value.isNullOrBlank()) {
                     showToast(getString(R.string.qr_select_photo_with_qr), ToastOverlay.ToastType.ERROR)
                 } else {
-                    onQrScanned(value)
+                    onGalleryQrScanned(value)
                 }
             }
         }
     }
 
-    private fun decodeGalleryBitmapSampled(resolver: android.content.ContentResolver, uri: Uri): android.graphics.Bitmap? {
-        val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        resolver.openInputStream(uri)?.use {
-            android.graphics.BitmapFactory.decodeStream(it, null, bounds)
-        } ?: return null
-        val maxEdgePx = maxOf(bounds.outWidth, bounds.outHeight)
+    private fun onGalleryQrScanned(value: String) {
+        lastScanAt = 0L
+        scanningEnabled = true
+        onQrScanned(value)
+    }
+
+    private fun decodeGalleryQrValue(bytes: ByteArray): String? {
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) {
+            return decodeGalleryQrValueWithImageDecoder(bytes, bounds)
+        }
+
+        val orientation = readExifOrientation(bytes)
         var sample = 1
-        while (maxEdgePx / sample > GALLERY_QR_MAX_EDGE) {
+        while (bounds.outWidth / sample > GALLERY_QR_MAX_EDGE || bounds.outHeight / sample > GALLERY_QR_MAX_EDGE) {
             sample *= 2
         }
-        val opts = android.graphics.BitmapFactory.Options().apply { inSampleSize = sample }
-        return resolver.openInputStream(uri)?.use {
-            android.graphics.BitmapFactory.decodeStream(it, null, opts)
+
+        while (sample >= 1) {
+            val bitmap = decodeGalleryBitmapFromBytes(bytes, bounds, sample) ?: run {
+                if (sample == 1) {
+                    return decodeGalleryQrValueWithImageDecoder(bytes, bounds)
+                }
+                sample /= 2
+                continue
+            }
+            val oriented = applyExifOrientation(bitmap, orientation)
+            val toDecode = oriented ?: bitmap
+            val value = QrCodeUtils.decodeFromBitmap(toDecode)
+            if (oriented != null && oriented !== bitmap) bitmap.recycle()
+            toDecode.recycle()
+            if (!value.isNullOrBlank()) return value
+            if (sample == 1) break
+            sample /= 2
         }
+        return decodeGalleryQrValueWithImageDecoder(bytes, bounds)
+    }
+
+    private fun decodeGalleryQrValueWithImageDecoder(bytes: ByteArray, bounds: BitmapFactory.Options): String? {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) return null
+        val bitmap = runCatching {
+            ImageDecoder.decodeBitmap(ImageDecoder.createSource(ByteBuffer.wrap(bytes))) { decoder, _, _ ->
+                decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
+                decoder.isMutableRequired = true
+                if (bounds.outWidth > 0 && bounds.outHeight > 0) {
+                    val maxEdge = maxOf(bounds.outWidth, bounds.outHeight)
+                    if (maxEdge > GALLERY_QR_MAX_EDGE) {
+                        val scale = GALLERY_QR_MAX_EDGE.toFloat() / maxEdge
+                        decoder.setTargetSize(
+                            (bounds.outWidth * scale).toInt().coerceAtLeast(1),
+                            (bounds.outHeight * scale).toInt().coerceAtLeast(1)
+                        )
+                    }
+                }
+            }
+        }.getOrNull() ?: return null
+        return try {
+            QrCodeUtils.decodeFromBitmap(bitmap)
+        } finally {
+            bitmap.recycle()
+        }
+    }
+
+    private fun readExifOrientation(bytes: ByteArray): Int = runCatching {
+        ExifInterface(ByteArrayInputStream(bytes)).getAttributeInt(
+            ExifInterface.TAG_ORIENTATION,
+            ExifInterface.ORIENTATION_NORMAL
+        )
+    }.getOrDefault(ExifInterface.ORIENTATION_NORMAL)
+
+    private fun decodeGalleryBitmapFromBytes(
+        bytes: ByteArray,
+        bounds: BitmapFactory.Options,
+        sampleSize: Int
+    ): Bitmap? {
+        val opts = BitmapFactory.Options().apply {
+            inSampleSize = sampleSize
+            inPreferredConfig = Bitmap.Config.ARGB_8888
+        }
+        return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts)
+            ?: if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                runCatching {
+                    val targetW = (bounds.outWidth / sampleSize).coerceAtLeast(1)
+                    val targetH = (bounds.outHeight / sampleSize).coerceAtLeast(1)
+                    ImageDecoder.decodeBitmap(ImageDecoder.createSource(ByteBuffer.wrap(bytes))) { decoder, _, _ ->
+                        decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
+                        decoder.isMutableRequired = true
+                        decoder.setTargetSize(targetW, targetH)
+                    }
+                }.getOrNull()
+            } else {
+                null
+            }
+    }
+
+    private fun applyExifOrientation(bitmap: Bitmap, orientation: Int): Bitmap? {
+        if (orientation == ExifInterface.ORIENTATION_NORMAL) return null
+
+        val matrix = Matrix()
+        when (orientation) {
+            ExifInterface.ORIENTATION_ROTATE_90 -> matrix.postRotate(90f)
+            ExifInterface.ORIENTATION_ROTATE_180 -> matrix.postRotate(180f)
+            ExifInterface.ORIENTATION_ROTATE_270 -> matrix.postRotate(270f)
+            ExifInterface.ORIENTATION_FLIP_HORIZONTAL -> matrix.postScale(-1f, 1f)
+            ExifInterface.ORIENTATION_FLIP_VERTICAL -> matrix.postScale(1f, -1f)
+            ExifInterface.ORIENTATION_TRANSPOSE -> {
+                matrix.postRotate(90f)
+                matrix.postScale(-1f, 1f)
+            }
+            ExifInterface.ORIENTATION_TRANSVERSE -> {
+                matrix.postRotate(270f)
+                matrix.postScale(-1f, 1f)
+            }
+            else -> return null
+        }
+        return Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
     }
 
 
